@@ -1,17 +1,17 @@
 # CLI User Guide
 
-This is a practical user guide to the `mesh-llm` CLI.
+This is a practical user guide to the `closedmesh` CLI.
 It explains what to run for common tasks, then documents each command and switch.
 
-Catalog id definition: a catalog id is the model id shown in `mesh-llm models recommended` (for example `Qwen3-0.6B-Q4_K_M`).
+Catalog id definition: a catalog id is the model id shown in `closedmesh models recommended` (for example `Qwen3-0.6B-Q4_K_M`).
 
 ## Get help
 
 ```bash
-mesh-llm --help
-mesh-llm <command> --help
-mesh-llm models --help
-mesh-llm models <subcommand> --help
+closedmesh --help
+closedmesh <command> --help
+closedmesh models --help
+closedmesh models <subcommand> --help
 ```
 
 ## Start here (common tasks)
@@ -21,32 +21,32 @@ If you want to:
 1. Start serving right away:
 
 ```bash
-mesh-llm serve --auto
+closedmesh serve --auto
 ```
 
 2. Find a model you can run:
 
 ```bash
-mesh-llm models search gemma --gguf
-mesh-llm models search smoll --mlx
+closedmesh models search gemma --gguf
+closedmesh models search smoll --mlx
 ```
 
 3. Inspect a model before downloading:
 
 ```bash
-mesh-llm models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
 ```
 
 4. Download a model:
 
 ```bash
-mesh-llm models download unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+closedmesh models download unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
 ```
 
 5. Check what is already installed:
 
 ```bash
-mesh-llm models installed
+closedmesh models installed
 ```
 
 ## Runtime entrypoints (`serve` / `client`)
@@ -56,9 +56,9 @@ If you want to start serving, join a mesh, or run as an API-only client, start h
 Examples:
 
 ```bash
-mesh-llm serve
-mesh-llm serve --model Qwen3-0.6B-Q4_K_M
-mesh-llm client --auto
+closedmesh serve
+closedmesh serve --model Qwen3-0.6B-Q4_K_M
+closedmesh client --auto
 ```
 
 Runtime switches:
@@ -124,9 +124,9 @@ Use this to find something you can actually download and run (GGUF or MLX).
 Usage:
 
 ```bash
-mesh-llm models search gemma --gguf
-mesh-llm models search smoll --mlx --limit 5
-mesh-llm models search qwen --catalog
+closedmesh models search gemma --gguf
+closedmesh models search smoll --mlx --limit 5
+closedmesh models search qwen --catalog
 ```
 
 Switches:
@@ -144,8 +144,8 @@ Use this when you want to sanity-check one exact model ref before you download o
 Usage:
 
 ```bash
-mesh-llm models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
-mesh-llm models show mlx-community/SmolLM-135M-8bit
+closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+closedmesh models show mlx-community/SmolLM-135M-8bit
 ```
 
 Switches:
@@ -159,8 +159,8 @@ Use this when you’re ready to download one specific resolved model.
 Usage:
 
 ```bash
-mesh-llm models download unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
-mesh-llm models download mlx-community/SmolLM-135M-8bit
+closedmesh models download unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+closedmesh models download mlx-community/SmolLM-135M-8bit
 ```
 
 Switches:
@@ -175,9 +175,9 @@ Use this when you want to check for new upstream revisions or refresh cached rep
 Usage:
 
 ```bash
-mesh-llm models updates --check
-mesh-llm models updates --all
-mesh-llm models updates unsloth/gemma-4-31B-it-GGUF
+closedmesh models updates --check
+closedmesh models updates --all
+closedmesh models updates unsloth/gemma-4-31B-it-GGUF
 ```
 
 Switches:
@@ -193,9 +193,9 @@ Use this to quickly download by built-in catalog ID or shorthand.
 Usage:
 
 ```bash
-mesh-llm download
-mesh-llm download 32b
-mesh-llm download Qwen3-0.6B-Q4_K_M --draft
+closedmesh download
+closedmesh download 32b
+closedmesh download Qwen3-0.6B-Q4_K_M --draft
 ```
 
 Switches:
@@ -204,10 +204,10 @@ Switches:
 
 ### `update`
 
-Use this to update mesh-llm and exit.
+Use this to update closedmesh and exit.
 
 Switches:
-- `--auto-update`: available on most commands; when set, mesh-llm checks for a newer bundled release before proceeding.
+- `--auto-update`: available on most commands; when set, closedmesh checks for a newer bundled release before proceeding.
 
 
 ### `gpus`
@@ -217,12 +217,12 @@ Use this to inspect local GPU identity and capacity, including per-device VRAM, 
 
 ### `load`
 
-Use this to load a model into an already-running local mesh-llm runtime.
+Use this to load a model into an already-running local closedmesh runtime.
 
 Usage:
 
 ```bash
-mesh-llm load Qwen3-0.6B-Q4_K_M
+closedmesh load Qwen3-0.6B-Q4_K_M
 ```
 
 Switches:
@@ -259,25 +259,25 @@ Switches:
 
 ### `goose`
 
-Use this to launch Goose already wired to mesh-llm’s OpenAI-compatible endpoint.
+Use this to launch Goose already wired to closedmesh’s OpenAI-compatible endpoint.
 
 Switches:
 
 - `--model <MODEL>`: model id from `/v1/models`.
-- `--port <PORT>`: mesh-llm API port (default `9337`).
+- `--port <PORT>`: closedmesh API port (default `9337`).
 
 ### `claude`
 
-Use this to launch Claude Code already wired to mesh-llm’s OpenAI-compatible endpoint.
+Use this to launch Claude Code already wired to closedmesh’s OpenAI-compatible endpoint.
 
 Switches:
 
 - `--model <MODEL>`: model id from `/v1/models`.
-- `--port <PORT>`: mesh-llm API port (default `9337`).
+- `--port <PORT>`: closedmesh API port (default `9337`).
 
 ### `opencode`
 
-Use this to launch OpenCode already wired to mesh-llm’s OpenAI-compatible endpoint.
+Use this to launch OpenCode already wired to closedmesh’s OpenAI-compatible endpoint.
 
 It injects a temporary OpenCode config through `OPENCODE_CONFIG_CONTENT` at launch time, so it does not edit persistent OpenCode config files unless you explicitly pass `--write`.
 
@@ -285,11 +285,11 @@ Switches:
 
 - `--model <MODEL>`: model id from `/v1/models`.
 - `--host <HOST|HOST:PORT|URL>`: OpenCode target host or URL (default `127.0.0.1:9337`). Bare host forms assume `http`, default inference port `9337`, and default management port `3131`.
-- `--write`: write a merged `~/.config/opencode/opencode.json` that preserves unrelated root keys and sibling providers. If only `opencode.jsonc` exists, mesh-llm errors and tells you to rename or migrate it to `opencode.json` first.
+- `--write`: write a merged `~/.config/opencode/opencode.json` that preserves unrelated root keys and sibling providers. If only `opencode.jsonc` exists, closedmesh errors and tells you to rename or migrate it to `opencode.json` first.
 
 ### `stop`
 
-Use this to stop local `mesh-llm`, `llama-server`, and `rpc-server` processes.
+Use this to stop local `closedmesh`, `llama-server`, and `rpc-server` processes.
 
 
 ### `blackboard`
@@ -299,10 +299,10 @@ Use this to post/search/read shared mesh notes, or to run blackboard as MCP over
 Usage:
 
 ```bash
-mesh-llm blackboard
-mesh-llm blackboard "STATUS: testing gguf resolution"
-mesh-llm blackboard --search "gemma"
-mesh-llm blackboard --mcp
+closedmesh blackboard
+closedmesh blackboard "STATUS: testing gguf resolution"
+closedmesh blackboard --search "gemma"
+closedmesh blackboard --mcp
 ```
 
 Switches:
@@ -371,16 +371,16 @@ Use this when you want to know whether a MoE model is likely to fit on your hard
 Usage:
 
 ```bash
-mesh-llm moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
-mesh-llm moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16
-mesh-llm moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16 --json
+closedmesh moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
+closedmesh moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16
+closedmesh moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16 --json
 ```
 
 Behavior:
 
-- Checks local mesh-llm ranking cache first.
+- Checks local closedmesh ranking cache first.
 - Checks `meshllm/moe-rankings` on Hugging Face and uses it when it provides a stronger ranking than local cache. If local and published rankings have the same analyzer strength, the local cache wins.
-- Keeps Hugging Face dataset files in the normal Hugging Face cache; it does not copy dataset artifacts into `~/.cache/mesh-llm`.
+- Keeps Hugging Face dataset files in the normal Hugging Face cache; it does not copy dataset artifacts into `~/.cache/closedmesh`.
 - Prefers `full-*` rankings over `micro-*` for the same model/distribution.
 - Prints ranking provenance clearly so you can see whether the planner used local cache, Hugging Face, or an explicit override.
 
@@ -398,7 +398,7 @@ Use this when you want to produce a full local MoE ranking for a model and cache
 Usage:
 
 ```bash
-mesh-llm moe analyze full unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
+closedmesh moe analyze full unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
 ```
 
 Behavior:
@@ -415,7 +415,7 @@ Use this when you want a faster local fallback ranking using the canonical micro
 Usage:
 
 ```bash
-mesh-llm moe analyze micro unsloth/gemma-4-26B-A4B-it-GGUF:UD-IQ2_M
+closedmesh moe analyze micro unsloth/gemma-4-26B-A4B-it-GGUF:UD-IQ2_M
 ```
 
 Behavior:
@@ -432,8 +432,8 @@ Use this to open a contribution PR for a local ranking artifact on the canonical
 Usage:
 
 ```bash
-mesh-llm moe share unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
-mesh-llm moe share unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --ranking-file ~/.cache/mesh-llm/moe-rankings/local-gemma-4-26b-a4b-it-ud-q4_k_s.micro-p8-t128-all.csv
+closedmesh moe share unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
+closedmesh moe share unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --ranking-file ~/.cache/closedmesh/moe-rankings/local-gemma-4-26b-a4b-it-ud-q4_k_s.micro-p8-t128-all.csv
 ```
 
 Behavior:
@@ -457,39 +457,39 @@ Switches:
 
 Supported for `models show`, `models download`, and `serve --model`:
 
-1. Catalog id (an id from `mesh-llm models recommended`):
+1. Catalog id (an id from `closedmesh models recommended`):
 
 ```bash
-mesh-llm models show Qwen3-0.6B-Q4_K_M
+closedmesh models show Qwen3-0.6B-Q4_K_M
 ```
 
 2. HF repo or GGUF selector:
 
 ```bash
-mesh-llm models show unsloth/gemma-4-31B-it-GGUF
-mesh-llm models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+closedmesh models show unsloth/gemma-4-31B-it-GGUF
+closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
 ```
 
 3. HF URL:
 
 ```bash
-mesh-llm models show https://huggingface.co/unsloth/gemma-4-31B-it-GGUF
+closedmesh models show https://huggingface.co/unsloth/gemma-4-31B-it-GGUF
 ```
 
 4. Revision pin:
 
 ```bash
-mesh-llm models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL@main
-mesh-llm models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL@<commit-sha>
-mesh-llm models show mlx-community/SmolLM-135M-8bit@<commit-sha>
-mesh-llm models show https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/tree/main
+closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL@main
+closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL@<commit-sha>
+closedmesh models show mlx-community/SmolLM-135M-8bit@<commit-sha>
+closedmesh models show https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/tree/main
 ```
 
 For MLX, use repo shorthand (not `/model`):
 
 ```bash
-mesh-llm models show mlx-community/SmolLM-135M-8bit
-mesh-llm models download mlx-community/SmolLM-135M-8bit
+closedmesh models show mlx-community/SmolLM-135M-8bit
+closedmesh models download mlx-community/SmolLM-135M-8bit
 ```
 
 ## Model resolution behavior
@@ -518,18 +518,18 @@ MLX behavior:
 
 ## Machine-readable output (`--json`)
 
-All `models` subcommands support `--json`. `mesh-llm moe plan` also supports `--json`.
+All `models` subcommands support `--json`. `closedmesh moe plan` also supports `--json`.
 
 Examples:
 
 ```bash
-mesh-llm models search smoll --mlx --limit 1 --json | jq .
-mesh-llm models show mlx-community/SmolLM-135M-8bit --json | jq .
-mesh-llm models download Qwen3-0.6B-Q4_K_M --json | jq .
-mesh-llm models installed --json | jq .
-mesh-llm models recommended --json | jq .
-mesh-llm models updates --check --json | jq .
-mesh-llm moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16 --json | jq .
+closedmesh models search smoll --mlx --limit 1 --json | jq .
+closedmesh models show mlx-community/SmolLM-135M-8bit --json | jq .
+closedmesh models download Qwen3-0.6B-Q4_K_M --json | jq .
+closedmesh models installed --json | jq .
+closedmesh models recommended --json | jq .
+closedmesh models updates --check --json | jq .
+closedmesh moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16 --json | jq .
 ```
 
 Shape summary:

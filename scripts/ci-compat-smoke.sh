@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# ci-compat-smoke.sh — start a single mesh-llm node, then run SDK compatibility smokes.
+# ci-compat-smoke.sh — start a single closedmesh node, then run SDK compatibility smokes.
 #
 # This test validates that openai-python, openai-node, litellm, and langchain-openai
-# all work correctly against mesh-llm's OpenAI-compatible API. It uses a solo node
+# all work correctly against closedmesh's OpenAI-compatible API. It uses a solo node
 # (no split, no mesh) since split-mode routing is already tested by ci-split-test.sh.
 #
-# Usage: scripts/ci-compat-smoke.sh <mesh-llm-binary> <bin-dir> <model-path> [mmproj-path]
+# Usage: scripts/ci-compat-smoke.sh <closedmesh-binary> <bin-dir> <model-path> [mmproj-path]
 
 set -euo pipefail
 
@@ -23,11 +23,11 @@ API_PORT=9337
 CONSOLE_PORT=3131
 MAX_WAIT=240
 WORKDIR="$(mktemp -d)"
-LOG="$WORKDIR/mesh-llm.log"
+LOG="$WORKDIR/closedmesh.log"
 NODE_SDK_DIR="$WORKDIR/openai-node"
 
 echo "=== Compat Smoke Test ==="
-echo "  mesh-llm:   $MESH_LLM"
+echo "  closedmesh:   $MESH_LLM"
 echo "  bin-dir:    $BIN_DIR"
 echo "  model:      $MODEL"
 if [ -n "$MMPROJ" ]; then
@@ -36,7 +36,7 @@ fi
 echo "  workdir:    $WORKDIR"
 
 if [ ! -f "$MESH_LLM" ]; then
-    echo "❌ Missing mesh-llm binary: $MESH_LLM"
+    echo "❌ Missing closedmesh binary: $MESH_LLM"
     exit 1
 fi
 
@@ -59,7 +59,7 @@ trap cleanup EXIT
 fail_with_logs() {
     local message="$1"
     echo "❌ $message"
-    echo "--- mesh-llm log ---"
+    echo "--- closedmesh log ---"
     tail -80 "$LOG" 2>/dev/null || true
     exit 1
 }
@@ -74,7 +74,7 @@ assert_pid_alive() {
 
 # ── Start solo node ──
 
-echo "Starting mesh-llm (solo)..."
+echo "Starting closedmesh (solo)..."
 ARGS=(
     serve
     --model "$MODEL"
@@ -92,7 +92,7 @@ MESH_PID=$!
 
 echo "Waiting for model to load (up to ${MAX_WAIT}s)..."
 for i in $(seq 1 "$MAX_WAIT"); do
-    assert_pid_alive "$MESH_PID" "mesh-llm"
+    assert_pid_alive "$MESH_PID" "closedmesh"
     READY=$("$PYTHON_BIN" -c '
 import json, sys, urllib.request
 try:

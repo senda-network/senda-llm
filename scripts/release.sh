@@ -25,7 +25,7 @@ fi
 
 echo "==> cargo build --release"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}" \
-    cargo build --release -p mesh-llm
+    cargo build --release -p closedmesh
 
 BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/release/closedmesh"
 if [[ ! -x "$BIN" ]]; then

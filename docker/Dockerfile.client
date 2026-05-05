@@ -1,9 +1,9 @@
-# mesh-llm client-only image (no llama.cpp, no GPU)
+# closedmesh client-only image (no llama.cpp, no GPU)
 # Supersedes fly/Dockerfile content. Supports linux/amd64 and linux/arm64.
 #
-# Build:  DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.client -t mesh-llm:client .
-# Run:    docker run --rm -p 3131:3131 -p 9337:9337 -e APP_MODE=console mesh-llm:client
-#         docker run --rm -p 3131:3131 -p 9337:9337 -e APP_MODE=console -e MESH_HEADLESS=1 mesh-llm:client  # API-only
+# Build:  DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.client -t closedmesh:client .
+# Run:    docker run --rm -p 3131:3131 -p 9337:9337 -e APP_MODE=console closedmesh:client
+#         docker run --rm -p 3131:3131 -p 9337:9337 -e APP_MODE=console -e MESH_HEADLESS=1 closedmesh:client  # API-only
 #
 # Modes (via APP_MODE env):
 #   console  — API on 9337 + web console on 3131 (default; UI always included)
@@ -16,10 +16,10 @@
 
 FROM node:24-alpine AS ui-builder
 WORKDIR /app
-COPY mesh-llm/ui/package.json mesh-llm/ui/package-lock.json ./
+COPY closedmesh/ui/package.json closedmesh/ui/package-lock.json ./
 RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
     npm ci
-COPY mesh-llm/ui/ ./
+COPY closedmesh/ui/ ./
 RUN npm run build
 # Output: /app/dist
 
@@ -35,20 +35,20 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 WORKDIR /src
 # Satisfy GitHub Actions preflight checks (exact strings required)
 COPY Cargo.toml Cargo.lock ./
-COPY mesh-llm/Cargo.toml mesh-llm/Cargo.toml
-COPY mesh-llm/build.rs mesh-llm/build.rs
-COPY mesh-llm/plugin/Cargo.toml mesh-llm/plugin/Cargo.toml
-COPY mesh-llm/plugin/build.rs mesh-llm/plugin/build.rs
-COPY mesh-llm/proto/ mesh-llm/proto/
+COPY closedmesh/Cargo.toml closedmesh/Cargo.toml
+COPY closedmesh/build.rs closedmesh/build.rs
+COPY closedmesh/plugin/Cargo.toml closedmesh/plugin/Cargo.toml
+COPY closedmesh/plugin/build.rs closedmesh/plugin/build.rs
+COPY closedmesh/proto/ closedmesh/proto/
 # Satisfy Cargo workspace member resolution
-COPY mesh-llm/ mesh-llm/
-COPY mesh-client/ mesh-client/
+COPY closedmesh/ closedmesh/
+COPY closedmesh-client/ closedmesh-client/
 COPY mesh-api/ mesh-api/
 COPY mesh-host-core/ mesh-host-core/
 COPY mesh-api-ffi/ mesh-api-ffi/
-COPY mesh-llm-test-harness/ mesh-llm-test-harness/
+COPY closedmesh-test-harness/ closedmesh-test-harness/
 COPY tools/xtask/ tools/xtask/
-RUN mkdir -p mesh-llm/ui/dist && echo '<html></html>' > mesh-llm/ui/dist/index.html
+RUN mkdir -p closedmesh/ui/dist && echo '<html></html>' > closedmesh/ui/dist/index.html
 RUN cargo chef prepare --recipe-path recipe.json
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
@@ -57,28 +57,28 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
 
 FROM rust-deps AS rust-builder
 WORKDIR /src
-RUN rm -rf mesh-llm/ui/dist
-COPY --from=ui-builder /app/dist mesh-llm/ui/dist
+RUN rm -rf closedmesh/ui/dist
+COPY --from=ui-builder /app/dist closedmesh/ui/dist
 # Restore real build scripts (cargo-chef stubs them during cook)
 # Satisfy GitHub Actions preflight checks (exact strings required)
 COPY Cargo.toml Cargo.lock ./
-COPY mesh-llm/Cargo.toml mesh-llm/Cargo.toml
-COPY mesh-llm/build.rs mesh-llm/build.rs
-COPY mesh-llm/plugin/Cargo.toml mesh-llm/plugin/Cargo.toml
-COPY mesh-llm/plugin/build.rs mesh-llm/plugin/build.rs
-COPY mesh-llm/proto/ mesh-llm/proto/
+COPY closedmesh/Cargo.toml closedmesh/Cargo.toml
+COPY closedmesh/build.rs closedmesh/build.rs
+COPY closedmesh/plugin/Cargo.toml closedmesh/plugin/Cargo.toml
+COPY closedmesh/plugin/build.rs closedmesh/plugin/build.rs
+COPY closedmesh/proto/ closedmesh/proto/
 # Satisfy Cargo workspace member resolution
-COPY mesh-llm/ mesh-llm/
-COPY mesh-client/ mesh-client/
+COPY closedmesh/ closedmesh/
+COPY closedmesh-client/ closedmesh-client/
 COPY mesh-api/ mesh-api/
 COPY mesh-host-core/ mesh-host-core/
 COPY mesh-api-ffi/ mesh-api-ffi/
-COPY mesh-llm-test-harness/ mesh-llm-test-harness/
+COPY closedmesh-test-harness/ closedmesh-test-harness/
 COPY tools/xtask/ tools/xtask/
 RUN --mount=type=cache,target=/root/.cargo/registry \
     --mount=type=cache,target=/root/.cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p mesh-llm && \
+    cargo build --release --locked -p closedmesh && \
     mkdir -p /out && \
     cp /src/target/release/closedmesh /out/closedmesh
 

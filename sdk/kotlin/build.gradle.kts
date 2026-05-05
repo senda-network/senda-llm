@@ -167,7 +167,7 @@ publishing {
             artifact(sourcesJar)
 
             pom {
-                name.set("MeshLLM Android SDK")
+                name.set("ClosedMesh Android SDK")
                 description.set("Android/Kotlin bindings for connecting to ClosedMesh.")
                 url.set("https://github.com/closedmesh/closedmesh-llm")
 

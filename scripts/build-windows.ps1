@@ -8,9 +8,9 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir ".."))
-$llamaDir = if ($env:MESH_LLM_LLAMA_DIR) { $env:MESH_LLM_LLAMA_DIR } else { Join-Path $repoRoot ".deps\llama.cpp" }
+$llamaDir = if ($env:CLOSEDMESH_LLAMA_DIR) { $env:CLOSEDMESH_LLAMA_DIR } else { Join-Path $repoRoot ".deps\llama.cpp" }
 $buildDir = Join-Path $llamaDir "build"
-$meshUiDir = Join-Path $repoRoot "mesh-llm\ui"
+$meshUiDir = Join-Path $repoRoot "closedmesh\ui"
 $compilerLauncherArgs = @()
 $compilerCacheBin = $null
 
@@ -18,7 +18,7 @@ function Prepare-Llama {
     $pinFile = Join-Path $repoRoot "third_party\llama.cpp\upstream.txt"
     $patchDir = Join-Path $repoRoot "third_party\llama.cpp\patches"
     $upstreamUrl = if ($env:LLAMA_UPSTREAM_URL) { $env:LLAMA_UPSTREAM_URL } else { "https://github.com/ggml-org/llama.cpp.git" }
-    $targetSha = if ($env:MESH_LLM_LLAMA_PIN_SHA) { $env:MESH_LLM_LLAMA_PIN_SHA } else { (Get-Content $pinFile -Raw).Trim() }
+    $targetSha = if ($env:CLOSEDMESH_LLAMA_PIN_SHA) { $env:CLOSEDMESH_LLAMA_PIN_SHA } else { (Get-Content $pinFile -Raw).Trim() }
 
     if (-not (Test-Path $pinFile)) {
         throw "Missing llama.cpp upstream pin: $pinFile"

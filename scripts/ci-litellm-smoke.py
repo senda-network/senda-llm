@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""LiteLLM smoke against a mesh-llm OpenAI-compatible endpoint."""
+"""LiteLLM smoke against a closedmesh OpenAI-compatible endpoint."""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def main() -> None:
     response = completion(
         model=provider_model,
         api_base=args.base_url,
-        api_key="mesh-llm-ci",
+        api_key="closedmesh-ci",
         messages=[
             {"role": "user", "content": "Say hello in exactly 4 words."},
         ],
@@ -69,7 +69,7 @@ def main() -> None:
     stream = completion(
         model=provider_model,
         api_base=args.base_url,
-        api_key="mesh-llm-ci",
+        api_key="closedmesh-ci",
         messages=[
             {"role": "user", "content": "Count from one to three."},
         ],

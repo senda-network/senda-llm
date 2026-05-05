@@ -103,7 +103,7 @@ $upstream_commit_list
 ## Validation
 
 - [x] Applied ClosedMesh llama.cpp patch queue
-- [x] Built mesh-llm debug binary on Linux
+- [x] Built closedmesh debug binary on Linux
 - [x] Ran Linux unit tests and protocol compatibility tests
 - [x] Built patched llama.cpp CPU/RPC binaries on Linux
 - [x] Ran Linux CLI and client-auto smokes

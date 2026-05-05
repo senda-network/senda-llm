@@ -32,7 +32,7 @@ permissions:
   packages: write
 
 env:
-  CACHE_NAMESPACE: mesh-llm
+  CACHE_NAMESPACE: closedmesh
   SCCACHE_GHA_ENABLED: "true"
 
 jobs:
@@ -131,7 +131,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            mesh-llm/ui/package-lock.json
+            closedmesh/ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -203,7 +203,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: release-swift-package
-          path: dist/MeshLLMFFI.xcframework.zip
+          path: dist/ClosedMeshFFI.xcframework.zip
           if-no-files-found: error
 
   build:
@@ -236,7 +236,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            mesh-llm/ui/package-lock.json
+            closedmesh/ui/package-lock.json
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -321,7 +321,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            mesh-llm/ui/package-lock.json
+            closedmesh/ui/package-lock.json
 
       - name: Install system dependencies (Linux ARM64)
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
@@ -401,7 +401,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            mesh-llm/ui/package-lock.json
+            closedmesh/ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -477,7 +477,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            mesh-llm/ui/package-lock.json
+            closedmesh/ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -554,7 +554,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            mesh-llm/ui/package-lock.json
+            closedmesh/ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -597,7 +597,7 @@ jobs:
 
   # Windows: build the closedmesh.exe binary in CUDA and Vulkan flavors so the
   # closedmesh.com installer (install.ps1) has something to download. We do
-  # NOT build the upstream mesh-llm bundle on Windows yet — that flow includes
+  # NOT build the upstream closedmesh bundle on Windows yet — that flow includes
   # llama-server/rpc-server packaging which still hits the disabled-llama.cpp-
   # CUDA path. Closedmesh's binary is downloaded standalone by install.ps1.
   build_windows:
@@ -631,7 +631,7 @@ jobs:
 
       - name: Build closedmesh.exe (${{ matrix.flavor_label }})
         shell: pwsh
-        run: cargo build --release -p mesh-llm
+        run: cargo build --release -p closedmesh
 
       - name: Package closedmesh installer artifact (Windows x86_64 ${{ matrix.flavor_label }})
         shell: pwsh

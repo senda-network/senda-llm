@@ -1,6 +1,6 @@
-# MeshLLM Kotlin SDK
+# ClosedMesh Kotlin SDK
 
-Kotlin/Android bindings for connecting to mesh-llm meshes.
+Kotlin/Android bindings for connecting to closedmesh meshes.
 
 ## GitHub Packages
 

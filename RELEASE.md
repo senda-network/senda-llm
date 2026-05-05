@@ -1,4 +1,4 @@
-# Releasing mesh-llm
+# Releasing closedmesh
 
 ## Prerequisites
 
@@ -7,7 +7,7 @@
 - `cargo` installed (packaged with rust)
 - `gh` CLI authenticated (`gh auth status`)
 - patched llama.cpp checkout prepared (`just build` does this automatically)
-- `CARGO_REGISTRY_TOKEN` GitHub Actions secret configured if you want tagged stable releases to publish `mesh-llm-client` and `mesh-api` to crates.io
+- `CARGO_REGISTRY_TOKEN` GitHub Actions secret configured if you want tagged stable releases to publish `closedmesh-client` and `mesh-api` to crates.io
 
 ## Steps
 
@@ -44,7 +44,7 @@ Each should only show the binary name — no `/opt/homebrew/` paths.
 just bundle
 ```
 
-Creates `/tmp/mesh-bundle.tar.gz` containing `mesh-llm`, flavor-specific llama.cpp runtime binaries, `llama-moe-analyze` for MoE ranking generation, and `llama-moe-split` for MoE shard generation.
+Creates `/tmp/mesh-bundle.tar.gz` containing `closedmesh`, flavor-specific llama.cpp runtime binaries, `llama-moe-analyze` for MoE ranking generation, and `llama-moe-split` for MoE shard generation.
 
 Bundle naming now follows the same convention everywhere:
 
@@ -63,14 +63,14 @@ just release-bundle-rocm-windows v0.X.0
 just release-bundle-vulkan-windows v0.X.0
 ```
 
-Those commands emit `.zip` assets in `dist/` with `mesh-llm.exe`, plus flavor-specific `rpc-server-<flavor>.exe` and `llama-server-<flavor>.exe`.
-If optional Windows benchmark binaries such as `membench-fingerprint-cuda.exe` or `membench-fingerprint-hip.exe` are present in `mesh-llm/target/release/`, the PowerShell packager also includes them in the `.zip`.
+Those commands emit `.zip` assets in `dist/` with `closedmesh.exe`, plus flavor-specific `rpc-server-<flavor>.exe` and `llama-server-<flavor>.exe`.
+If optional Windows benchmark binaries such as `membench-fingerprint-cuda.exe` or `membench-fingerprint-hip.exe` are present in `closedmesh/target/release/`, the PowerShell packager also includes them in the `.zip`.
 
 ### 4. Smoke test the bundle
 
 ```bash
 mkdir /tmp/test-bundle && tar xzf /tmp/mesh-bundle.tar.gz -C /tmp/test-bundle --strip-components=1
-/tmp/test-bundle/mesh-llm --model Qwen2.5-3B
+/tmp/test-bundle/closedmesh --model Qwen2.5-3B
 # Should download model, start solo, API on :9337, console on :3131
 # Hit http://localhost:9337/v1/chat/completions to verify inference works
 # Ctrl+C to stop
@@ -114,7 +114,7 @@ Running `.github/workflows/release.yml` via `workflow_dispatch` triggers the rel
 - also builds Linux CUDA, Linux ROCm, and Linux Vulkan unless `skip_gpu_bundles=true` is set on a prerelease run
 - keeps the Windows publish block commented out for now, so GitHub release publishing does not currently upload Windows bundles
 - still leaves the local Windows bundle recipes available in `Justfile` for manual builds
-- uploads `MeshLLMFFI.xcframework.zip` for Swift Package Manager consumers
+- uploads `ClosedMeshFFI.xcframework.zip` for Swift Package Manager consumers
 - publishes the Android AAR to GitHub Packages as `ai.meshllm:meshllm-android:<version>`
 - uploads versioned assets such as `closedmesh-v0.X.0-darwin-aarch64.tar.gz`
 - uploads the Linux ARM64 CPU asset as `closedmesh-linux-aarch64.tar.gz`
@@ -125,14 +125,14 @@ Running `.github/workflows/release.yml` via `workflow_dispatch` triggers the rel
 - keeps the legacy macOS `mesh-bundle.tar.gz` asset available for direct archive installs
 - creates the GitHub release automatically with generated notes
 - marks hyphenated tags such as `v0.X.0-rc.1` as GitHub prereleases
-- publishes `mesh-llm-client` and `mesh-api` to crates.io after the release succeeds, including prerelease tags such as `v0.X.0-rc.1`
+- publishes `closedmesh-client` and `mesh-api` to crates.io after the release succeeds, including prerelease tags such as `v0.X.0-rc.1`
 - resets the target branch back to the placeholder Swift `Package.swift` after the release finishes, so day-to-day branch builds do not keep pointing at the most recent published XCFramework
 
 ### 6a. Autoupdater behavior and compatibility
 
 - Stable releases still use GitHub's `releases/latest` endpoint, so ordinary installs only see stable releases.
 - GitHub prereleases are excluded from `releases/latest`, so publishing `v0.X.0-rc.1` does not advertise that prerelease to older stable clients.
-- This change updates mesh-llm's version comparison to proper semver ordering, so a prerelease binary such as `0.X.0-rc.1` will correctly upgrade to the eventual stable `0.X.0` release, or to a specific tagged release when you run `mesh-llm update --version vX.Y.Z`.
+- This change updates closedmesh's version comparison to proper semver ordering, so a prerelease binary such as `0.X.0-rc.1` will correctly upgrade to the eventual stable `0.X.0` release, or to a specific tagged release when you run `closedmesh update --version vX.Y.Z`.
 - Older binaries that predate this change use a dot-splitting numeric comparison instead of semver. If one of those binaries somehow carries a prerelease version string such as `0.X.0-rc.1`, it can mis-order versions and may fail to recognize `0.X.0` or `0.X.1` as newer. In practice that only affects manually produced prerelease builds, because the old release tooling did not support `-rc.N` tags.
 - Result: the change is backward compatible for existing stable users, and it fixes updater behavior for official prerelease builds going forward.
 
@@ -140,7 +140,7 @@ Running `.github/workflows/release.yml` via `workflow_dispatch` triggers the rel
 
 After the workflow finishes, verify:
 
-- `MeshLLMFFI.xcframework.zip` exists for Swift Package Manager installs
+- `ClosedMeshFFI.xcframework.zip` exists for Swift Package Manager installs
 - `ai.meshllm:meshllm-android:<version>` is visible in the GitHub Packages Maven registry for the repo
 - `mesh-bundle.tar.gz` still exists for direct macOS archive installs
 - `closedmesh-darwin-aarch64.tar.gz` exists
@@ -160,12 +160,12 @@ After the workflow finishes, verify:
 - The workflow mutates the target branch by pushing the release commit before it starts the build matrix, then pushes a follow-up commit that restores the placeholder Swift package manifest after a successful release.
 - Tagged GitHub releases do not currently publish Windows bundles because the Windows release job remains commented out in `.github/workflows/release.yml`.
 - Android Maven publication currently targets GitHub Packages, not Maven Central.
-- Release bundles use flavor-specific `rpc-server-<flavor>` and `llama-server-<flavor>` names so multiple flavors can coexist in one install directory. Use `mesh-llm --llama-flavor <flavor>` to force a specific pair.
+- Release bundles use flavor-specific `rpc-server-<flavor>` and `llama-server-<flavor>` names so multiple flavors can coexist in one install directory. Use `closedmesh --llama-flavor <flavor>` to force a specific pair.
 - Prereleases can optionally skip the Linux CUDA, ROCm, and Vulkan bundles via the `skip_gpu_bundles=true` workflow input. Those tags will not be installable or updatable on CUDA/ROCm/Vulkan bundle installs until a later prerelease or stable release publishes matching assets.
 - The CUDA Linux release bundle is built in CI with an explicit multi-arch `CMAKE_CUDA_ARCHITECTURES` list and is not runtime-tested during the workflow.
 - The ROCm and Vulkan Linux release bundles are compile-tested in CI, but not runtime-tested against real GPUs during the workflow.
 - `codesign` and `xattr` may be needed on the receiving machine if macOS Gatekeeper blocks unsigned binaries:
   ```bash
-  codesign -s - /usr/local/bin/mesh-llm /usr/local/bin/rpc-server-metal /usr/local/bin/llama-server-metal /usr/local/bin/llama-moe-analyze /usr/local/bin/llama-moe-split
-  xattr -cr /usr/local/bin/mesh-llm /usr/local/bin/rpc-server-metal /usr/local/bin/llama-server-metal /usr/local/bin/llama-moe-analyze /usr/local/bin/llama-moe-split
+  codesign -s - /usr/local/bin/closedmesh /usr/local/bin/rpc-server-metal /usr/local/bin/llama-server-metal /usr/local/bin/llama-moe-analyze /usr/local/bin/llama-moe-split
+  xattr -cr /usr/local/bin/closedmesh /usr/local/bin/rpc-server-metal /usr/local/bin/llama-server-metal /usr/local/bin/llama-moe-analyze /usr/local/bin/llama-moe-split
   ```

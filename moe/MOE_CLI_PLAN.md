@@ -1,6 +1,6 @@
 # MoE CLI Plan
 
-This document records the planned `mesh-llm` command surface and UX for MoE ranking resolution, planning, analysis, submission, and `serve` integration.
+This document records the planned `closedmesh` command surface and UX for MoE ranking resolution, planning, analysis, submission, and `serve` integration.
 
 It is a planning document for the Rust CLI and runtime behavior. It builds on:
 
@@ -9,7 +9,7 @@ It is a planning document for the Rust CLI and runtime behavior. It builds on:
 
 ## Goals
 
-- Make MoE analysis and planning available from the main `mesh-llm` CLI.
+- Make MoE analysis and planning available from the main `closedmesh` CLI.
 - Reuse published rankings from `meshllm/moe-rankings` when available.
 - Prefer local cached rankings when they are strong enough.
 - Use Hugging Face when it has a stronger published artifact.
@@ -22,15 +22,15 @@ It is a planning document for the Rust CLI and runtime behavior. It builds on:
 Planned command family:
 
 ```text
-mesh-llm moe plan <model>
-mesh-llm moe analyze full <model>
-mesh-llm moe analyze micro <model>
-mesh-llm moe share <model>
+closedmesh moe plan <model>
+closedmesh moe analyze full <model>
+closedmesh moe analyze micro <model>
+closedmesh moe share <model>
 ```
 
 These are explicit subcommands, not flag modes.
 
-## `mesh-llm moe plan`
+## `closedmesh moe plan`
 
 Purpose:
 
@@ -44,7 +44,7 @@ Purpose:
 Planner ranking resolution should follow this precedence:
 
 1. `--ranking-file` override
-2. local `~/.cache/mesh-llm/...`
+2. local `~/.cache/closedmesh/...`
 3. Hugging Face dataset `meshllm/moe-rankings`
 
 However, local cache should only win when it is current enough.
@@ -54,7 +54,7 @@ Final resolution rule:
 1. If `--ranking-file` is provided, use it directly.
 2. Otherwise inspect local cached rankings.
 3. Inspect `meshllm/moe-rankings`.
-4. If Hugging Face has a stronger artifact than local cache, use the Hugging Face artifact via the Hugging Face cache/download path. Do not copy it into `~/.cache/mesh-llm/...`. If local and published artifacts have equal analyzer strength, keep the local cache.
+4. If Hugging Face has a stronger artifact than local cache, use the Hugging Face artifact via the Hugging Face cache/download path. Do not copy it into `~/.cache/closedmesh/...`. If local and published artifacts have equal analyzer strength, keep the local cache.
 5. Otherwise use local cache.
 
 This means planner behavior is:
@@ -130,7 +130,7 @@ Behavior:
 - validate the supplied ranking file
 - clearly state that an override was used
 
-## `mesh-llm moe analyze full`
+## `closedmesh moe analyze full`
 
 Purpose:
 
@@ -143,7 +143,7 @@ This should align to:
 
 - `full-v1`
 
-## `mesh-llm moe analyze micro`
+## `closedmesh moe analyze micro`
 
 Purpose:
 
@@ -190,8 +190,8 @@ Progress bars should be used for:
 - require a Hugging Face-backed model identity so the remote worker can resolve the same exact distribution
 - submit a Hugging Face Job from the Rust CLI
 - download a release bundle inside the remote job
-- run the public `mesh-llm moe analyze ...` command inside the job
-- run the public `mesh-llm moe share ...` command after successful analysis
+- run the public `closedmesh moe analyze ...` command inside the job
+- run the public `closedmesh moe share ...` command after successful analysis
 - open a dataset PR against `meshllm/moe-rankings` rather than writing directly to `main`
 
 ### Error Discoverability
@@ -212,11 +212,11 @@ Expected failure shape:
 
 ```text
 ❌ MoE analysis failed
-Log: ~/.cache/mesh-llm/moe/.../run.log
+Log: ~/.cache/closedmesh/moe/.../run.log
 Cause: llama-moe-analyze exited with code 1
 ```
 
-## `mesh-llm moe share`
+## `closedmesh moe share`
 
 Purpose:
 
@@ -255,19 +255,19 @@ Requirements:
 
 If the current `hf-hub` integration is missing dataset support needed for this flow, update the dependency or integration path instead of building a separate ad hoc downloader.
 
-## `mesh-llm serve` Integration
+## `closedmesh serve` Integration
 
-`mesh-llm serve` should remain separate from the explicit `moe` command family, but it should consume MoE rankings when useful.
+`closedmesh serve` should remain separate from the explicit `moe` command family, but it should consume MoE rankings when useful.
 
 ### Intended Behavior
 
 If a published or cached ranking exists for the model being served:
 
-- `mesh-llm serve` should use it
+- `closedmesh serve` should use it
 
 If no ranking exists:
 
-- `mesh-llm serve` may fall back to a heuristic or locally generated ranking path
+- `closedmesh serve` may fall back to a heuristic or locally generated ranking path
 - it should make the fallback visible
 
 ### Suggested Follow-Up After Local Ranking Generation
@@ -278,10 +278,10 @@ Example:
 
 ```text
 🧠 Generated local MoE ranking for this model
-📍 Cached at: ~/.cache/mesh-llm/...
+📍 Cached at: ~/.cache/closedmesh/...
 ☁️ No published ranking was found in meshllm/moe-rankings
 📤 Consider contributing it with:
-   mesh-llm moe share <model>
+   closedmesh moe share <model>
 ```
 
 `serve` should not auto-submit.
@@ -300,6 +300,6 @@ Placement outputs remain derived, not part of the first canonical ranking artifa
 
 ## Memory Flag Consistency
 
-The planner should use the same max-memory/max-VRAM naming already used elsewhere in `mesh-llm`.
+The planner should use the same max-memory/max-VRAM naming already used elsewhere in `closedmesh`.
 
 Do not introduce a conflicting new spelling if an existing standard already exists in the CLI.

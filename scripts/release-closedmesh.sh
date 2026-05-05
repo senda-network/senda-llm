@@ -3,7 +3,7 @@
 #
 # Produces dist-release/closedmesh-<platform-suffix>.tar.gz, where <platform-suffix>
 # matches what closedmesh/public/install.sh asks for. Runs alongside the existing
-# scripts/package-release.sh (which produces the upstream mesh-llm bundle).
+# scripts/package-release.sh (which produces the upstream closedmesh bundle).
 #
 # What goes in the tarball depends on the flavor:
 #
@@ -39,7 +39,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RELEASE_BIN_DIR="$REPO_ROOT/target/release"
-BUILD_BIN_DIR="${MESH_LLM_LLAMA_BUILD_BIN_DIR:-$REPO_ROOT/.deps/llama.cpp/build/bin}"
+BUILD_BIN_DIR="${CLOSEDMESH_LLAMA_BUILD_BIN_DIR:-$REPO_ROOT/.deps/llama.cpp/build/bin}"
 DIST_DIR_DEFAULT="$REPO_ROOT/dist-release"
 
 FLAVOR="${MESH_RELEASE_FLAVOR:-}"
@@ -166,7 +166,7 @@ if (( include_runtime )); then
     for bin in "rpc-server" "llama-server" "llama-moe-analyze" "llama-moe-split"; do
         src="$BUILD_BIN_DIR/$bin"
         [[ ! -x "$src" ]] && missing_bins+=("$bin") && continue
-        # Flavor-suffix the two that mesh-llm's launch.rs expects flavored.
+        # Flavor-suffix the two that closedmesh's launch.rs expects flavored.
         case "$bin" in
             rpc-server|llama-server) dest="$stage/${bin}-${FLAVOR}" ;;
             *)                       dest="$stage/${bin}" ;;

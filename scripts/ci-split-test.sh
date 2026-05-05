@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ci-split-test.sh — verify that split-mode routes chat requests to the Host, not the Worker.
 #
-# Starts three mesh-llm nodes on the same machine:
+# Starts three closedmesh nodes on the same machine:
 #   Node A + B — compute nodes (CPU) with --split (one becomes Host, one becomes Worker)
 #   Node C    — client-only node (routes via target map built from peer gossip)
 #
 # The bug: Node C's target map could pick the Worker as an HTTP target.
 # Workers only run rpc-server and return empty/broken responses to chat requests.
 #
-# Usage: scripts/ci-split-test.sh <mesh-llm-binary> <bin-dir> <model-path>
+# Usage: scripts/ci-split-test.sh <closedmesh-binary> <bin-dir> <model-path>
 #
 # Expects llama-server and rpc-server in <bin-dir>.
 # Exits 0 on success, 1 on failure.
@@ -28,18 +28,18 @@ C_CONSOLE_PORT=3143
 MAX_WAIT=180
 MAX_CLIENT_ROUTE_WAIT=60
 MAX_INFERENCE_ATTEMPTS=15
-LOG_A=/tmp/mesh-llm-split-a.log
-LOG_B=/tmp/mesh-llm-split-b.log
-LOG_C=/tmp/mesh-llm-split-c.log
+LOG_A=/tmp/closedmesh-split-a.log
+LOG_B=/tmp/closedmesh-split-b.log
+LOG_C=/tmp/closedmesh-split-c.log
 
 echo "=== CI Split-Mode Routing Test ==="
-echo "  mesh-llm:  $MESH_LLM"
+echo "  closedmesh:  $MESH_LLM"
 echo "  bin-dir:   $BIN_DIR"
 echo "  model:     $MODEL"
 echo "  os:        $(uname -s)"
 
 if [ ! -f "$MESH_LLM" ]; then
-    echo "❌ Missing mesh-llm binary: $MESH_LLM"
+    echo "❌ Missing closedmesh binary: $MESH_LLM"
     exit 1
 fi
 
@@ -67,7 +67,7 @@ trap cleanup EXIT
 # ── Start Node A ──
 echo ""
 echo "Starting Node A..."
-MESH_LLM_EPHEMERAL_KEY=1 "$MESH_LLM" \
+CLOSEDMESH_EPHEMERAL_KEY=1 "$MESH_LLM" \
     serve \
     --model "$MODEL" \
     --split \
@@ -106,7 +106,7 @@ done
 # ── Start Node B ──
 echo ""
 echo "Starting Node B..."
-MESH_LLM_EPHEMERAL_KEY=1 "$MESH_LLM" \
+CLOSEDMESH_EPHEMERAL_KEY=1 "$MESH_LLM" \
     serve \
     --model "$MODEL" \
     --split \
@@ -171,7 +171,7 @@ done
 # ── Start Node C (client) ──
 echo ""
 echo "Starting Node C (client)..."
-MESH_LLM_EPHEMERAL_KEY=1 "$MESH_LLM" \
+CLOSEDMESH_EPHEMERAL_KEY=1 "$MESH_LLM" \
     client \
     --no-draft \
     --bin-dir "$BIN_DIR" \

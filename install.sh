@@ -11,17 +11,17 @@ INSTALL_SERVICE="${CLOSEDMESH_INSTALL_SERVICE:-0}"
 INSTALL_SERVICE_ARGS="${CLOSEDMESH_INSTALL_SERVICE_ARGS:-}"
 INSTALL_SERVICE_START="${CLOSEDMESH_INSTALL_SERVICE_START:-1}"
 
-SERVICE_NAME="mesh-llm"
-SERVICE_LABEL="com.mesh-llm.mesh-llm"
-MESH_CONFIG_FILE="$HOME/.mesh-llm/config.toml"
-SERVICE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/mesh-llm"
+SERVICE_NAME="closedmesh"
+SERVICE_LABEL="com.closedmesh"
+MESH_CONFIG_FILE="$HOME/.closedmesh/config.toml"
+SERVICE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/closedmesh"
 SERVICE_ENV_FILE="$SERVICE_CONFIG_DIR/service.env"
 SERVICE_RUNNER="$SERVICE_CONFIG_DIR/run-service.sh"
 SYSTEMD_UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SYSTEMD_UNIT_PATH="$SYSTEMD_UNIT_DIR/$SERVICE_NAME.service"
 LAUNCHD_AGENT_DIR="$HOME/Library/LaunchAgents"
 LAUNCHD_PLIST_PATH="$LAUNCHD_AGENT_DIR/$SERVICE_LABEL.plist"
-LAUNCHD_LOG_DIR="$HOME/Library/Logs/mesh-llm"
+LAUNCHD_LOG_DIR="$HOME/Library/Logs/closedmesh"
 LAUNCHD_STDOUT_LOG="$LAUNCHD_LOG_DIR/stdout.log"
 LAUNCHD_STDERR_LOG="$LAUNCHD_LOG_DIR/stderr.log"
 DIST_DIR="dist"
@@ -81,7 +81,7 @@ parse_args() {
                 INSTALL_SERVICE=1
                 ;;
             --service-args)
-                echo "error: background services now run \`mesh-llm serve\` and load startup models from $MESH_CONFIG_FILE" >&2
+                echo "error: background services now run \`closedmesh serve\` and load startup models from $MESH_CONFIG_FILE" >&2
                 echo "Add startup models under [[models]] instead of passing custom service args." >&2
                 exit 1
                 ;;
@@ -104,8 +104,8 @@ parse_args() {
 }
 
 platform_os() {
-    if [[ -n "${MESH_LLM_TEST_UNAME_S:-}" ]]; then
-        printf '%s\n' "$MESH_LLM_TEST_UNAME_S"
+    if [[ -n "${CLOSEDMESH_TEST_UNAME_S:-}" ]]; then
+        printf '%s\n' "$CLOSEDMESH_TEST_UNAME_S"
         return 0
     fi
 
@@ -117,8 +117,8 @@ platform_arch() {
     local arch
 
     os="$(platform_os)"
-    if [[ -n "${MESH_LLM_TEST_UNAME_M:-}" ]]; then
-        arch="$MESH_LLM_TEST_UNAME_M"
+    if [[ -n "${CLOSEDMESH_TEST_UNAME_M:-}" ]]; then
+        arch="$CLOSEDMESH_TEST_UNAME_M"
     else
         arch="$(uname -m)"
     fi
@@ -474,7 +474,7 @@ release_url() {
 
 stale_binary_names() {
     cat <<'EOF'
-mesh-llm
+closedmesh
 rpc-server
 llama-server
 llama-moe-split
@@ -608,7 +608,7 @@ ensure_service_env_file() {
 
     mkdir -p "$(dirname "$SERVICE_ENV_FILE")"
     {
-        echo "# Optional environment variables for mesh-llm."
+        echo "# Optional environment variables for closedmesh."
         echo "# Use plain KEY=value lines."
         echo "# Example:"
         echo "# RUST_LOG=mesh_inference=debug"
@@ -623,11 +623,11 @@ write_service_runner() {
 
 set -euo pipefail
 
-BIN="$INSTALL_DIR/mesh-llm"
+BIN="$INSTALL_DIR/closedmesh"
 ENV_FILE="$SERVICE_ENV_FILE"
 
 if [[ ! -x "\$BIN" ]]; then
-    echo "mesh-llm binary not found or not executable: \$BIN" >&2
+    echo "closedmesh binary not found or not executable: \$BIN" >&2
     exit 1
 fi
 
@@ -655,10 +655,10 @@ install_systemd_service() {
     mkdir -p "$SERVICE_CONFIG_DIR" "$SYSTEMD_UNIT_DIR"
     ensure_service_env_file
     local exec_line
-    exec_line="ExecStart=$(systemd_quote_token "$INSTALL_DIR/mesh-llm") serve"
+    exec_line="ExecStart=$(systemd_quote_token "$INSTALL_DIR/closedmesh") serve"
 
     render_template_to_file "$SYSTEMD_TEMPLATE_PATH" "$SYSTEMD_UNIT_PATH" \
-        "ARGS_METADATA=# mesh-llm serve (startup models come from $MESH_CONFIG_FILE)" \
+        "ARGS_METADATA=# closedmesh serve (startup models come from $MESH_CONFIG_FILE)" \
         "SERVICE_ENV_FILE=$SERVICE_ENV_FILE" \
         "ENV_LINES=" \
         "EXEC_LINE=$exec_line"
@@ -739,7 +739,7 @@ install_service() {
 main() {
     parse_args "$@"
     if [[ -n "$INSTALL_SERVICE_ARGS" ]]; then
-        echo "error: background services now run \`mesh-llm serve\` and load startup models from $MESH_CONFIG_FILE" >&2
+        echo "error: background services now run \`closedmesh serve\` and load startup models from $MESH_CONFIG_FILE" >&2
         echo "Add startup models under [[models]] instead of using CLOSEDMESH_INSTALL_SERVICE_ARGS." >&2
         exit 1
     fi

@@ -1,1 +1,1 @@
-rootProject.name = "MeshLLM"
+rootProject.name = "ClosedMesh"

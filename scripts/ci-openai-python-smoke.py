@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Official openai-python smoke against a mesh-llm OpenAI-compatible endpoint."""
+"""Official openai-python smoke against a closedmesh OpenAI-compatible endpoint."""
 
 from __future__ import annotations
 
@@ -41,7 +41,7 @@ def main() -> None:
         ) from exc
 
     client = OpenAI(
-        api_key="mesh-llm-ci",
+        api_key="closedmesh-ci",
         base_url=args.base_url,
     )
 

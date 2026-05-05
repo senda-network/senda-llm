@@ -17,7 +17,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PACKAGE_SWIFT="$REPO_ROOT/Package.swift"
 ARTIFACT_DIR="$REPO_ROOT/dist"
-ARTIFACT_NAME="MeshLLMFFI.xcframework.zip"
+ARTIFACT_NAME="ClosedMeshFFI.xcframework.zip"
 ARTIFACT_PATH="$ARTIFACT_DIR/$ARTIFACT_NAME"
 ARTIFACT_URL="https://github.com/closedmesh/closedmesh-llm/releases/download/$TAG/$ARTIFACT_NAME"
 
@@ -27,7 +27,7 @@ mkdir -p "$ARTIFACT_DIR"
 
 rm -f "$ARTIFACT_PATH"
 ditto -c -k --sequesterRsrc --keepParent \
-    "$REPO_ROOT/sdk/swift/Generated/MeshLLMFFI.xcframework" \
+    "$REPO_ROOT/sdk/swift/Generated/ClosedMeshFFI.xcframework" \
     "$ARTIFACT_PATH"
 
 CHECKSUM="$(swift package compute-checksum "$ARTIFACT_PATH")"

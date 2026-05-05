@@ -80,7 +80,7 @@ fn fixture_rows(repo_root: &Path) -> DynResult<Vec<FixtureRow>> {
 
 fn fixture_path(repo_root: &Path) -> PathBuf {
     repo_root
-        .join("mesh-llm")
+        .join("closedmesh")
         .join("tests")
         .join("fixtures")
         .join("release-target-matrix.json")
@@ -160,8 +160,8 @@ fn check_installer_outcomes(repo_root: &Path, rows: &[FixtureRow]) -> DynResult<
 
     for case in cases {
         let envs = [
-            ("MESH_LLM_TEST_UNAME_S", case.raw_os),
-            ("MESH_LLM_TEST_UNAME_M", case.raw_arch),
+            ("CLOSEDMESH_TEST_UNAME_S", case.raw_os),
+            ("CLOSEDMESH_TEST_UNAME_M", case.raw_arch),
         ];
         let actual_platform =
             sourced_script_stdout(repo_root, "install.sh", "platform_id", &envs, &[])?;
@@ -195,8 +195,8 @@ fn check_installer_outcomes(repo_root: &Path, rows: &[FixtureRow]) -> DynResult<
 
     let arm_fixture = fixture_row(rows, "linux", "arm", "cpu")?;
     let arm_envs = [
-        ("MESH_LLM_TEST_UNAME_S", "Linux"),
-        ("MESH_LLM_TEST_UNAME_M", "armv7l"),
+        ("CLOSEDMESH_TEST_UNAME_S", "Linux"),
+        ("CLOSEDMESH_TEST_UNAME_M", "armv7l"),
     ];
     let actual_support = sourced_script_stdout(
         repo_root,

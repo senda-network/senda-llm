@@ -4,9 +4,9 @@ import Foundation
 
 let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let swiftSDKRelativePath = "sdk/swift"
-let ffiXCFrameworkRelativePath = "\(swiftSDKRelativePath)/Generated/MeshLLMFFI.xcframework"
+let ffiXCFrameworkRelativePath = "\(swiftSDKRelativePath)/Generated/ClosedMeshFFI.xcframework"
 let ffiXCFrameworkPath = "\(repoRoot)/\(ffiXCFrameworkRelativePath)"
-let remoteFFIXCFrameworkURL = "https://github.com/closedmesh/closedmesh-llm/releases/download/__MESH_SWIFT_RELEASE_TAG__/MeshLLMFFI.xcframework.zip"
+let remoteFFIXCFrameworkURL = "https://github.com/closedmesh/closedmesh-llm/releases/download/__MESH_SWIFT_RELEASE_TAG__/ClosedMeshFFI.xcframework.zip"
 let remoteFFIXCFrameworkChecksum = "__MESH_SWIFT_RELEASE_CHECKSUM__"
 let forceStubFFI = ProcessInfo.processInfo.environment["MESH_SWIFT_FORCE_STUB"] == "1"
 let hasLocalFFIXCFramework = FileManager.default.fileExists(atPath: ffiXCFrameworkPath)
@@ -18,18 +18,18 @@ var meshLLMDependencies: [Target.Dependency] = []
 var packageTargets: [Target] = []
 
 if hasLocalFFIXCFramework {
-    meshLLMDependencies.append("MeshLLMFFI")
+    meshLLMDependencies.append("ClosedMeshFFI")
     packageTargets.append(
         .binaryTarget(
-            name: "MeshLLMFFI",
+            name: "ClosedMeshFFI",
             path: ffiXCFrameworkRelativePath
         )
     )
 } else if hasRemoteFFIXCFramework {
-    meshLLMDependencies.append("MeshLLMFFI")
+    meshLLMDependencies.append("ClosedMeshFFI")
     packageTargets.append(
         .binaryTarget(
-            name: "MeshLLMFFI",
+            name: "ClosedMeshFFI",
             url: remoteFFIXCFrameworkURL,
             checksum: remoteFFIXCFrameworkChecksum
         )
@@ -39,31 +39,31 @@ if hasLocalFFIXCFramework {
 let hasFFIBinaryTarget = hasLocalFFIXCFramework || hasRemoteFFIXCFramework
 
 let package = Package(
-    name: "MeshLLM",
+    name: "ClosedMesh",
     platforms: [
         .iOS(.v16),
         .macOS(.v13),
     ],
     products: [
         .library(
-            name: "MeshLLM",
-            targets: ["MeshLLM"]
+            name: "ClosedMesh",
+            targets: ["ClosedMesh"]
         ),
     ],
     targets: [
         .target(
-            name: "MeshLLM",
+            name: "ClosedMesh",
             dependencies: meshLLMDependencies,
-            path: "sdk/swift/Sources/MeshLLM",
+            path: "sdk/swift/Sources/ClosedMesh",
             exclude: hasFFIBinaryTarget ? [] : ["Generated"],
             linkerSettings: [
                 .linkedFramework("SystemConfiguration"),
             ]
         ),
         .testTarget(
-            name: "MeshLLMTests",
-            dependencies: ["MeshLLM"],
-            path: "sdk/swift/Tests/MeshLLMTests"
+            name: "ClosedMeshTests",
+            dependencies: ["ClosedMesh"],
+            path: "sdk/swift/Tests/ClosedMeshTests"
         ),
     ] + packageTargets
 )

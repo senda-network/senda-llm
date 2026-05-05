@@ -1,8 +1,8 @@
 # Distributed LLM Inference — build & run tasks
 
-llama_dir := env("MESH_LLM_LLAMA_DIR", ".deps/llama.cpp")
+llama_dir := env("CLOSEDMESH_LLAMA_DIR", ".deps/llama.cpp")
 build_dir := llama_dir / "build"
-mesh_dir := "mesh-llm"
+mesh_dir := "closedmesh"
 ui_dir := mesh_dir / "ui"
 benchmark_src_dir := mesh_dir / "benchmarks"
 home_dir := if os_family() == "windows" { env("USERPROFILE") } else { env("HOME") }

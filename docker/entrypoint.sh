@@ -29,7 +29,7 @@ fi
 #
 # Defaults are deliberately PRIVATE (no auto-discovery, no Nostr publishing).
 # Both flags caused the May 2026 incident where the canonical entry node on
-# mesh.closedmesh.com silently joined the upstream `mesh-llm` community pool
+# mesh.closedmesh.com silently joined the upstream `closedmesh` community pool
 # and started routing chat traffic for ~17 strangers visible on
 # closedmesh.com/status. Opt-in is intentional now: the public entry doesn't
 # need either flag (real users find it via the embedded FALLBACK_JOIN_TOKEN
@@ -104,7 +104,7 @@ case "$APP_MODE" in
     exec closedmesh client --port "$INTERNAL_PORT" --console "$CONSOLE_PORT" --listen-all $AUTO_FLAG $HEADLESS_FLAG $MESH_NAME_FLAG $PUBLISH_FLAG $BIND_PORT_FLAG
     ;;
   worker)
-    BIN_DIR=/usr/local/lib/mesh-llm/bin
+    BIN_DIR=/usr/local/lib/closedmesh/bin
     set -- "$BIN_DIR"/rpc-server-*
     RPC_SERVER="$1"
     set -- "$BIN_DIR"/llama-server-*

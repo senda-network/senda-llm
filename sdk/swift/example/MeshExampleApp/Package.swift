@@ -13,7 +13,7 @@ let package = Package(
         .executableTarget(
             name: "MeshExampleApp",
             dependencies: [
-                .product(name: "MeshLLM", package: "closedmesh-llm"),
+                .product(name: "ClosedMesh", package: "closedmesh-llm"),
             ],
             path: "Sources/MeshExampleApp"
         ),

@@ -155,7 +155,7 @@ start_phase() {
     launch_env=("${extra_env[@]}" "${launch_env[@]}")
   fi
   if [[ "$ENTRY_MODE" == "passive" ]]; then
-    launch_env=("MESH_LLM_FORCE_DUPLICATE_HOSTS=1" "${launch_env[@]}")
+    launch_env=("CLOSEDMESH_FORCE_DUPLICATE_HOSTS=1" "${launch_env[@]}")
   fi
   if [[ "$NO_DRAFT" == "1" ]]; then
     extra_args+=(--no-draft)
@@ -187,7 +187,7 @@ EOF
   token="$(wait_for_token "$NODE1_LOG")"
 
   env "${launch_env[@]}" \
-    MESH_LLM_EPHEMERAL_KEY=1 \
+    CLOSEDMESH_EPHEMERAL_KEY=1 \
     "$MESH_BIN" \
     serve \
     --config "$CONFIG_PATH" \
@@ -528,18 +528,18 @@ print(
 PY
 }
 
-require_file "$MESH_BIN" "mesh-llm binary"
+require_file "$MESH_BIN" "closedmesh binary"
 require_file "$BIN_DIR/llama-server" "llama.cpp llama-server"
 require_file "$MODEL_PATH" "benchmark model"
 
 echo "Logs: $TMP_DIR"
 
-start_phase "sticky-only" MESH_LLM_DISABLE_PREFIX_AFFINITY=1
+start_phase "sticky-only" CLOSEDMESH_DISABLE_PREFIX_AFFINITY=1
 run_workload "sticky-only" "$TMP_DIR/sticky-only.json"
 annotate_route_distribution "$TMP_DIR/sticky-only.json"
 stop_nodes
 
-start_phase "prefix-only" MESH_LLM_PREFIX_ONLY=1
+start_phase "prefix-only" CLOSEDMESH_PREFIX_ONLY=1
 run_workload "prefix-only" "$TMP_DIR/prefix-only.json"
 annotate_route_distribution "$TMP_DIR/prefix-only.json"
 report_comparison "$TMP_DIR/sticky-only.json" "$TMP_DIR/prefix-only.json"

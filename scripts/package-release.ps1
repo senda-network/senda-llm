@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir ".."))
-$buildBinDir = if ($env:MESH_LLM_LLAMA_BUILD_BIN_DIR) { $env:MESH_LLM_LLAMA_BUILD_BIN_DIR } else { Join-Path $repoRoot ".deps\llama.cpp\build\bin" }
+$buildBinDir = if ($env:CLOSEDMESH_LLAMA_BUILD_BIN_DIR) { $env:CLOSEDMESH_LLAMA_BUILD_BIN_DIR } else { Join-Path $repoRoot ".deps\llama.cpp\build\bin" }
 $releaseBinDir = Join-Path $repoRoot "target\release"
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -96,7 +96,7 @@ function Get-BundleBinaryName {
         [string]$BinaryFlavor
     )
 
-    if ($BaseName -eq "mesh-llm" -or $BaseName -eq "closedmesh") {
+    if ($BaseName -eq "closedmesh" -or $BaseName -eq "closedmesh") {
         return "closedmesh.exe"
     }
 
@@ -179,7 +179,7 @@ $resolvedOutputDir = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
 }
 New-Item -ItemType Directory -Path $resolvedOutputDir -Force | Out-Null
 
-$stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("mesh-llm-release-" + [System.Guid]::NewGuid().ToString("N"))
+$stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("closedmesh-release-" + [System.Guid]::NewGuid().ToString("N"))
 $bundleDir = Join-Path $stagingRoot "mesh-bundle"
 New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
 

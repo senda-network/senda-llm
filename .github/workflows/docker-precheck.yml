@@ -79,18 +79,18 @@ jobs:
             exit 1
           fi
           grep -qE '^\s*COPY\s+Cargo\.toml\s+Cargo\.lock\s+\./?$' "$file"
-          grep -q "COPY mesh-llm/Cargo.toml" "$file"
-          grep -q "COPY mesh-llm/build.rs" "$file"
-          grep -q "COPY mesh-llm/plugin/Cargo.toml" "$file"
-          grep -q "COPY mesh-llm/plugin/build.rs" "$file"
-          grep -q "COPY mesh-llm/proto/" "$file"
+          grep -q "COPY closedmesh/Cargo.toml" "$file"
+          grep -q "COPY closedmesh/build.rs" "$file"
+          grep -q "COPY closedmesh/plugin/Cargo.toml" "$file"
+          grep -q "COPY closedmesh/plugin/build.rs" "$file"
+          grep -q "COPY closedmesh/proto/" "$file"
           for path in \
-            mesh-llm/ \
-            mesh-client/ \
+            closedmesh/ \
+            closedmesh-client/ \
             mesh-api/ \
             mesh-host-core/ \
             mesh-api-ffi/ \
-            mesh-llm-test-harness/ \
+            closedmesh-test-harness/ \
             tools/xtask/
           do
             grep -q "COPY ${path} ${path}" "$file"

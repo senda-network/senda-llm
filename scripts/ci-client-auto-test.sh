@@ -1,36 +1,36 @@
 #!/usr/bin/env bash
-# ci-client-auto-test.sh — verify `mesh-llm client --auto` boots its API.
+# ci-client-auto-test.sh — verify `closedmesh client --auto` boots its API.
 #
 # The critical invariant: even when Nostr discovery returns dead/stale peers,
 # the management API on :3131 must come up. A broken implementation thrashes
 # retrying dead peers and never binds the console port.
 #
-# Usage: scripts/ci-client-auto-test.sh <mesh-llm-binary>
+# Usage: scripts/ci-client-auto-test.sh <closedmesh-binary>
 #
 # Exits 0 if the API is reachable within the timeout, 1 otherwise.
 
 set -euo pipefail
 
-MESH_LLM="${1:?Usage: $0 <mesh-llm-binary>}"
+MESH_LLM="${1:?Usage: $0 <closedmesh-binary>}"
 CONSOLE_PORT=3132        # avoid clashing with other CI steps
 API_PORT=9338
 MAX_WAIT=120             # seconds — generous for Nostr discovery + join attempt
-LOG=/tmp/mesh-llm-client-auto.log
+LOG=/tmp/closedmesh-client-auto.log
 
 echo "=== CI Client-Auto Test ==="
-echo "  mesh-llm:     $MESH_LLM"
+echo "  closedmesh:     $MESH_LLM"
 echo "  console port: $CONSOLE_PORT"
 echo "  api port:     $API_PORT"
 echo "  max wait:     ${MAX_WAIT}s"
 echo "  os:           $(uname -s)"
 
 if [ ! -f "$MESH_LLM" ]; then
-    echo "❌ Missing mesh-llm binary: $MESH_LLM"
+    echo "❌ Missing closedmesh binary: $MESH_LLM"
     exit 1
 fi
 
-# Start mesh-llm client --auto in background
-echo "Starting mesh-llm client --auto..."
+# Start closedmesh client --auto in background
+echo "Starting closedmesh client --auto..."
 "$MESH_LLM" \
     client \
     --auto \
@@ -41,7 +41,7 @@ MESH_PID=$!
 echo "  PID: $MESH_PID"
 
 cleanup() {
-    echo "Shutting down mesh-llm (PID $MESH_PID)..."
+    echo "Shutting down closedmesh (PID $MESH_PID)..."
     kill "$MESH_PID" 2>/dev/null || true
     pkill -P "$MESH_PID" 2>/dev/null || true
     sleep 1
@@ -62,7 +62,7 @@ API_UP=false
 for i in $(seq 1 "$MAX_WAIT"); do
     # Check process is still alive
     if ! kill -0 "$MESH_PID" 2>/dev/null; then
-        echo "⚠️  mesh-llm exited (may be expected if no meshes found)"
+        echo "⚠️  closedmesh exited (may be expected if no meshes found)"
         echo "--- Log tail ---"
         tail -40 "$LOG" 2>/dev/null || true
         # If it exited because "No meshes found after 5 minutes" that's a
@@ -79,7 +79,7 @@ for i in $(seq 1 "$MAX_WAIT"); do
                 exit 1
             fi
         fi
-        echo "❌ mesh-llm exited unexpectedly"
+        echo "❌ closedmesh exited unexpectedly"
         exit 1
     fi
 

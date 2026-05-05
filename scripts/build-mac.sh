@@ -1,5 +1,5 @@
 #!/usr/bin/env zsh
-# build-mac.sh — build llama.cpp + mesh-llm on macOS Apple Silicon
+# build-mac.sh — build llama.cpp + closedmesh on macOS Apple Silicon
 #
 # Usage:
 #   scripts/build-mac.sh
@@ -9,9 +9,9 @@ setopt errexit nounset pipefail
 SCRIPT_DIR="${0:A:h}"
 REPO_ROOT="${SCRIPT_DIR:h}"
 
-LLAMA_DIR="${MESH_LLM_LLAMA_DIR:-$REPO_ROOT/.deps/llama.cpp}"
+LLAMA_DIR="${CLOSEDMESH_LLAMA_DIR:-$REPO_ROOT/.deps/llama.cpp}"
 BUILD_DIR="$LLAMA_DIR/build"
-MESH_DIR="$REPO_ROOT/mesh-llm"
+MESH_DIR="$REPO_ROOT/closedmesh"
 UI_DIR="$MESH_DIR/ui"
 
 compiler_launcher_flags=()
@@ -43,7 +43,7 @@ configure_compiler_cache() {
     fi
 }
 
-LLAMA_WORKDIR="$LLAMA_DIR" "$SCRIPT_DIR/prepare-llama.sh" "${MESH_LLM_LLAMA_PIN_SHA:-pinned}"
+LLAMA_WORKDIR="$LLAMA_DIR" "$SCRIPT_DIR/prepare-llama.sh" "${CLOSEDMESH_LLAMA_PIN_SHA:-pinned}"
 
 configure_compiler_cache
 
@@ -70,7 +70,7 @@ cmake --build "$BUILD_DIR" --config Release --parallel "$(detect_jobs)"
 echo "Build complete: $BUILD_DIR/bin/"
 
 if [[ -d "$MESH_DIR" ]]; then
-    echo "Building mesh-llm..."
+    echo "Building closedmesh..."
     if [[ -d "$UI_DIR" ]]; then
         "$SCRIPT_DIR/build-ui.sh" "$UI_DIR"
     fi

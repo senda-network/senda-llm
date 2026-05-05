@@ -39,7 +39,7 @@ If a model fits on one machine, it runs there. If it doesn't, ClosedMesh LLM aut
 
 The two are versioned and released independently. Most teams only ever install the runtime — the chat product talks to it for them.
 
-> ClosedMesh LLM is a fork of [Mesh-LLM/mesh-llm](https://github.com/closedmesh/closedmesh-llm). The Rust crate names are kept upstream-compatible (`mesh-llm`, `mesh-client`, etc.) so we can rebase cleanly; the **shipped binary**, **service label**, and **data directory** are all `closedmesh`-branded.
+> ClosedMesh LLM is a fork of [Mesh-LLM/closedmesh](https://github.com/closedmesh/closedmesh-llm). The Rust crate names are kept upstream-compatible (`closedmesh`, `mesh-client`, etc.) so we can rebase cleanly; the **shipped binary**, **service label**, and **data directory** are all `closedmesh`-branded.
 
 ## Quick start
 
@@ -147,7 +147,7 @@ If a node has enough VRAM, it always runs the full model. Splitting only happens
 
 **Demand-aware rebalancing** — a unified demand map tracks which models the mesh wants (from `--model` flags, API requests, and gossip). Demand signals propagate infectiously across all nodes and decay naturally via TTL. Standby nodes auto-promote to serve unserved models with active demand, or rebalance when one model is significantly hotter than others.
 
-**Inter-model collaboration** — models on the mesh help each other during inference. When a text-only model receives an image, it silently consults a vision model for a caption and generates from that. When a small model is uncertain, it races two peers for a second opinion and injects the winner's answer as context. The caller sees one seamless response — they don't know multiple models collaborated. See [mesh-llm/docs/VIRTUAL_LLM.md](mesh-llm/docs/VIRTUAL_LLM.md).
+**Inter-model collaboration** — models on the mesh help each other during inference. When a text-only model receives an image, it silently consults a vision model for a caption and generates from that. When a small model is uncertain, it races two peers for a second opinion and injects the winner's answer as context. The caller sees one seamless response — they don't know multiple models collaborated. See [closedmesh/docs/VIRTUAL_LLM.md](closedmesh/docs/VIRTUAL_LLM.md).
 
 **Latency design** — HTTP streaming is latency-tolerant; RPC is latency-multiplied. llama-server always runs on the same box as the GPU. The mesh tunnels HTTP, so cross-network latency only affects time-to-first-token, not per-token throughput. RPC only crosses the network for pipeline splits where the model physically doesn't fit on one machine.
 
@@ -195,7 +195,7 @@ sudo loginctl enable-linger "$USER"
 {"timestamp":"...","level":"info","event":"ready","api_url":"http://localhost:9337","console_url":"http://localhost:3131","api_port":9337,"console_port":3131,"models_count":2,"message":"closedmesh runtime ready"}
 ```
 
-For the full event taxonomy and field reference, see [mesh-llm/src/cli/output/EVENTS.md](mesh-llm/src/cli/output/EVENTS.md).
+For the full event taxonomy and field reference, see [closedmesh/src/cli/output/EVENTS.md](closedmesh/src/cli/output/EVENTS.md).
 
 ## Verify which backend loaded
 
@@ -230,7 +230,7 @@ ClosedMesh LLM supports multimodal requests on:
 | Any model with `vision_config` / vision token IDs | yes | depends |
 | Any model with `audio_config` / audio token IDs | depends | yes |
 
-For the full capability and transport details, see [mesh-llm/docs/MULTI_MODAL.md](mesh-llm/docs/MULTI_MODAL.md).
+For the full capability and transport details, see [closedmesh/docs/MULTI_MODAL.md](closedmesh/docs/MULTI_MODAL.md).
 
 ## Using with agents
 
@@ -318,7 +318,7 @@ For full build-from-source instructions and UI development, see [CONTRIBUTING.md
 ## Repo layout
 
 ```
-mesh-llm/                Rust crate — runtime, mesh, CLI (binary name: closedmesh)
+closedmesh/                Rust crate — runtime, mesh, CLI (binary name: closedmesh)
 mesh-client/             OpenAI-compatible client crate
 mesh-host-core/          Host-side primitives shared between binaries
 mesh-api/, mesh-api-ffi/ Management API surface and FFI shim
@@ -338,12 +338,12 @@ scripts/                 Release, install, smoke-test scripts
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md) — benchmark numbers and context
 - [CONTRIBUTING.md](CONTRIBUTING.md) — local development and build workflows
 - [PLUGINS.md](PLUGINS.md) — plugin system and blackboard internals
-- [mesh-llm/docs/VIRTUAL_LLM.md](mesh-llm/docs/VIRTUAL_LLM.md) — inter-model collaboration design
-- [mesh-llm/docs/LLAMA_CPP_FORK.md](mesh-llm/docs/LLAMA_CPP_FORK.md) — llama.cpp patch queue maintenance
+- [closedmesh/docs/VIRTUAL_LLM.md](closedmesh/docs/VIRTUAL_LLM.md) — inter-model collaboration design
+- [closedmesh/docs/LLAMA_CPP_FORK.md](closedmesh/docs/LLAMA_CPP_FORK.md) — llama.cpp patch queue maintenance
 - [ROADMAP.md](ROADMAP.md) — future directions
 
 ## License
 
 Apache-2.0 / MIT, dual-licensed. See [LICENSE](LICENSE).
 
-ClosedMesh LLM is a fork of [Mesh-LLM/mesh-llm](https://github.com/closedmesh/closedmesh-llm) under the same dual-license terms.
+ClosedMesh LLM is a fork of [Mesh-LLM/closedmesh](https://github.com/closedmesh/closedmesh-llm) under the same dual-license terms.

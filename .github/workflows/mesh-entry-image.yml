@@ -19,8 +19,8 @@ on:
       - 'docker/Dockerfile.client'
       - 'docker/entrypoint.sh'
       - 'docker/Caddyfile'
-      - 'mesh-llm/**'
-      - 'mesh-client/**'
+      - 'closedmesh/**'
+      - 'closedmesh-client/**'
       - 'mesh-api/**'
       - 'mesh-host-core/**'
       - 'mesh-api-ffi/**'
@@ -35,7 +35,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: closedmesh/closedmesh-llm/mesh-entry
+  IMAGE_NAME: closedmesh/closedclosedmesh/mesh-entry
 
 permissions:
   contents: read

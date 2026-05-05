@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""langchain-openai smoke against a mesh-llm OpenAI-compatible endpoint."""
+"""langchain-openai smoke against a closedmesh OpenAI-compatible endpoint."""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def main() -> None:
 
     llm = ChatOpenAI(
         model=args.model,
-        api_key="mesh-llm-ci",
+        api_key="closedmesh-ci",
         base_url=args.base_url,
         temperature=0,
         max_tokens=32,

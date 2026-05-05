@@ -18,7 +18,7 @@ permissions:
   contents: write
 
 env:
-  CACHE_NAMESPACE: mesh-llm
+  CACHE_NAMESPACE: closedmesh
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
 
@@ -46,7 +46,7 @@ jobs:
         id: sha
         run: |
           old_sha="$(tr -d '[:space:]' < third_party/llama.cpp/upstream.txt)"
-          new_sha="$(tr -d '[:space:]' < .deps/llama.cpp/.git/mesh-llm-upstream-sha)"
+          new_sha="$(tr -d '[:space:]' < .deps/llama.cpp/.git/closedmesh-upstream-sha)"
           echo "old_sha=$old_sha" >> "$GITHUB_OUTPUT"
           echo "new_sha=$new_sha" >> "$GITHUB_OUTPUT"
           if [[ "$old_sha" == "$new_sha" ]]; then
@@ -105,7 +105,7 @@ jobs:
 
       - name: Check embedded client dependency purity
         run: |
-          cargo tree -p mesh-llm-client --prefix=none --no-dedupe > /tmp/mesh-client-deps.txt
+          cargo tree -p closedmesh-client --prefix=none --no-dedupe > /tmp/mesh-client-deps.txt
           FORBIDDEN="keyring|rpassword|hf-hub|dirs|clap|include_dir|rmcp|keyring-core"
           if grep -E "^[[:space:]│├└─-]*($FORBIDDEN)([[:space:]]|$)" /tmp/mesh-client-deps.txt; then
             echo "ERROR: Forbidden dependency found in mesh-client"
@@ -114,16 +114,16 @@ jobs:
           fi
           echo "PASS: No forbidden dependencies found"
 
-      - name: Build mesh-llm binary (debug)
-        run: cargo build -p mesh-llm --bin closedmesh
+      - name: Build closedmesh binary (debug)
+        run: cargo build -p closedmesh --bin closedmesh
 
       - name: Unit tests
         run: cargo test --lib --tests
 
       - name: Protocol compatibility matrix
         run: |
-          cargo test -p mesh-llm --test protocol_compat_v0_client
-          cargo test -p mesh-llm --test protocol_convert_matrix
+          cargo test -p closedmesh --test protocol_compat_v0_client
+          cargo test -p closedmesh --test protocol_convert_matrix
 
       - name: Prepare patched latest llama.cpp
         run: scripts/prepare-llama.sh "${{ needs.latest_upstream.outputs.new_sha }}"

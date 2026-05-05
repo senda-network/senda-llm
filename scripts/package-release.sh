@@ -8,7 +8,7 @@ trap 'rm -rf "$_STAGING_DIR"' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BUILD_BIN_DIR="${MESH_LLM_LLAMA_BUILD_BIN_DIR:-$REPO_ROOT/.deps/llama.cpp/build/bin}"
+BUILD_BIN_DIR="${CLOSEDMESH_LLAMA_BUILD_BIN_DIR:-$REPO_ROOT/.deps/llama.cpp/build/bin}"
 RELEASE_BIN_DIR="$REPO_ROOT/target/release"
 
 python_bin() {
@@ -88,7 +88,7 @@ copy_runtime_libs() {
 
 bundle_bin_name() {
     local name="$1"
-    if [[ "$name" == "closedmesh" || "$name" == "mesh-llm" ]]; then
+    if [[ "$name" == "closedmesh" || "$name" == "closedmesh" ]]; then
         echo "closedmesh"
         return
     fi

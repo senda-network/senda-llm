@@ -1,6 +1,6 @@
 # Plugins Plan
 
-This document tracks the implementation plan for the `mesh-llm` plugin architecture defined in [PLUGINS.md](./PLUGINS.md).
+This document tracks the implementation plan for the `closedmesh` plugin architecture defined in [PLUGINS.md](./PLUGINS.md).
 
 ## Sequencing Principles
 
@@ -72,7 +72,7 @@ This phase should deliver:
 Target behavior:
 
 - plugins do not implement MCP JSON-RPC directly
-- `mesh-llm` remains the MCP server
+- `closedmesh` remains the MCP server
 - external MCP endpoints can be aggregated later through the same host surface
 
 ### Phase 4: Manifest-Driven HTTP Bindings
@@ -129,7 +129,7 @@ Target behavior:
 
 - plugins can register local or managed OpenAI-compatible inference servers
 - plugins can register external MCP servers
-- `mesh-llm` talks directly to those endpoints
+- `closedmesh` talks directly to those endpoints
 - plugin IPC remains the control plane, not the data path
 
 ### Phase 7: Migrate Existing Built-Ins
@@ -320,9 +320,9 @@ When building and validating inference plugins, create an Ollama provider plugin
 
 The purpose of the Ollama provider plugin is to validate the inference endpoint registration model end to end:
 
-- plugin registers an inference endpoint with `mesh-llm`
+- plugin registers an inference endpoint with `closedmesh`
 - plugin reports endpoint health without becoming disabled when the endpoint is temporarily unavailable
-- `mesh-llm` talks directly to the Ollama OpenAI-compatible endpoint rather than proxying inference through the plugin
+- `closedmesh` talks directly to the Ollama OpenAI-compatible endpoint rather than proxying inference through the plugin
 - model discovery and routing work through the registered endpoint
 - endpoint recovery makes the provider available again automatically
 

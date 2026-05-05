@@ -1,5 +1,5 @@
 import Foundation
-import MeshLLM
+import ClosedMesh
 
 enum ExampleError: Error {
     case noModels
