@@ -1189,8 +1189,13 @@ mod tests {
 
     #[test]
     fn cli_accepts_json_log_format() {
-        let normalized =
-            normalize_runtime_surface_args(["closedmesh", "serve", "--log-format", "json", "--auto"]);
+        let normalized = normalize_runtime_surface_args([
+            "closedmesh",
+            "serve",
+            "--log-format",
+            "json",
+            "--auto",
+        ]);
         let cli = Cli::parse_from(normalized.normalized);
 
         assert_eq!(cli.log_format, LogFormat::Json);
@@ -1198,8 +1203,13 @@ mod tests {
 
     #[test]
     fn cli_accepts_global_log_format_before_serve() {
-        let normalized =
-            normalize_runtime_surface_args(["closedmesh", "--log-format", "json", "serve", "--auto"]);
+        let normalized = normalize_runtime_surface_args([
+            "closedmesh",
+            "--log-format",
+            "json",
+            "serve",
+            "--auto",
+        ]);
         let cli = Cli::parse_from(normalized.normalized);
 
         assert_eq!(cli.log_format, LogFormat::Json);

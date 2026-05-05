@@ -5,8 +5,8 @@ use anyhow::{bail, Context, Result};
 use hf_hub::types::cache::HFCacheInfo;
 
 use crate::models::local::{
-    gguf_metadata_cache_path, huggingface_hub_cache_dir, huggingface_identity_for_path,
-    closedmesh_cache_dir, scan_hf_cache_info, split_gguf_base_name,
+    closedmesh_cache_dir, gguf_metadata_cache_path, huggingface_hub_cache_dir,
+    huggingface_identity_for_path, scan_hf_cache_info, split_gguf_base_name,
 };
 use crate::models::resolve::{
     parse_delete_model_ref, resolve_huggingface_file_from_sibling_entries, DeleteModelRef,

@@ -823,8 +823,10 @@ mod tests {
             return;
         }
 
-        let tmp_dir =
-            std::env::temp_dir().join(format!("closedmesh-force-rollback-{}", rand::random::<u64>()));
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "closedmesh-force-rollback-{}",
+            rand::random::<u64>()
+        ));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let blocking_file = tmp_dir.join("blocker");
         std::fs::write(&blocking_file, b"not a directory").unwrap();
@@ -859,8 +861,10 @@ mod tests {
             return;
         }
 
-        let tmp_dir =
-            std::env::temp_dir().join(format!("closedmesh-fresh-rollback-{}", rand::random::<u64>()));
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "closedmesh-fresh-rollback-{}",
+            rand::random::<u64>()
+        ));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let blocking_file = tmp_dir.join("blocker");
         std::fs::write(&blocking_file, b"not a directory").unwrap();

@@ -166,7 +166,10 @@ fn benchmark_search_dirs(bin_dir: &Path, exe_dir: Option<&Path>) -> Vec<PathBuf>
         push_search_dir(&mut dirs, exe_dir.join("../../closedmesh/target/release"));
     }
 
-    push_search_dir(&mut dirs, bin_dir.join("../../../closedmesh/target/release"));
+    push_search_dir(
+        &mut dirs,
+        bin_dir.join("../../../closedmesh/target/release"),
+    );
     dirs
 }
 
@@ -799,8 +802,10 @@ mod tests {
 
     #[test]
     fn test_detect_benchmark_binary_linux_cuda_finds_crate_release_helper() {
-        let root =
-            std::env::temp_dir().join(format!("closedmesh-benchmark-lookup-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!(
+            "closedmesh-benchmark-lookup-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&root);
         let bin_dir = root.join("llama.cpp/build/bin");
         let exe_dir = root.join("target/release");

@@ -17,11 +17,10 @@ pub(crate) async fn run_drop(model_name: &str, port: u16) -> Result<()> {
         .build()?;
     let encoded = percent_encode_path_segment(model_name);
     let url = format!("http://127.0.0.1:{port}/api/runtime/models/{encoded}");
-    let resp = client
-        .delete(&url)
-        .send()
-        .await
-        .with_context(|| format!("Can't connect to closedmesh on port {port}. Is it running?"))?;
+    let resp =
+        client.delete(&url).send().await.with_context(|| {
+            format!("Can't connect to closedmesh on port {port}. Is it running?")
+        })?;
     display_runtime_result(resp, model_name, "Unloaded").await
 }
 

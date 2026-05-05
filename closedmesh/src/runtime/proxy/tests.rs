@@ -123,8 +123,9 @@ impl plugin::PluginRpcBridge for BlobstoreTestBridge {
             }
 
             if method == "tools/call" {
-                let request: closedmesh_plugin::OperationRequest = serde_json::from_str(&params_json)
-                    .map_err(|err| Self::error_response(err.to_string()))?;
+                let request: closedmesh_plugin::OperationRequest =
+                    serde_json::from_str(&params_json)
+                        .map_err(|err| Self::error_response(err.to_string()))?;
                 let result_json = match request.name.as_str() {
                     crate::plugins::blobstore::PUT_REQUEST_OBJECT_TOOL => {
                         let request: crate::plugins::blobstore::PutRequestObjectRequest =

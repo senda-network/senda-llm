@@ -3157,7 +3157,11 @@ fn render_tui_events_snapshot(state: &DashboardState, columns: u16, rows: u16) -
     let width = usize::from(columns.max(40));
     let max_lines = usize::from(rows.max(3));
     let mut output = String::new();
-    let _ = writeln!(&mut output, "{}", truncate_with_ellipsis("closedmesh", width));
+    let _ = writeln!(
+        &mut output,
+        "{}",
+        truncate_with_ellipsis("closedmesh", width)
+    );
     let _ = writeln!(
         &mut output,
         "{}",

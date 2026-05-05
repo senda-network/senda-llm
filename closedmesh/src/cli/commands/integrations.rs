@@ -882,7 +882,10 @@ mod tests {
             spec["npm"], "@ai-sdk/openai-compatible",
             "npm package should match opencode format"
         );
-        assert_eq!(spec["name"], "closedmesh", "name field should be closedmesh");
+        assert_eq!(
+            spec["name"], "closedmesh",
+            "name field should be closedmesh"
+        );
         assert!(spec["options"].is_object(), "options should be an object");
         assert_eq!(
             spec["options"]["baseURL"], "http://127.0.0.1:9337/v1",
