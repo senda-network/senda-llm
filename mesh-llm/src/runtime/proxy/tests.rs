@@ -123,7 +123,7 @@ impl plugin::PluginRpcBridge for BlobstoreTestBridge {
             }
 
             if method == "tools/call" {
-                let request: mesh_llm_plugin::OperationRequest = serde_json::from_str(&params_json)
+                let request: closedmesh_plugin::OperationRequest = serde_json::from_str(&params_json)
                     .map_err(|err| Self::error_response(err.to_string()))?;
                 let result_json = match request.name.as_str() {
                     crate::plugins::blobstore::PUT_REQUEST_OBJECT_TOOL => {
@@ -264,7 +264,7 @@ async fn start_blobstore_plugin_manager_for(
     let mut manifests = HashMap::new();
     manifests.insert(
         plugin_name.to_string(),
-        mesh_llm_plugin::proto::PluginManifest {
+        closedmesh_plugin::proto::PluginManifest {
             capabilities,
             ..Default::default()
         },

@@ -646,7 +646,7 @@ mod tests {
                         let mut request = request;
                         request.stream_id = "s".into();
                         let listener =
-                            mesh_llm_plugin::bind_side_stream("demo", &request.stream_id).await?;
+                            closedmesh_plugin::bind_side_stream("demo", &request.stream_id).await?;
                         let response = listener.open_stream_response(&request);
                         let endpoint = response.endpoint.clone().unwrap();
                         let transport_kind = response.transport_kind;

@@ -1390,7 +1390,7 @@ mod tests {
     use crate::api::status::decode_runtime_model_path;
     use crate::plugin;
     use crate::plugins::{blackboard, blobstore};
-    use mesh_llm_plugin::MeshVisibility;
+    use closedmesh_plugin::MeshVisibility;
     use rmcp::model::ErrorCode;
     use serde_json::json;
     use std::collections::HashMap;
@@ -2240,7 +2240,7 @@ mod tests {
                     )));
                 }
 
-                let request: mesh_llm_plugin::OperationRequest = serde_json::from_str(&params_json)
+                let request: closedmesh_plugin::OperationRequest = serde_json::from_str(&params_json)
                     .map_err(|err| Self::error_response(err.to_string()))?;
                 let result_json = match request.name.as_str() {
                     blobstore::PUT_REQUEST_OBJECT_TOOL => {
@@ -2314,7 +2314,7 @@ mod tests {
                     )));
                 }
 
-                let request: mesh_llm_plugin::OperationRequest = serde_json::from_str(&params_json)
+                let request: closedmesh_plugin::OperationRequest = serde_json::from_str(&params_json)
                     .map_err(|err| Self::error_response(err.to_string()))?;
                 let result_json = match request.name.as_str() {
                     "feed" => {
@@ -2404,7 +2404,7 @@ mod tests {
         let mut manifests = HashMap::new();
         manifests.insert(
             plugin_name.to_string(),
-            mesh_llm_plugin::plugin_manifest![mesh_llm_plugin::capability(
+            closedmesh_plugin::plugin_manifest![closedmesh_plugin::capability(
                 blobstore::OBJECT_STORE_CAPABILITY
             ),],
         );
@@ -2425,11 +2425,11 @@ mod tests {
         let mut manifests = HashMap::new();
         manifests.insert(
             plugin_name.to_string(),
-            mesh_llm_plugin::plugin_manifest![
-                mesh_llm_plugin::capability(blackboard::BLACKBOARD_CHANNEL),
-                mesh_llm_plugin::http_get("/feed", "feed"),
-                mesh_llm_plugin::http_get("/search", "search"),
-                mesh_llm_plugin::http_post("/post", "post"),
+            closedmesh_plugin::plugin_manifest![
+                closedmesh_plugin::capability(blackboard::BLACKBOARD_CHANNEL),
+                closedmesh_plugin::http_get("/feed", "feed"),
+                closedmesh_plugin::http_get("/search", "search"),
+                closedmesh_plugin::http_post("/post", "post"),
             ],
         );
         plugin_manager

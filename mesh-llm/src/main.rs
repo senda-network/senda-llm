@@ -2,5 +2,5 @@
 
 #[tokio::main]
 async fn main() {
-    std::process::exit(mesh_llm::run_main().await);
+    std::process::exit(closedmesh::run_main().await);
 }

@@ -1,6 +1,6 @@
 use anyhow::{bail, Context, Result};
 use base64::Engine;
-use mesh_llm_plugin::{
+use closedmesh_plugin::{
     capability, json_response, json_schema_operation, parse_rpc_params, InternalRpcPluginBuilder,
     OperationRouter, PluginError, PluginMetadata, PluginResult, PluginRuntime,
 };
@@ -154,8 +154,8 @@ const DEFAULT_USES_REMAINING: u32 = 3;
 /// Maximum decoded size for a single uploaded object (50 MiB).
 const MAX_OBJECT_BYTES: usize = 50 * 1024 * 1024;
 
-fn blobstore_manifest() -> mesh_llm_plugin::proto::PluginManifest {
-    mesh_llm_plugin::plugin_manifest![
+fn blobstore_manifest() -> closedmesh_plugin::proto::PluginManifest {
+    closedmesh_plugin::plugin_manifest![
         capability("internal:blobstore"),
         capability(OBJECT_STORE_CAPABILITY),
     ]
@@ -606,7 +606,7 @@ fn blobstore_operation_router(store: BlobStore) -> OperationRouter {
     router
 }
 
-fn build_blobstore_plugin(name: String) -> mesh_llm_plugin::InternalRpcPlugin {
+fn build_blobstore_plugin(name: String) -> closedmesh_plugin::InternalRpcPlugin {
     let store = BlobStore::new(default_blobstore_root());
     let health_store = store.clone();
     let put_store = store.clone();

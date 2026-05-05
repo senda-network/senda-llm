@@ -212,7 +212,7 @@ Each section is self-contained. If a plugin contributes something to a host surf
 Example:
 
 ```rust
-use mesh_llm_plugin::{
+use closedmesh_plugin::{
     capability, plugin_server_info, PluginMetadata,
     http::{get, post},
     inference::openai_http,
@@ -220,7 +220,7 @@ use mesh_llm_plugin::{
     PluginStartupPolicy,
 };
 
-let plugin = mesh_llm_plugin::plugin! {
+let plugin = closedmesh_plugin::plugin! {
     metadata: PluginMetadata::new(
         "notes",
         "1.0.0",
@@ -241,11 +241,11 @@ let plugin = mesh_llm_plugin::plugin! {
     ],
 
     mesh: [
-        mesh_llm_plugin::mesh::channel("notes.v1"),
+        closedmesh_plugin::mesh::channel("notes.v1"),
     ],
 
     events: [
-        mesh_llm_plugin::events::peer_up(),
+        closedmesh_plugin::events::peer_up(),
     ],
 
     mcp: [

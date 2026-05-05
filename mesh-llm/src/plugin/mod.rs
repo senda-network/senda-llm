@@ -6,7 +6,7 @@ mod support;
 mod transport;
 
 use anyhow::{anyhow, bail, Context, Result};
-pub use mesh_llm_plugin::proto;
+pub use closedmesh_plugin::proto;
 use rmcp::model::ServerInfo;
 use rmcp::model::{
     CompleteRequestParams, CompleteResult, GetPromptRequestParams, GetPromptResult,
@@ -42,14 +42,14 @@ use self::transport::unix_socket_path;
 use self::transport::windows_pipe_name;
 use self::transport::{connect_side_stream, make_instance_id, LocalStream};
 #[cfg(test)]
-use mesh_llm_plugin::MeshVisibility;
+use closedmesh_plugin::MeshVisibility;
 
 pub const BLACKBOARD_PLUGIN_ID: &str = "blackboard";
 pub const BLOBSTORE_PLUGIN_ID: &str = "blobstore";
 pub const OPENAI_ENDPOINT_PLUGIN_ID: &str = "openai-endpoint";
 #[allow(dead_code)]
 pub const BLACKBOARD_CAPABILITY: &str = "blackboard.v1";
-pub(crate) const PROTOCOL_VERSION: u32 = mesh_llm_plugin::PROTOCOL_VERSION;
+pub(crate) const PROTOCOL_VERSION: u32 = closedmesh_plugin::PROTOCOL_VERSION;
 const CONNECT_TIMEOUT_SECS: u64 = 10;
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 15;

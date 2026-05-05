@@ -1,5 +1,5 @@
 use anyhow::Result;
-use mesh_llm_plugin::{
+use closedmesh_plugin::{
     capability, plugin_server_info, PluginMetadata, PluginRuntime, PluginStartupPolicy,
 };
 
@@ -13,11 +13,11 @@ fn base_url() -> String {
         .unwrap_or_else(|| DEFAULT_BASE_URL.to_string())
 }
 
-fn build_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
+fn build_plugin(name: String) -> closedmesh_plugin::SimplePlugin {
     let base_url = base_url();
     let health_url = base_url.clone();
 
-    mesh_llm_plugin::plugin! {
+    closedmesh_plugin::plugin! {
         metadata: PluginMetadata::new(
             name,
             crate::VERSION,
@@ -38,7 +38,7 @@ fn build_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
             capability("endpoint:inference/openai_compatible"),
         ],
         inference: [
-            mesh_llm_plugin::inference::openai_http("openai-endpoint", base_url.clone())
+            closedmesh_plugin::inference::openai_http("openai-endpoint", base_url.clone())
                 .managed_by_plugin(false),
         ],
         health: move |_context| {

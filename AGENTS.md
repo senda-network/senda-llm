@@ -140,7 +140,7 @@ Current structure notes.
 
 ## Key Source Files
 
-- `mesh-llm/src/main.rs` — Binary entrypoint; calls `mesh_llm::run()`
+- `mesh-llm/src/main.rs` — Binary entrypoint; calls `closedmesh::run_main()`
 - `mesh-llm/src/runtime/mod.rs` — Top-level startup flows, runtime orchestration, and command dispatch
 - `mesh-llm/src/mesh/mod.rs` — `Node` struct, gossip, mesh_id, peer management
 - `mesh-llm/src/inference/election.rs` — Host election, tensor split calculation

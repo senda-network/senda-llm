@@ -1,4 +1,4 @@
-use mesh_llm_test_harness::FixtureMesh;
+use closedmesh_test_harness::FixtureMesh;
 
 #[test]
 #[ignore] // GREEN in Wave 10 when mesh-llm binary + Qwen2.5-0.5B-Q4 are available

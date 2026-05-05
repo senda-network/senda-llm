@@ -1,21 +1,21 @@
 #!/bin/sh
-# mesh-llm docker entrypoint — selects runtime mode via APP_MODE env var
+# closedmesh docker entrypoint — selects runtime mode via APP_MODE env var
 # The UI is always embedded in the binary via include_dir!; there is no separate
 # UI-less build.
 #
 # Modes (set via APP_MODE env var or ARG CMD in Dockerfile):
 #   console  — client node: API on port 9337 + web console on port 3131 (default)
-#   worker   — full mesh-llm node with bundled llama binaries (full-node images only)
-#   (default) — pass through all args directly to mesh-llm
+#   worker   — full closedmesh node with bundled llama binaries (full-node images only)
+#   (default) — pass through all args directly to closedmesh
 #
 # Optional modifiers:
 #   MESH_HEADLESS=1    — append --headless; keeps /api/* alive, returns 404 for web UI
 #   MESH_AUTH_TOKEN=x  — enable Caddy bearer-token gateway (see Caddyfile / Caddyfile.open)
 #
 # Examples:
-#   docker run -e APP_MODE=console mesh-llm:client                          # open, UI enabled
-#   docker run -e APP_MODE=console -e MESH_HEADLESS=1 mesh-llm:client      # open, API-only
-#   docker run -e APP_MODE=console -e MESH_AUTH_TOKEN=secret mesh-llm:client  # gated
+#   docker run -e APP_MODE=console closedmesh:client                          # open, UI enabled
+#   docker run -e APP_MODE=console -e MESH_HEADLESS=1 closedmesh:client       # open, API-only
+#   docker run -e APP_MODE=console -e MESH_AUTH_TOKEN=secret closedmesh:client  # gated
 set -e
 
 HEADLESS_FLAG=""
@@ -25,19 +25,34 @@ fi
 
 # Named-mesh args. When MESH_NAME is set (default: "closedmesh") we scope
 # discovery and publication to that name instead of the unnamed community
-# pool. MESH_PUBLISH=1 (default in console/worker modes) tells the runtime
-# to advertise this listing on Nostr so contributors running with the same
-# `--mesh-name` can discover and join it. Set MESH_NAME="" to fall back to
-# the unnamed community mesh, or MESH_PUBLISH=0 to keep the mesh private.
+# pool.
+#
+# Defaults are deliberately PRIVATE (no auto-discovery, no Nostr publishing).
+# Both flags caused the May 2026 incident where the canonical entry node on
+# mesh.closedmesh.com silently joined the upstream `mesh-llm` community pool
+# and started routing chat traffic for ~17 strangers visible on
+# closedmesh.com/status. Opt-in is intentional now: the public entry doesn't
+# need either flag (real users find it via the embedded FALLBACK_JOIN_TOKEN
+# in the desktop app), and contributors running their own clusters can flip
+# them on with `-e MESH_PUBLISH=1` / `-e MESH_AUTO=1` if they want.
+#
+# Set MESH_NAME="" to fall back to the unnamed community mesh, or
+# MESH_PUBLISH=1 / MESH_AUTO=1 to make this node publicly visible / actively
+# discover other meshes via Nostr.
 MESH_NAME="${MESH_NAME-closedmesh}"
-MESH_PUBLISH="${MESH_PUBLISH-1}"
+MESH_PUBLISH="${MESH_PUBLISH-0}"
+MESH_AUTO="${MESH_AUTO-0}"
 MESH_NAME_FLAG=""
 PUBLISH_FLAG=""
+AUTO_FLAG=""
 if [ -n "$MESH_NAME" ]; then
   MESH_NAME_FLAG="--mesh-name $MESH_NAME"
 fi
 if [ "$MESH_PUBLISH" = "1" ] || [ "$MESH_PUBLISH" = "true" ]; then
   PUBLISH_FLAG="--publish"
+fi
+if [ "$MESH_AUTO" = "1" ] || [ "$MESH_AUTO" = "true" ]; then
+  AUTO_FLAG="--auto"
 fi
 
 # Honor $PORT when the host assigns a port at runtime (e.g. Lightsail reverse
@@ -86,7 +101,7 @@ fi
 case "$APP_MODE" in
   console)
     # shellcheck disable=SC2086
-    exec closedmesh client --auto --port "$INTERNAL_PORT" --console "$CONSOLE_PORT" --listen-all $HEADLESS_FLAG $MESH_NAME_FLAG $PUBLISH_FLAG $BIND_PORT_FLAG
+    exec closedmesh client --port "$INTERNAL_PORT" --console "$CONSOLE_PORT" --listen-all $AUTO_FLAG $HEADLESS_FLAG $MESH_NAME_FLAG $PUBLISH_FLAG $BIND_PORT_FLAG
     ;;
   worker)
     BIN_DIR=/usr/local/lib/mesh-llm/bin
@@ -99,7 +114,7 @@ case "$APP_MODE" in
       exit 1
     fi
     # shellcheck disable=SC2086
-    exec closedmesh --auto --port "$INTERNAL_PORT" --console "$CONSOLE_PORT" --bin-dir "$BIN_DIR" --listen-all $HEADLESS_FLAG $MESH_NAME_FLAG $PUBLISH_FLAG
+    exec closedmesh --port "$INTERNAL_PORT" --console "$CONSOLE_PORT" --bin-dir "$BIN_DIR" --listen-all $AUTO_FLAG $HEADLESS_FLAG $MESH_NAME_FLAG $PUBLISH_FLAG
     ;;
   *)
     exec closedmesh "$@"

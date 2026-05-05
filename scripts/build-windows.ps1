@@ -42,7 +42,7 @@ function Prepare-Llama {
         Invoke-NativeCommand "git" @("remote", "set-url", "origin", $upstreamUrl)
         Invoke-NativeCommand "git" @("fetch", "origin", "master", "--tags")
         Invoke-NativeCommand "git" @("config", "user.name", "ClosedMesh CI")
-        Invoke-NativeCommand "git" @("config", "user.email", "ci@mesh-llm.local")
+        Invoke-NativeCommand "git" @("config", "user.email", "ci@closedmesh.local")
         Invoke-NativeCommand "git" @("-c", "advice.detachedHead=false", "checkout", "--detach", "--quiet", $targetSha)
         Invoke-NativeCommand "git" @("reset", "--hard", "--quiet", $targetSha)
         Invoke-NativeCommand "git" @("clean", "-fdx", "-e", "build/")
@@ -744,7 +744,7 @@ Invoke-InRepo {
 
     if (Test-Path $meshUiDir) {
         if (Test-UiBuildRequired -UiDirectory $meshUiDir) {
-            Write-Host "Building mesh-llm UI..."
+            Write-Host "Building closedmesh UI..."
             Push-Location $meshUiDir
             try {
                 if (Test-NpmInstallRequired -UiDirectory $meshUiDir) {
@@ -755,12 +755,12 @@ Invoke-InRepo {
                 Pop-Location
             }
         } else {
-            Write-Host "Skipping mesh-llm UI build; dist is up to date."
+            Write-Host "Skipping closedmesh UI build; dist is up to date."
         }
     }
 
-    Write-Host "Building mesh-llm..."
-    Invoke-NativeCommand "cargo" @("build", "--release", "--locked", "-p", "mesh-llm")
+    Write-Host "Building closedmesh..."
+    Invoke-NativeCommand "cargo" @("build", "--release", "--locked", "-p", "closedmesh")
     Copy-DevRuntimeBinaries -BackendName $backendName -BuildDir $buildDir -RepoRoot $repoRoot
-    Write-Host "Mesh binary: target\release\mesh-llm.exe"
+    Write-Host "Mesh binary: target\release\closedmesh.exe"
 }

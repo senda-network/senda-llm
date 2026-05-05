@@ -3073,7 +3073,7 @@ pub async fn send_models_list(mut stream: TcpStream, models: &[String]) -> std::
                 "id": m,
                 "display_name": display_name,
                 "object": "model",
-                "owned_by": "mesh-llm",
+                "owned_by": "closedmesh",
                 "capabilities": caps,
                 "multimodal_status": capabilities.multimodal_status(),
                 "vision_status": capabilities.vision_status(),

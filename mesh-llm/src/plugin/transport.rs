@@ -421,7 +421,7 @@ mod tests {
             idle_timeout_ms: None,
         };
 
-        let listener = mesh_llm_plugin::bind_side_stream("demo-plugin", &request.stream_id)
+        let listener = closedmesh_plugin::bind_side_stream("demo-plugin", &request.stream_id)
             .await
             .unwrap();
         let response = listener.open_stream_response(&request);

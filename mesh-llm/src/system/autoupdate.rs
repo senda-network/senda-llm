@@ -214,7 +214,7 @@ async fn fetch_release_info(url: &str) -> Option<ReleaseInfo> {
         .ok()?;
     let resp = client
         .get(url)
-        .header("User-Agent", "mesh-llm")
+        .header("User-Agent", "closedmesh")
         .send()
         .await
         .ok()?;
@@ -1208,9 +1208,10 @@ mod tests {
                 launch::BinaryFlavor::Metal,
                 "closedmesh-darwin-aarch64.tar.gz",
             )),
-            ("linux", "x86_64") => {
-                Some((launch::BinaryFlavor::Cpu, "closedmesh-linux-x86_64.tar.gz"))
-            }
+            ("linux", "x86_64") => Some((
+                launch::BinaryFlavor::Cpu,
+                "closedmesh-linux-x86_64.tar.gz",
+            )),
             _ => None,
         };
 

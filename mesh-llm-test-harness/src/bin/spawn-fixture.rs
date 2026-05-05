@@ -1,4 +1,4 @@
-use mesh_llm_test_harness::FixtureMesh;
+use closedmesh_test_harness::FixtureMesh;
 use std::io::{self, BufRead};
 
 fn main() {

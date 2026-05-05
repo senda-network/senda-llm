@@ -1,5 +1,5 @@
 [package]
-name = "mesh-llm-plugin"
+name = "closedmesh-plugin"
 version = "0.65.9"
 edition = "2021"
 

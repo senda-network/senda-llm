@@ -7,7 +7,7 @@
 pub mod mcp;
 
 use anyhow::Result;
-use mesh_llm_plugin::{
+use closedmesh_plugin::{
     capability, plugin_server_info, PluginMetadata, PluginRuntime, PluginStartupPolicy,
 };
 use schemars::JsonSchema;
@@ -311,7 +311,7 @@ pub(crate) async fn run_plugin(name: String) -> anyhow::Result<()> {
     PluginRuntime::run(build_blackboard_plugin(name)).await
 }
 
-fn build_blackboard_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
+fn build_blackboard_plugin(name: String) -> closedmesh_plugin::SimplePlugin {
     let store = BlackboardStore::new(true);
     let health_store = store.clone();
     let sync_store = store.clone();
@@ -320,7 +320,7 @@ fn build_blackboard_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
     let search_store = store.clone();
     let post_store = store.clone();
 
-    mesh_llm_plugin::plugin! {
+    closedmesh_plugin::plugin! {
         metadata: PluginMetadata::new(
             name,
             crate::VERSION,
@@ -339,13 +339,13 @@ fn build_blackboard_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
             capability(crate::plugin::BLACKBOARD_CAPABILITY),
         ],
         mesh: [
-            mesh_llm_plugin::mesh::channel(BLACKBOARD_CHANNEL),
+            closedmesh_plugin::mesh::channel(BLACKBOARD_CHANNEL),
         ],
         events: [
-            mesh_llm_plugin::events::peer_up(),
+            closedmesh_plugin::events::peer_up(),
         ],
         http: [
-            mesh_llm_plugin::http::get("/feed")
+            closedmesh_plugin::http::get("/feed")
                 .binding_id("feed")
                 .description("Read the recent blackboard feed.")
                 .input::<FeedRequest>()
@@ -358,7 +358,7 @@ fn build_blackboard_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
                             .await)
                     })
                 }),
-            mesh_llm_plugin::http::get("/search")
+            closedmesh_plugin::http::get("/search")
                 .binding_id("search")
                 .description("Search blackboard messages by keyword.")
                 .input::<SearchRequest>()
@@ -371,7 +371,7 @@ fn build_blackboard_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
                         Ok(items)
                     })
                 }),
-            mesh_llm_plugin::http::post("/post")
+            closedmesh_plugin::http::post("/post")
                 .binding_id("post")
                 .description("Post a new blackboard message.")
                 .input::<PostRequest>()
@@ -393,7 +393,7 @@ fn build_blackboard_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
                         let posted = store
                             .post(item)
                             .await
-                            .map_err(mesh_llm_plugin::PluginError::invalid_params)?;
+                            .map_err(closedmesh_plugin::PluginError::invalid_params)?;
                         context
                             .send_json_channel(
                                 BLACKBOARD_CHANNEL,
@@ -402,7 +402,7 @@ fn build_blackboard_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
                                 &BlackboardMessage::Post(posted.clone()),
                             )
                             .await
-                            .map_err(mesh_llm_plugin::PluginError::from)?;
+                            .map_err(closedmesh_plugin::PluginError::from)?;
                         Ok(posted)
                     })
                 }),
@@ -485,7 +485,7 @@ fn build_blackboard_plugin(name: String) -> mesh_llm_plugin::SimplePlugin {
         },
         on_mesh_event: move |event, context| {
             Box::pin(async move {
-                if event.kind() == mesh_llm_plugin::proto::mesh_event::Kind::PeerUp {
+                if event.kind() == closedmesh_plugin::proto::mesh_event::Kind::PeerUp {
                     if let Some(peer) = event.peer {
                         context
                             .send_json_channel(
@@ -616,7 +616,7 @@ fn shannon_entropy(s: &str) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mesh_llm_plugin::Plugin;
+    use closedmesh_plugin::Plugin;
 
     #[test]
     fn test_pii_check_email() {

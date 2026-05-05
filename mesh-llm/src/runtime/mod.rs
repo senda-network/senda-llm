@@ -106,7 +106,7 @@ impl MeshTracingStderrWriter {
     }
 
     fn should_route_to_dashboard(&self) -> bool {
-        !self.target.starts_with("mesh_llm::cli::output")
+        !self.target.starts_with("closedmesh::cli::output")
             && crate::cli::output::interactive_tui_active()
     }
 
@@ -778,7 +778,9 @@ async fn resolve_join_url(cli: &mut Cli) {
     };
     if !cli.join.is_empty() {
         let _ = emit_event(OutputEvent::Info {
-            message: format!("--join was supplied explicitly; ignoring --join-url {url}"),
+            message: format!(
+                "--join was supplied explicitly; ignoring --join-url {url}"
+            ),
             context: Some("join-url".into()),
         });
         return;
@@ -2093,9 +2095,9 @@ fn resolve_plugins_from_config(
 fn plugin_host_mode(cli: &Cli) -> plugin::PluginHostMode {
     plugin::PluginHostMode {
         mesh_visibility: if cli.publish || cli.nostr_discovery {
-            mesh_llm_plugin::MeshVisibility::Public
+            closedmesh_plugin::MeshVisibility::Public
         } else {
-            mesh_llm_plugin::MeshVisibility::Private
+            closedmesh_plugin::MeshVisibility::Private
         },
     }
 }
@@ -3991,7 +3993,7 @@ mod tests {
         let plugin_manager = plugin::PluginManager::start(
             &resolved_plugins,
             plugin::PluginHostMode {
-                mesh_visibility: mesh_llm_plugin::MeshVisibility::Private,
+                mesh_visibility: closedmesh_plugin::MeshVisibility::Private,
             },
             mesh_tx,
         )

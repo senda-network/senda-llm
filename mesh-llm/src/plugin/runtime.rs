@@ -7,7 +7,7 @@ use super::{
     CONNECT_TIMEOUT_SECS, PROTOCOL_VERSION, REQUEST_TIMEOUT_SECS,
 };
 use anyhow::{bail, Context, Result};
-use mesh_llm_plugin::{MeshVisibility, STARTUP_DISABLED_ERROR_CODE};
+use closedmesh_plugin::{MeshVisibility, STARTUP_DISABLED_ERROR_CODE};
 use rmcp::model::{InitializeRequestParams, ServerInfo};
 use serde::Serialize;
 use std::collections::HashMap;

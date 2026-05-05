@@ -1,6 +1,6 @@
 use super::{PluginSummary, BLACKBOARD_PLUGIN_ID, BLOBSTORE_PLUGIN_ID, OPENAI_ENDPOINT_PLUGIN_ID};
 use anyhow::{bail, Context, Result};
-use mesh_llm_plugin::MeshVisibility;
+use closedmesh_plugin::MeshVisibility;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
