@@ -35,7 +35,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: closedmesh/closedclosedmesh/mesh-entry
+  IMAGE_NAME: closedmesh/closedmesh-llm/mesh-entry
 
 permissions:
   contents: read
