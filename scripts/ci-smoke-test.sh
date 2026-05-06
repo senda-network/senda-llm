@@ -34,16 +34,32 @@ if [ ! -f "$MESH_LLM" ]; then
     exit 1
 fi
 
-# Start closedmesh in background
+# Start closedmesh in background.
+#
+# CLOSEDMESH_DRAFT_MODEL=<path> turns on speculative decoding. We exercise
+# this in a second smoke pass so the canary catches any future drift in
+# llama.cpp's `--spec-draft-*` flag surface (May 2026 incident: upstream
+# silently removed `--draft-max` and the runtime kept passing it, so every
+# install with a draft model configured stayed in `loading` forever).
 ARGS=(
     serve
     --model "$MODEL"
-    --no-draft
     --bin-dir "$BIN_DIR"
     --device CPU
     --port "$API_PORT"
     --console "$CONSOLE_PORT"
 )
+
+if [ -n "${CLOSEDMESH_DRAFT_MODEL:-}" ]; then
+    if [ ! -f "$CLOSEDMESH_DRAFT_MODEL" ]; then
+        echo "❌ CLOSEDMESH_DRAFT_MODEL set but file missing: $CLOSEDMESH_DRAFT_MODEL"
+        exit 1
+    fi
+    echo "  draft:     $CLOSEDMESH_DRAFT_MODEL (speculative decoding enabled)"
+    ARGS+=(--draft "$CLOSEDMESH_DRAFT_MODEL")
+else
+    ARGS+=(--no-draft)
+fi
 
 if [ -n "$MMPROJ" ]; then
     ARGS+=(--mmproj "$MMPROJ")

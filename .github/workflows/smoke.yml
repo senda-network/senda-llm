@@ -100,6 +100,20 @@ jobs:
             llama.cpp/build/bin \
             ~/.models/$MODEL_FILE
 
+      # Re-run the smoke with speculative decoding turned on, using the
+      # same tiny GGUF as both base and draft. We're not measuring quality
+      # here — the goal is to make any future drift in llama.cpp's
+      # `--spec-draft-*` flag surface fail in CI rather than silently brick
+      # every install with a draft model configured. See May 2026 incident.
+      - name: Smoke test (with speculative decoding)
+        env:
+          CLOSEDMESH_DRAFT_MODEL: ~/.models/${{ env.MODEL_FILE }}
+        run: |
+          scripts/ci-smoke-test.sh \
+            "${{ inputs.mesh_binary_target }}" \
+            llama.cpp/build/bin \
+            ~/.models/$MODEL_FILE
+
       - name: OpenAI Python compat smoke
         run: |
           scripts/ci-compat-smoke.sh \

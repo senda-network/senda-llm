@@ -528,6 +528,20 @@ jobs:
             llama.cpp/build/bin \
             ~/.models/$MODEL_FILE
 
+      # Same smoke with speculative decoding turned on. Catches drift in
+      # llama.cpp's `--spec-draft-*` flag surface (May 2026: upstream
+      # removed `--draft-max`, runtime kept emitting it, every install
+      # with a draft model stuck at `loading` forever).
+      - name: Smoke test (with speculative decoding)
+        if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
+        env:
+          CLOSEDMESH_DRAFT_MODEL: ~/.models/${{ env.MODEL_FILE }}
+        run: |
+          scripts/ci-smoke-test.sh \
+            target/debug/closedmesh \
+            llama.cpp/build/bin \
+            ~/.models/$MODEL_FILE
+
       - name: Split-mode test (host/worker routing)
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
         run: |

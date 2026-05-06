@@ -1467,27 +1467,35 @@ pub async fn start_llama_server(
     }
     if let Some(draft_path) = draft {
         if draft_path.exists() {
+            // Always honor explicit --draft: the user opted in, even on CPU.
+            // GPU-specific offload flags (`-ngld`, `--device-draft`) only get
+            // emitted when we actually have a GPU; the speculative-decoding
+            // budget itself (`--spec-draft-n-max`) is device-agnostic. This
+            // also lets CPU CI smoke tests exercise the spec-draft flag
+            // surface and catch upstream llama.cpp arg drift early — the May
+            // 2026 incident (`--draft-max` silently removed) would have been
+            // caught by CI if this gate hadn't quietly skipped CPU runs.
+            args.push("-md".to_string());
+            args.push(draft_path.to_string_lossy().to_string());
             if local_device != "CPU" {
-                args.push("-md".to_string());
-                args.push(draft_path.to_string_lossy().to_string());
                 args.push("-ngld".to_string());
                 args.push("99".to_string());
                 args.push("--device-draft".to_string());
                 args.push(local_device.clone());
-                args.push("--draft-max".to_string());
-                args.push(draft_max.to_string());
-                tracing::info!(
-                    "Speculative decoding: draft={}, draft-max={}, device={}",
-                    draft_path.display(),
-                    draft_max,
-                    local_device
-                );
-            } else {
-                tracing::warn!(
-                    "Draft model present at {} but no GPU backend detected, skipping speculative decoding",
-                    draft_path.display()
-                );
             }
+            // Upstream llama.cpp removed --draft / --draft-n / --draft-max
+            // and renamed them to --spec-draft-n-max. The short alias was
+            // dropped at the same time. Older builds of llama-server still
+            // accepted --draft-max; current builds exit on startup with
+            // "argument has been removed". Always emit the new name.
+            args.push("--spec-draft-n-max".to_string());
+            args.push(draft_max.to_string());
+            tracing::info!(
+                "Speculative decoding: draft={}, spec-draft-n-max={}, device={}",
+                draft_path.display(),
+                draft_max,
+                local_device
+            );
         } else {
             tracing::warn!(
                 "Draft model not found at {}, skipping speculative decoding",
