@@ -66,7 +66,12 @@ while IFS= read -r patch; do
     PATCHES+=("$patch")
 done < <(find "$PATCH_DIR" -maxdepth 1 -type f -name '*.patch' | sort)
 
-if (( ${#PATCHES[@]} > 0 )); then
+# LLAMA_SKIP_PATCHES=1 lets the canary workflow resolve upstream SHAs without
+# attempting to apply mesh patches, so it can classify patch-drift as a soft
+# alert rather than a hard pipeline failure.
+if [[ "${LLAMA_SKIP_PATCHES:-0}" == "1" ]]; then
+    echo "skipping mesh patches (LLAMA_SKIP_PATCHES=1)"
+elif (( ${#PATCHES[@]} > 0 )); then
     git -C "$LLAMA_WORKDIR" am --3way "${PATCHES[@]}"
 fi
 

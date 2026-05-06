@@ -29,6 +29,7 @@ jobs:
       old_sha: ${{ steps.sha.outputs.old_sha }}
       new_sha: ${{ steps.sha.outputs.new_sha }}
       changed: ${{ steps.sha.outputs.changed }}
+      patch_status: ${{ steps.patches.outputs.status }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -37,9 +38,10 @@ jobs:
       - name: Install just
         uses: extractions/setup-just@v2
 
-      - name: Prepare requested llama upstream
+      - name: Resolve requested llama upstream (no patches)
         env:
           UPSTREAM_SHA: ${{ github.event.inputs.upstream_sha || 'latest' }}
+          LLAMA_SKIP_PATCHES: "1"
         run: scripts/prepare-llama.sh "$UPSTREAM_SHA"
 
       - name: Capture upstream SHAs
@@ -64,9 +66,44 @@ jobs:
             echo "Pinned llama.cpp upstream is already current: \`${{ steps.sha.outputs.old_sha }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # Apply mesh patches against the new upstream. Patch drift is an *expected*
+      # signal — it means upstream churn invalidated one of our patches and we
+      # need to rebase. Surface that loudly via Step Summary + a GitHub warning
+      # annotation, but keep the workflow conclusion green so the dashboard
+      # only goes red on real pipeline regressions.
+      - name: Apply mesh patches (drift = soft alert)
+        id: patches
+        if: steps.sha.outputs.changed == 'true'
+        run: |
+          set +e
+          scripts/prepare-llama.sh "${{ steps.sha.outputs.new_sha }}" 2>&1 | tee /tmp/patch.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [[ $rc -eq 0 ]]; then
+            echo "status=applied" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "status=drift" >> "$GITHUB_OUTPUT"
+          drift_excerpt=$(grep -E "^Patch failed at|^error:|^hint:" /tmp/patch.log | head -6)
+          {
+            echo "## ⚠️  llama.cpp patch drift detected"
+            echo
+            echo "Upstream moved \`${{ steps.sha.outputs.old_sha }}\` → \`${{ steps.sha.outputs.new_sha }}\`."
+            echo "One or more closedmesh patches no longer apply on the latest upstream."
+            echo
+            echo "### Failure excerpt"
+            echo '```'
+            echo "$drift_excerpt"
+            echo '```'
+            echo
+            echo "### Next step"
+            echo "Reproduce locally with \`scripts/prepare-llama.sh latest\`, then rebase the affected patch in \`third_party/llama.cpp/patches/\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=llama.cpp patch drift::Mesh patches no longer apply on upstream ${{ steps.sha.outputs.new_sha }} — please rebase patches in third_party/llama.cpp/patches/."
+
   linux_build:
     needs: latest_upstream
-    if: needs.latest_upstream.outputs.changed == 'true'
+    if: needs.latest_upstream.outputs.changed == 'true' && needs.latest_upstream.outputs.patch_status == 'applied'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -173,7 +210,7 @@ jobs:
 
   inference_smoke_tests:
     needs: [latest_upstream, linux_build]
-    if: needs.latest_upstream.outputs.changed == 'true' && needs.linux_build.result == 'success'
+    if: needs.latest_upstream.outputs.changed == 'true' && needs.latest_upstream.outputs.patch_status == 'applied' && needs.linux_build.result == 'success'
     uses: ./.github/workflows/smoke.yml
     with:
       artifact_name: llama-canary-linux-inference-binaries
@@ -184,7 +221,7 @@ jobs:
 
   update_main_pin:
     needs: [latest_upstream, linux_build, inference_smoke_tests]
-    if: needs.latest_upstream.outputs.changed == 'true' && needs.linux_build.result == 'success' && needs.inference_smoke_tests.result == 'success'
+    if: needs.latest_upstream.outputs.changed == 'true' && needs.latest_upstream.outputs.patch_status == 'applied' && needs.linux_build.result == 'success' && needs.inference_smoke_tests.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
