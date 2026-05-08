@@ -25,7 +25,7 @@ pub(crate) use plugins::blackboard;
 use anyhow::Result;
 use std::time::Duration;
 
-pub const VERSION: &str = "0.66.4";
+pub const VERSION: &str = "0.66.5";
 
 /// Migrate legacy data directories to `~/.closedmesh/`.
 ///
