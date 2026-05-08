@@ -996,25 +996,23 @@ pub async fn start_rpc_server(
     if let Some(path) = gguf_path {
         // The `--gguf PATH` flag is added by our local
         // third_party/llama.cpp/patches/0001-rpc-optimize-local-GGUF-tensor-loading.patch.
-        // closedmesh.exe always tries to use it because zero-transfer
-        // tensor loading is a meaningful speedup on local-only RPC.
-        // BUT: scripts/release-closedmesh.ps1 currently bundles the
-        // *unpatched* rpc-server.exe / llama-server.exe straight from
-        // ggml-org/llama.cpp's official Windows release (b9041) — see
-        // the comment block at the top of that script. The Windows
-        // build doesn't compile llama.cpp from our patched .deps/ tree
-        // yet, so any user on a closedmesh-windows-* runtime ZIP gets
-        // an rpc-server that doesn't recognise `--gguf` and exits
-        // immediately with `error: unknown argument: --gguf`.
+        // closedmesh.exe tries to use it because zero-transfer tensor loading
+        // is a meaningful speedup on local-only RPC.
         //
-        // Guard the flag behind a runtime probe (`rpc-server.exe -h`
-        // dumps the supported options to stderr). When the binary
-        // doesn't advertise --gguf we degrade gracefully to plain RPC
-        // — slower (tensors transit the loopback socket instead of
-        // being mmap'd from disk) but functional. Once the Windows CI
-        // builds llama.cpp from the patched source, this branch
-        // becomes dead code naturally.
-        if rpc_server_supports_gguf_flag(&rpc_server.path) {
+        // Windows hotfix:
+        //   Every currently published closedmesh-windows-* runtime bundle
+        //   (including v0.66.4) ships rpc-server.exe that exits with
+        //   `error: unknown argument: --gguf`.
+        //   To restore reliability immediately, never pass --gguf on Windows;
+        //   use plain RPC tensor transfer until the release pipeline starts
+        //   shipping patched rpc-server builds.
+        if cfg!(windows) {
+            tracing::warn!(
+                "Windows runtime bundle rpc-server is not yet --gguf-compatible; \
+                 using network tensor transfer for {}",
+                path.display()
+            );
+        } else if rpc_server_supports_gguf_flag(&rpc_server.path) {
             args.push("--gguf".to_string());
             args.push(path.to_string_lossy().to_string());
             tracing::info!(
@@ -1023,10 +1021,8 @@ pub async fn start_rpc_server(
             );
         } else {
             tracing::warn!(
-                "rpc-server at {} does not support --gguf (likely an unpatched upstream \
-                 binary from a closedmesh-llm release built before the Windows CI compiles \
-                 llama.cpp from source). Falling back to network tensor transfer for this \
-                 load — functional but slower than zero-transfer.",
+                "rpc-server at {} does not support --gguf; falling back to network tensor \
+                 transfer for this load.",
                 rpc_server.path.display()
             );
         }
