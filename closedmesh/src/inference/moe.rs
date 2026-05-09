@@ -786,16 +786,24 @@ fn cleanup_empty_legacy_split_dirs(legacy_path: &Path) {
 }
 
 fn resolve_split_binary(bin_dir: &Path) -> anyhow::Result<PathBuf> {
-    let candidates = [
-        bin_dir.join("llama-moe-split"),
-        bin_dir.join("../llama.cpp/build/bin/llama-moe-split"),
-        bin_dir.join("../../llama.cpp/build/bin/llama-moe-split"),
-        bin_dir.join("../../../llama.cpp/build/bin/llama-moe-split"),
+    // Windows ships `llama-moe-split.exe`; POSIX ships an extension-less
+    // binary. `Path::exists()` does NOT auto-append `.exe` on Windows, so
+    // include both names in the candidate list.
+    let exe = std::env::consts::EXE_SUFFIX;
+    let names = [format!("llama-moe-split{exe}"), "llama-moe-split".to_string()];
+    let prefixes = [
+        bin_dir.to_path_buf(),
+        bin_dir.join("../llama.cpp/build/bin"),
+        bin_dir.join("../../llama.cpp/build/bin"),
+        bin_dir.join("../../../llama.cpp/build/bin"),
     ];
 
-    for candidate in candidates {
-        if candidate.exists() {
-            return Ok(candidate.canonicalize().unwrap_or(candidate));
+    for prefix in &prefixes {
+        for name in &names {
+            let candidate = prefix.join(name);
+            if candidate.exists() {
+                return Ok(candidate.canonicalize().unwrap_or(candidate));
+            }
         }
     }
 

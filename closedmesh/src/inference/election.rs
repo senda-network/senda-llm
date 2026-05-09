@@ -1023,15 +1023,23 @@ fn print_runtime_submit_suggestion(model_name: &str, model_path: &Path, ranking_
 }
 
 fn resolve_analyze_binary(bin_dir: &Path) -> anyhow::Result<std::path::PathBuf> {
-    let candidates = [
-        bin_dir.join("llama-moe-analyze"),
-        bin_dir.join("../llama.cpp/build/bin/llama-moe-analyze"),
-        bin_dir.join("../../llama.cpp/build/bin/llama-moe-analyze"),
-        bin_dir.join("../../../llama.cpp/build/bin/llama-moe-analyze"),
+    let exe = std::env::consts::EXE_SUFFIX;
+    let names = [
+        format!("llama-moe-analyze{exe}"),
+        "llama-moe-analyze".to_string(),
     ];
-    for candidate in candidates {
-        if candidate.exists() {
-            return Ok(candidate.canonicalize().unwrap_or(candidate));
+    let prefixes = [
+        bin_dir.to_path_buf(),
+        bin_dir.join("../llama.cpp/build/bin"),
+        bin_dir.join("../../llama.cpp/build/bin"),
+        bin_dir.join("../../../llama.cpp/build/bin"),
+    ];
+    for prefix in &prefixes {
+        for name in &names {
+            let candidate = prefix.join(name);
+            if candidate.exists() {
+                return Ok(candidate.canonicalize().unwrap_or(candidate));
+            }
         }
     }
     anyhow::bail!(
