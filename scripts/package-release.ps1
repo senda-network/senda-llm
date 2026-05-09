@@ -167,10 +167,14 @@ $versionedAsset = "closedmesh-$Version-windows-x86_64$(Get-FlavorSuffix $binaryF
 $meshBinary = Join-Path $releaseBinDir "closedmesh.exe"
 $rpcBinary = Join-Path $buildBinDir "rpc-server.exe"
 $llamaBinary = Join-Path $buildBinDir "llama-server.exe"
+$moeAnalyzeBinary = Join-Path $buildBinDir "llama-moe-analyze.exe"
+$moeSplitBinary = Join-Path $buildBinDir "llama-moe-split.exe"
 
 Require-File $meshBinary
 Require-File $rpcBinary
 Require-File $llamaBinary
+Require-File $moeAnalyzeBinary
+Require-File $moeSplitBinary
 
 $resolvedOutputDir = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
     [System.IO.Path]::GetFullPath($OutputDir)
@@ -187,6 +191,12 @@ try {
     Copy-Item $meshBinary -Destination (Join-Path $bundleDir (Get-BundleBinaryName "closedmesh" $binaryFlavor)) -Force
     Copy-Item $rpcBinary -Destination (Join-Path $bundleDir (Get-BundleBinaryName "rpc-server" $binaryFlavor)) -Force
     Copy-Item $llamaBinary -Destination (Join-Path $bundleDir (Get-BundleBinaryName "llama-server" $binaryFlavor)) -Force
+    # MoE helpers are flavor-agnostic on POSIX (one binary, no -flavor suffix);
+    # mirror that on Windows so closedmesh.exe finds them by their plain name
+    # — `desktop/src/mesh.rs::MOVE_PREFIXES` and the runtime resolver both look
+    # for `llama-moe-analyze.exe` / `llama-moe-split.exe`.
+    Copy-Item $moeAnalyzeBinary -Destination (Join-Path $bundleDir "llama-moe-analyze.exe") -Force
+    Copy-Item $moeSplitBinary -Destination (Join-Path $bundleDir "llama-moe-split.exe") -Force
     Copy-RuntimeLibs $bundleDir
     Copy-BenchmarkBinaries $bundleDir
 
