@@ -1447,13 +1447,18 @@ pub async fn start_llama_server(
     // occupy all slots for minutes while new requests pile up invisibly.
     // The backend proxy enforces a matching inflight cap so the deferred
     // queue never actually fills. See network/openai/backend.rs.
+    // -fit on lets llama-server reduce -ngl to whatever fits in available
+    // VRAM and overflow the rest onto host RAM. Required when the shard size
+    // exceeds GPU capacity (e.g. compound-RAM MoE split where a node holds
+    // ~25 GiB on an 8 GiB laptop GPU). Without this, the model load fails
+    // with `cudaMalloc failed: out of memory`.
     args.extend_from_slice(&[
         "-ngl".to_string(),
         "99".to_string(),
         "-fa".to_string(),
         "on".to_string(),
         "-fit".to_string(),
-        "off".to_string(),
+        "on".to_string(),
         "--no-mmap".to_string(),
         "--parallel".to_string(),
         slots.to_string(),
