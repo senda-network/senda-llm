@@ -747,7 +747,18 @@ Invoke-InRepo {
 
     $parallelJobs = [Environment]::ProcessorCount
     Invoke-NativeCommand "cmake" $cmakeArgs
-    Invoke-NativeCommand "cmake" @("--build", $buildDir, "--config", "Release", "--parallel", "$parallelJobs")
+    # Build only the targets the closedmesh runtime actually invokes —
+    # the same set patch 0006 wires into llama.cpp's mesh CI. Building
+    # `--all` pulls in llama-cli / llama-bench / etc., and the patch 0005
+    # mesh-hook code in server-context.cpp leaks httplib::Client symbols
+    # into the static lib graph that those tools don't compile httplib's
+    # implementation into → unresolved externals on the MSVC linker.
+    Invoke-NativeCommand "cmake" @(
+        "--build", $buildDir,
+        "--config", "Release",
+        "--parallel", "$parallelJobs",
+        "--target", "rpc-server", "llama-server", "llama-moe-analyze", "llama-moe-split"
+    )
     Write-Host "Build complete: $buildDir\bin\"
 
     if (Test-Path $meshUiDir) {
