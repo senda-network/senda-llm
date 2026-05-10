@@ -677,6 +677,14 @@ switch ($backendName) {
 Invoke-InRepo {
     Prepare-Llama
 
+    # BUILD_SHARED_LIBS=ON mirrors upstream ggml-org/llama.cpp's official
+    # Windows release: each backend (cuda, rpc, cpu-<isa>) lands as its
+    # own ggml-*.dll alongside the executables, which is what
+    # release-closedmesh.ps1 expects to glob into the bundle. Static (OFF)
+    # would also work in principle but bakes the CUDA backend into the
+    # exe, hides ggml-cuda.dll from the bundle, and diverges from the
+    # filesystem layout `desktop/src/mesh.rs::repair_missing_helpers`
+    # has been validated against on Windows.
     $cmakeArgs = @(
         "-B", $buildDir,
         "-S", $llamaDir,
@@ -687,7 +695,7 @@ Invoke-InRepo {
         "-DGGML_CUDA=OFF",
         "-DGGML_HIP=OFF",
         "-DGGML_VULKAN=OFF",
-        "-DBUILD_SHARED_LIBS=OFF",
+        "-DBUILD_SHARED_LIBS=ON",
         "-DLLAMA_OPENSSL=OFF",
         "-DLLAMA_BUILD_TESTS=OFF",
         "-DGGML_BUILD_TESTS=OFF"

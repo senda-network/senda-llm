@@ -595,13 +595,15 @@ jobs:
         if: always()
         run: sccache --show-stats || true
 
-  # Windows: build closedmesh.exe in CUDA and Vulkan flavors. We don't
-  # compile llama.cpp itself here yet — the CMake / disabled-CUDA path
-  # is still gnarly on windows-latest — so release-closedmesh.ps1
-  # bundles the matching rpc-server.exe / llama-server.exe + DLL set
-  # by downloading ggml-org/llama.cpp's official Windows release at
-  # packaging time. The result is still a self-contained bundle the
-  # desktop app can fetch and unpack with `tar -xf`.
+  # Windows: build closedmesh.exe AND patched llama.cpp helpers
+  # (rpc-server.exe, llama-server.exe, llama-moe-{analyze,split}.exe)
+  # from source on every release. Pre-0.66.10 we used to download
+  # ggml-org/llama.cpp's upstream Windows release for rpc-server /
+  # llama-server, but that bundle is missing every ClosedMesh patch
+  # (--gguf, --mesh-port, the moe tools), so compound-RAM MoE serving
+  # was structurally broken on Windows. Compiling from source via the
+  # same scripts/build-windows.ps1 used by `just release-build-*-windows`
+  # gives us a fully patched, self-contained bundle.
   build_windows:
     name: Build Windows ${{ matrix.flavor_label }}
     if: ${{ needs.prepare_release.outputs.skip_gpu_bundles != 'true' }}
@@ -614,9 +616,8 @@ jobs:
           - flavor: cuda
             flavor_label: CUDA
             artifact_name: release-windows-cuda
-          - flavor: vulkan
-            flavor_label: Vulkan
-            artifact_name: release-windows-vulkan
+            cuda_version: "12.4.1"
+            cuda_arch: "89"
 
     steps:
       - uses: actions/checkout@v5
@@ -631,13 +632,19 @@ jobs:
             . -> target
           prefix-key: ${{ env.CACHE_NAMESPACE }}-rust-${{ hashFiles('.github/cache-version.txt') }}
 
-      - name: Build closedmesh.exe (${{ matrix.flavor_label }})
-        shell: pwsh
-        run: cargo build --release -p closedmesh
+      - name: Install CUDA toolkit ${{ matrix.cuda_version }}
+        if: matrix.flavor == 'cuda'
+        uses: Jimver/cuda-toolkit@v0.2.21
+        with:
+          cuda: ${{ matrix.cuda_version }}
+          method: network
+          sub-packages: '["nvcc","cudart","visual_studio_integration","cublas","cublas_dev","thrust","cuda_profiler_api","nvtx"]'
 
-      - name: Build llama-moe helpers from patched llama.cpp (CPU-only)
+      - name: Build closedmesh.exe + patched llama.cpp (${{ matrix.flavor_label }})
         shell: pwsh
-        run: ./scripts/build-moe-helpers-windows.ps1
+        env:
+          CMAKE_BUILD_PARALLEL_LEVEL: "4"
+        run: ./scripts/build-windows.ps1 -Backend ${{ matrix.flavor }} -CudaArch '${{ matrix.cuda_arch }}'
 
       - name: Package closedmesh installer artifact (Windows x86_64 ${{ matrix.flavor_label }})
         shell: pwsh
