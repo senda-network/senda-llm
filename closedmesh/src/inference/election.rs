@@ -1822,8 +1822,27 @@ pub async fn election_loop(
         } else if currently_host {
             // Already running — don't tear down
             true
+        } else if moe_config.is_some() {
+            // MoE model that fits locally with at least one peer also serving it.
+            // The dense-mode "stand by and proxy to the host" path below is
+            // designed for dense models, where one host suffices and the rest
+            // forward inference to it. For MoE models the documented behavior
+            // (see comment ~80 lines up: "Otherwise, just run the full model
+            // — every node is independent.") is that every fits-locally node
+            // serves its own copy independently. Standing by here causes a
+            // deadlock when the peer is actually a pipeline_host expecting us
+            // as a worker but our `requires_split` evaluated to false because
+            // our local capacity exceeds the model size. Concretely: a 32 GB
+            // node and an 8 GB-VRAM-but-32 GB-RAM node both observe each
+            // other "fits locally", both fall through to dense election, both
+            // pick standby, neither loads the model, every API request returns
+            // 503 route_to_target. Always becoming an independent MoE host
+            // breaks the deadlock at the cost of duplicate model copies, which
+            // is the right tradeoff: the entry node will route inference to
+            // whichever copy is healthy and fastest.
+            true
         } else {
-            // Another node is already serving this model.
+            // Dense model and another node is already serving it.
             // Only spin up a duplicate if there's enough demand:
             //   - 2+ clients connected, OR
             //   - 10+ requests in the demand tracker for this model
