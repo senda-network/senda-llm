@@ -1,6 +1,6 @@
 [package]
 name = "closedmesh-client"
-version = "0.66.14"
+version = "0.66.15-pre1"
 edition = "2021"
 description = "Low-level Rust client implementation for Mesh LLM embedded integrations"
 license = "Apache-2.0"

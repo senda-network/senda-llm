@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "closedmesh"
-version = "0.66.14"
+version = "0.66.15-pre1"
 dependencies = [
  "ansi-to-tui",
  "anyhow",
@@ -992,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "closedmesh-client"
-version = "0.66.14"
+version = "0.66.15-pre1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1017,7 +1017,7 @@ dependencies = [
 
 [[package]]
 name = "closedmesh-plugin"
-version = "0.66.14"
+version = "0.66.15-pre1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3580,7 +3580,7 @@ dependencies = [
 
 [[package]]
 name = "mesh-api"
-version = "0.66.14"
+version = "0.66.15-pre1"
 dependencies = [
  "closedmesh-client",
  "hex",
