@@ -850,6 +850,36 @@ fn selected_backend_device(
     }
 }
 
+/// Compute the per-device memory target (in MiB) that we hand to llama.cpp's
+/// `-fitt` flag. llama.cpp uses this as the ceiling when `-fit on` is auto-
+/// picking how many layers to offload to GPU.
+///
+/// We intentionally undershoot the raw `vram_bytes` figure for two reasons:
+///
+/// 1. KV cache, compute buffers, and decode-time command buffers all live on
+///    the same device and aren't accounted for in `vram_bytes`. Without
+///    headroom, Metal hits `kIOGPUCommandBufferCallbackErrorOutOfMemory` at
+///    first decode and CUDA hits `cudaMalloc OOM` during slot allocation.
+/// 2. On Apple Silicon, our `vram_bytes` is derived from system RAM (the GPU
+///    has unified memory), but the actual usable Metal working set is
+///    Metal's `recommendedMaxWorkingSetSize` — typically ~12 GiB on an
+///    M3 Pro 18 GB, well below the 13.5 GiB our compound estimate would
+///    suggest. A 30% reserve covers both this Apple-specific gap and the
+///    KV/compute headroom, without leaving so much VRAM idle that small
+///    models pay a meaningful CPU-overflow tax.
+///
+/// `selected_gpu.vram_bytes` is preferred because it's the device-specific
+/// figure; `my_vram` is the node-level compound VRAM and is used as a
+/// fallback for the (rare) launches where no GPU was pinned.
+fn compute_fit_target_mib(
+    selected_gpu: Option<&crate::runtime::StartupPinnedGpuTarget>,
+    my_vram: u64,
+) -> u64 {
+    let device_vram = selected_gpu.map(|g| g.vram_bytes).unwrap_or(my_vram);
+    let target_bytes = (device_vram as f64 * 0.7) as u64;
+    (target_bytes / (1024 * 1024)).max(1024)
+}
+
 fn ensure_selected_gpu_capacity(
     selected_gpu: Option<&crate::runtime::StartupPinnedGpuTarget>,
     required_bytes: u64,
@@ -1447,18 +1477,33 @@ pub async fn start_llama_server(
     // occupy all slots for minutes while new requests pile up invisibly.
     // The backend proxy enforces a matching inflight cap so the deferred
     // queue never actually fills. See network/openai/backend.rs.
-    // -fit on lets llama-server reduce -ngl to whatever fits in available
+    //
+    // `-fit on` lets llama-server reduce `-ngl` to whatever fits in available
     // VRAM and overflow the rest onto host RAM. Required when the shard size
     // exceeds GPU capacity (e.g. compound-RAM MoE split where a node holds
-    // ~25 GiB on an 8 GiB laptop GPU). Without this, the model load fails
-    // with `cudaMalloc failed: out of memory`.
+    // ~14 GiB on a 12.3 GiB Metal working set, or ~14 GiB on an 8 GiB CUDA
+    // laptop GPU). Without `-fit`, the model load fails with `cudaMalloc
+    // failed: out of memory` (CUDA) or `kIOGPUCommandBufferCallbackError-
+    // OutOfMemory` mid-decode (Metal).
+    //
+    // Critically, we do NOT also pass `-ngl 99` here: when both are set,
+    // llama.cpp logs `n_gpu_layers already set by user to 99, abort` and
+    // refuses to let `-fit` reduce the layer count, so the OOM happens
+    // anyway. Leave `-ngl` unset and let `-fit` pick the largest layer
+    // count that fits the chosen device-memory target.
+    //
+    // `-fitt` (fit-target) is set to 70% of the pinned device's reported
+    // `vram_bytes`, which leaves headroom for KV cache, compute buffers,
+    // and the Apple-Silicon gap between our compound-RAM estimate and
+    // Metal's `recommendedMaxWorkingSetSize`. See `compute_fit_target_mib`.
+    let fit_target_mib = compute_fit_target_mib(selected_gpu, my_vram);
     args.extend_from_slice(&[
-        "-ngl".to_string(),
-        "99".to_string(),
         "-fa".to_string(),
         "on".to_string(),
         "-fit".to_string(),
         "on".to_string(),
+        "-fitt".to_string(),
+        fit_target_mib.to_string(),
         "--no-mmap".to_string(),
         "--parallel".to_string(),
         slots.to_string(),
