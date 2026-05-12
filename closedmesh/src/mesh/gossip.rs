@@ -173,8 +173,18 @@ impl Node {
         write_gossip_payload(&mut send, protocol, &our_announcements, self.endpoint.id()).await?;
         send.finish()?;
 
-        let rtt_ms = t0.elapsed().as_millis() as u32;
         let buf = read_len_prefixed(&mut recv).await?;
+        // Measure the round-trip AFTER the response has been read. Capturing
+        // it earlier (between t0 and send.finish()) was timing only the
+        // local QUIC send buffer, which is microseconds on most paths and
+        // rounds to 0 ms when cast to u32 — feeding `update_peer_rtt` the
+        // spurious "0 ms" value that flipped the split-eligibility gate
+        // back on every gossip cycle and produced the
+        // `RTT improved (140ms → 0ms) — re-electing for split` log storm
+        // in the entry-node journal. Reading the response first means
+        // `t0.elapsed()` includes the actual peer-side processing + return
+        // trip, which is what the split RTT threshold is meant to gate on.
+        let rtt_ms = t0.elapsed().as_millis() as u32;
         let their_announcements = decode_gossip_payload(protocol, remote, &buf)?;
 
         let _ = recv.read_to_end(0).await;
@@ -200,7 +210,16 @@ impl Node {
                 }
                 self.merge_remote_demand(&ann.model_demand);
                 self.add_peer(remote, addr.clone(), ann).await;
-                self.update_peer_rtt(remote, rtt_ms).await;
+                // Defensive `> 0` gate matching the other two `update_peer_rtt`
+                // callsites (path-info recheck below + `handle_gossip_stream`).
+                // A 0 ms reading isn't physically meaningful over the network
+                // and should never feed the split-eligibility gate; the
+                // `gossip_round_trip` measurement was the lone hole that let
+                // those phantom "0 ms" values through and caused continuous
+                // re-elections. Belt-and-braces.
+                if rtt_ms > 0 {
+                    self.update_peer_rtt(remote, rtt_ms).await;
+                }
             } else {
                 self.update_transitive_peer(peer_id, addr, ann).await;
             }
@@ -483,6 +502,32 @@ impl Node {
             existing.gpu_compute_tflops_fp16 = ann.gpu_compute_tflops_fp16.clone();
             if ann.experts_summary.is_some() {
                 existing.experts_summary = ann.experts_summary.clone();
+            }
+            // Refresh the peer's normalized capability advertisement, mirroring
+            // what `apply_transitive_ann` already does for indirectly-mentioned
+            // peers. Without this update, the `capability` snapshot a peer sent
+            // on its very first gossip exchange was retained for the lifetime
+            // of the entry — so a host that came up with empty `serving_models`
+            // (the runtime sets that field once it commits to bringing a model
+            // up, which can happen seconds AFTER the first announcement) would
+            // be advertised across the mesh forever as `loaded_models: []`,
+            // even after `hosted_models` had flipped on. That mismatch was the
+            // root cause of the public /status page rendering Mac as "Loading"
+            // while it was genuinely serving Qwen3-30B as a pipeline_host —
+            // the dashboard's `hasLoadedModel` predicate keys on
+            // `capability.loaded_models`, not the top-level `hosted_models`,
+            // so the staleness silently lied. Backfilling from legacy GPU
+            // fields (mirroring `apply_transitive_ann`) preserves behavior for
+            // older peers that don't include the field in their announcement.
+            if let Some(cap) = ann.capability.clone() {
+                existing.capability = cap;
+            } else {
+                existing.capability = backfill_capability_from_legacy(
+                    existing.gpu_name.as_deref(),
+                    existing.gpu_vram.as_deref(),
+                    existing.is_soc,
+                    &existing.serving_models,
+                );
             }
             let updated_peer = existing.clone();
             let changed = peer_meaningfully_changed(&old_peer, &updated_peer)
