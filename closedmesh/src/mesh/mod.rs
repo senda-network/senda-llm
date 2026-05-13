@@ -817,10 +817,7 @@ impl PeerInfo {
     ///   * NVIDIA: min(GPU, GPU+RAM)      = GPU      ← matches `Node`
     ///   * CPU:    cap=0, fall through    = vram_bytes (RAM-only budget)
     pub fn fast_memory_bytes(&self) -> u64 {
-        let cap_bytes = self
-            .capability
-            .vram_total_mb
-            .saturating_mul(1024 * 1024);
+        let cap_bytes = self.capability.vram_total_mb.saturating_mul(1024 * 1024);
         match (cap_bytes, self.vram_bytes) {
             (0, 0) => 0,
             (0, vram) => vram,
@@ -4670,8 +4667,6 @@ pub use visibility::{
 // unused-import warning rather than dropping the export — removing it
 // would force any future caller to reach through a private re-export.
 #[allow(unused_imports)]
-pub use visibility::MeshVisibilityState;
-#[allow(unused_imports)]
 use gossip::{apply_transitive_ann, peer_meaningfully_changed};
 #[allow(unused_imports)]
 use heartbeat::{
@@ -4680,6 +4675,8 @@ use heartbeat::{
 pub(crate) use heartbeat::{
     moe_recovery_ready_at, peer_is_eligible_for_active_moe, resolve_peer_down,
 };
+#[allow(unused_imports)]
+pub use visibility::MeshVisibilityState;
 
 #[cfg(test)]
 mod tests;
