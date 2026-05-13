@@ -98,6 +98,47 @@ async fn make_test_node(role: super::NodeRole) -> Result<Node> {
     Ok(node)
 }
 
+/// Regression for the May 13 2026 split-brain in CI's split-mode and
+/// inference smoke tests on Apple Silicon and CPU-only Linux runners.
+/// Both cases produce `hw.gpu_vram = []` (Apple Silicon has no discrete
+/// GPU and the survey only enumerates discrete cards; CPU-only Linux
+/// runners obviously have nothing to enumerate). The Node ended up with
+/// `gpu_vram_total_bytes = 0`, so `fast_memory_bytes()` returned 0 for
+/// the local node — but PEERS observing this same node via gossip read
+/// `capability.vram_total_mb` (still populated from `hw.vram_bytes`),
+/// so `peer.fast_memory_bytes()` returned the unified-memory budget,
+/// say 7.5 GB. Asymmetric: my-vs-peer comparisons in
+/// `should_be_host_for_model` always concluded "the peer has more
+/// memory than me", on both sides, and no peer ever became host.
+///
+/// The fix is the `vram_bytes` fallback inside `Node::fast_memory_bytes()`
+/// — `gpu_vram_total_bytes == 0` means "no discrete GPU is gating my
+/// budget", so the unified `vram_bytes` IS the fast-memory total.
+#[tokio::test]
+async fn fast_memory_bytes_falls_back_to_vram_bytes_when_no_discrete_gpu() {
+    use crate::mesh::Node;
+
+    // Discrete GPU present (LYU shape): keep the GPU budget.
+    let mut node = make_test_node(super::NodeRole::Worker)
+        .await
+        .expect("test node should initialize");
+    node.vram_bytes = 106 * 1024 * 1024 * 1024;
+    node.gpu_vram_total_bytes = 16 * 1024 * 1024 * 1024;
+    let n: &Node = &node;
+    assert_eq!(n.fast_memory_bytes(), 16 * 1024 * 1024 * 1024);
+
+    // No discrete GPU (Apple Silicon SoC + CPU-only Linux shape):
+    // fall back to vram_bytes so peers and self compute the same
+    // budget.
+    let mut soc = make_test_node(super::NodeRole::Worker)
+        .await
+        .expect("test node should initialize");
+    soc.vram_bytes = 7_500_000_000;
+    soc.gpu_vram_total_bytes = 0;
+    let s: &Node = &soc;
+    assert_eq!(s.fast_memory_bytes(), 7_500_000_000);
+}
+
 #[tokio::test]
 async fn local_request_metrics_snapshot_tracks_accepted_and_completed_requests() {
     let node = make_test_node(super::NodeRole::Worker)

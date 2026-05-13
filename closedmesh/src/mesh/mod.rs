@@ -3067,8 +3067,26 @@ impl Node {
     /// because llama.cpp had to page weights through the PCIe bus on every
     /// token, and the mesh entry node showed all four peers as Loading
     /// indefinitely while the 70B never came up.
+    ///
+    /// Fallback rule when `gpu_vram_total_bytes == 0`: use `vram_bytes`.
+    /// On machines without a discrete GPU (Apple Silicon SoC where
+    /// `hw.gpu_vram` is empty even though the unified-memory working set
+    /// is gossiped via `capability.vram_total_mb`, or pure-CPU Linux/Windows
+    /// boxes where `hw.vram_bytes` is the system-RAM allowance and not
+    /// inflated by RAM-offload of a separate GPU), `vram_bytes` already IS
+    /// the fast-memory budget — there's no separate GPU to differentiate
+    /// from. Without this fallback `should_be_host_for_model` would compute
+    /// `my_vram = 0` locally while peers compare against
+    /// `capability.vram_total_mb` from the same node's gossip, producing a
+    /// symmetric "every peer has more memory than me" deadlock and a
+    /// split-brain election. CI's macOS split-mode test (`scripts/ci-split-test.sh`)
+    /// and the single-node Linux smoke test both reproduced this on every
+    /// run after 2911efb6 introduced the `gpu_vram_total_bytes` field.
     pub fn fast_memory_bytes(&self) -> u64 {
-        self.gpu_vram_total_bytes
+        if self.gpu_vram_total_bytes > 0 {
+            return self.gpu_vram_total_bytes;
+        }
+        self.vram_bytes
     }
 
     pub async fn peers(&self) -> Vec<PeerInfo> {
