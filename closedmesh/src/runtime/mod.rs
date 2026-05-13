@@ -846,12 +846,7 @@ mod peer_report_url_tests {
 
     #[test]
     fn explicit_empty_disables() {
-        let cfg = derive_peer_report_config(
-            "https://mesh.closedmesh.com",
-            Some(""),
-            None,
-            None,
-        );
+        let cfg = derive_peer_report_config("https://mesh.closedmesh.com", Some(""), None, None);
         assert!(cfg.is_none());
     }
 

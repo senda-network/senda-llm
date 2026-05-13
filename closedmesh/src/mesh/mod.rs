@@ -4467,8 +4467,6 @@ pub use visibility::{
 // unused-import warning rather than dropping the export — removing it
 // would force any future caller to reach through a private re-export.
 #[allow(unused_imports)]
-pub use visibility::MeshVisibilityState;
-#[allow(unused_imports)]
 use gossip::{apply_transitive_ann, peer_meaningfully_changed};
 #[allow(unused_imports)]
 use heartbeat::{
@@ -4477,6 +4475,8 @@ use heartbeat::{
 pub(crate) use heartbeat::{
     moe_recovery_ready_at, peer_is_eligible_for_active_moe, resolve_peer_down,
 };
+#[allow(unused_imports)]
+pub use visibility::MeshVisibilityState;
 
 #[cfg(test)]
 mod tests;
