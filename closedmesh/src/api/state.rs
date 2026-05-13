@@ -108,4 +108,12 @@ pub(super) struct ApiInner {
         Vec<tokio::sync::oneshot::Sender<crate::models::LocalModelInventorySnapshot>>,
     pub(super) local_instances: Arc<Mutex<Vec<crate::runtime::instance::LocalInstanceSnapshot>>>,
     pub(super) wakeable_inventory: crate::runtime::wakeable::WakeableInventory,
+    /// Optional handle into the mesh-visibility audit loop. Set only
+    /// when the runtime is started with `--join-url` (i.e. this is a
+    /// member peer with a parent entry to verify against); `None` for
+    /// the entry itself, fully-local meshes, and CLI commands that
+    /// don't run the mesh service. When `None`, `/api/status` omits
+    /// the `mesh_visibility` field entirely so older clients that
+    /// don't know about it see no change.
+    pub(super) mesh_visibility: Option<mesh::MeshVisibilityHandle>,
 }

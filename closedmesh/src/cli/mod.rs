@@ -261,6 +261,19 @@ pub(crate) struct Cli {
     #[arg(long)]
     pub(crate) join_url: Option<String>,
 
+    /// Base URL of the website that aggregates peer audit reports
+    /// (Slice 4 of the mesh-visibility rollout). After every audit
+    /// cycle the runtime POSTs its `mesh_visibility` snapshot to
+    /// `<url>/api/peer-report` so the public status page can surface
+    /// peers that have silently dropped their iroh connection — the
+    /// failure mode the entry's gossip view cannot detect by
+    /// construction. When unset, the runtime infers a default from
+    /// `--join-url` (host-aware: `mesh.closedmesh.com` →
+    /// `https://closedmesh.com`); pass `--peer-report-url=` to
+    /// explicitly disable.
+    #[arg(long)]
+    pub(crate) peer_report_url: Option<String>,
+
     /// Discover a mesh via Nostr and join it.
     #[arg(long, default_missing_value = "", num_args = 0..=1)]
     pub(crate) discover: Option<String>,

@@ -657,8 +657,18 @@ impl MeshApi {
                 inventory_scan_waiters: Vec::new(),
                 local_instances: Arc::new(Mutex::new(Vec::new())),
                 wakeable_inventory: crate::runtime::wakeable::WakeableInventory::default(),
+                mesh_visibility: None,
             })),
         }
+    }
+
+    /// Attach a [`mesh::MeshVisibilityHandle`] so `/api/status` surfaces
+    /// the audit loop's latest outcome. Called by `runtime::run()` once
+    /// the visibility monitor has been spawned. No-op for runtimes
+    /// without `--join-url`.
+    pub async fn set_mesh_visibility(&self, handle: mesh::MeshVisibilityHandle) {
+        self.inner.lock().await.mesh_visibility = Some(handle);
+        self.push_status().await;
     }
 
     pub async fn node(&self) -> mesh::Node {
@@ -1362,6 +1372,7 @@ impl MeshApi {
             local_processes,
             local_instances_arc,
             wakeable_inventory,
+            mesh_visibility_handle,
         ) = {
             let inner = self.inner.lock().await;
             (
@@ -1388,6 +1399,7 @@ impl MeshApi {
                 inner.local_processes.clone(),
                 inner.local_instances.clone(),
                 inner.wakeable_inventory.clone(),
+                inner.mesh_visibility.clone(),
             )
         }; // inner lock dropped here
 
@@ -1605,6 +1617,10 @@ impl MeshApi {
             my_split_role: self_split.role,
             my_split_group: self_split.group,
             my_moe_shard: self_split.moe_shard,
+            mesh_visibility: match mesh_visibility_handle {
+                Some(handle) => Some(handle.snapshot().await),
+                None => None,
+            },
         }
     }
 

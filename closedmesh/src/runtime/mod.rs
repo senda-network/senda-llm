@@ -777,6 +777,97 @@ fn owner_runtime_config(cli: &Cli) -> Result<mesh::OwnerRuntimeConfig> {
 /// Failures are intentionally non-fatal — a network blip on startup
 /// shouldn't strand the runtime forever, so we log a warning and let
 /// `--auto` (which is typically also set) fall back to Nostr discovery.
+/// Decide where, if anywhere, to phone home peer audit reports.
+///
+/// Priority order:
+///   1. Explicit `--peer-report-url <URL>` — including the empty
+///      string, which is the "explicitly off" signal (we treat any
+///      empty / whitespace-only value as opt-out so the desktop /
+///      install.sh can stamp `--peer-report-url=` to disable without
+///      touching code).
+///   2. Inferred default from `--join-url`. For the canonical public
+///      entry (`mesh.closedmesh.com`) we phone home to
+///      `https://closedmesh.com`. Other hosts get no auto-default —
+///      private meshes don't have an operator-side aggregator and
+///      should opt in explicitly.
+///   3. No phone-home.
+fn derive_peer_report_config(
+    entry_base: &str,
+    explicit: Option<&str>,
+    hostname: Option<String>,
+    version: Option<String>,
+) -> Option<mesh::PeerReportConfig> {
+    let resolved_url = match explicit {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            trimmed.to_string()
+        }
+        None => infer_peer_report_url(entry_base)?,
+    };
+    Some(mesh::PeerReportConfig {
+        url: resolved_url,
+        hostname,
+        version,
+    })
+}
+
+fn infer_peer_report_url(entry_base: &str) -> Option<String> {
+    let parsed = url::Url::parse(entry_base).ok()?;
+    let host = parsed.host_str()?;
+    // Canonical public entry has the host `mesh.closedmesh.com` and
+    // the website lives at `closedmesh.com`. Strip the `mesh.`
+    // subdomain to find the matching website. Anything else is left
+    // alone so private deployments don't accidentally exfiltrate to
+    // the public site.
+    let website_host = host.strip_prefix("mesh.")?;
+    Some(format!("{}://{}", parsed.scheme(), website_host))
+}
+
+#[cfg(test)]
+mod peer_report_url_tests {
+    use super::*;
+
+    #[test]
+    fn infers_from_canonical_entry() {
+        assert_eq!(
+            infer_peer_report_url("https://mesh.closedmesh.com").as_deref(),
+            Some("https://closedmesh.com"),
+        );
+    }
+
+    #[test]
+    fn ignores_private_meshes() {
+        assert_eq!(infer_peer_report_url("https://my-team.example/"), None);
+        assert_eq!(infer_peer_report_url("http://10.0.0.5:3131"), None);
+    }
+
+    #[test]
+    fn explicit_empty_disables() {
+        let cfg = derive_peer_report_config(
+            "https://mesh.closedmesh.com",
+            Some(""),
+            None,
+            None,
+        );
+        assert!(cfg.is_none());
+    }
+
+    #[test]
+    fn explicit_url_overrides_inference() {
+        let cfg = derive_peer_report_config(
+            "https://mesh.closedmesh.com",
+            Some("https://internal.example/aggregator"),
+            None,
+            None,
+        )
+        .expect("should produce config");
+        assert_eq!(cfg.url, "https://internal.example/aggregator");
+    }
+}
+
 /// An explicit `--join` always wins over `--join-url`; if both are set
 /// the URL is ignored entirely.
 async fn resolve_join_url(cli: &mut Cli) {
@@ -2791,6 +2882,39 @@ async fn run_auto(
         cs.set_runtime_control(control_tx.clone()).await;
         cs.set_nostr_relays(nostr_relays(&cli.nostr_relay)).await;
         cs.set_nostr_discovery(cli.nostr_discovery).await;
+
+        // Mesh-visibility audit + auto-heal. Only runs for runtimes
+        // started with `--join-url` because that's the only mode where
+        // we have a parent entry to verify ourselves against. See
+        // `mesh::visibility` for the audit semantics and the soft /
+        // hard reconnect escalation policy.
+        if let Some(url) = cli
+            .join_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            // `--join-url` points at the entry's `/api/status`; strip
+            // that suffix back off to get the base URL the visibility
+            // module expects.
+            let entry_base = url
+                .trim_end_matches('/')
+                .trim_end_matches("/api/status")
+                .to_string();
+            let peer_report = derive_peer_report_config(
+                &entry_base,
+                cli.peer_report_url.as_deref(),
+                node.hostname.clone(),
+                Some(crate::VERSION.to_string()),
+            );
+            let (handle, _task) = mesh::spawn_mesh_visibility_monitor(
+                node.clone(),
+                entry_base,
+                cli.join.clone(),
+                peer_report,
+            );
+            cs.set_mesh_visibility(handle).await;
+        }
         if let Some(draft) = &cli.draft {
             let dn = draft
                 .file_stem()

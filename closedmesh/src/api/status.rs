@@ -189,6 +189,17 @@ pub(super) struct StatusPayload {
     /// MoE shard this node currently runs, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) my_moe_shard: Option<MoeShardPayload>,
+    /// Current state of the mesh-visibility audit loop. Present only
+    /// when this runtime was started with `--join-url` (i.e. it has a
+    /// parent entry to verify against). The desktop UI and the public
+    /// status page consume this to render the truth — "we say we're
+    /// serving but the entry can't see us" — instead of the optimistic
+    /// local-only `node_state` flag.
+    ///
+    /// See `mesh::visibility` for the audit semantics and auto-heal
+    /// thresholds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) mesh_visibility: Option<crate::mesh::MeshVisibilitySnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -698,6 +709,7 @@ mod tests {
             my_split_role: None,
             my_split_group: None,
             my_moe_shard: None,
+            mesh_visibility: None,
         };
 
         let json = serde_json::to_string(&status).expect("serialization failed");
@@ -748,6 +760,7 @@ mod tests {
             my_split_role: None,
             my_split_group: None,
             my_moe_shard: None,
+            mesh_visibility: None,
         };
 
         let json = serde_json::to_string(&status).expect("serialization failed");
@@ -805,6 +818,7 @@ mod tests {
             my_split_role: None,
             my_split_group: None,
             my_moe_shard: None,
+            mesh_visibility: None,
         };
 
         let json = serde_json::to_value(&status).expect("serialization failed");
@@ -857,6 +871,7 @@ mod tests {
             my_split_role: None,
             my_split_group: None,
             my_moe_shard: None,
+            mesh_visibility: None,
         };
 
         let json = serde_json::to_value(&status).expect("serialization failed");

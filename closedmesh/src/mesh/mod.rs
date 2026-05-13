@@ -4449,6 +4449,7 @@ fn ensure_private_node_key_file(path: &std::path::Path) -> Result<()> {
 mod capability;
 mod gossip;
 mod heartbeat;
+mod visibility;
 #[allow(unused_imports)]
 pub use capability::{
     backfill_from_legacy as backfill_capability_from_legacy,
@@ -4456,6 +4457,17 @@ pub use capability::{
     ComputeClass, GpuVendor, NodeCapability,
 };
 pub use gossip::backfill_legacy_descriptors;
+pub use visibility::{
+    spawn_mesh_visibility_monitor, MeshVisibilityHandle, MeshVisibilitySnapshot, PeerReportConfig,
+};
+// `MeshVisibilityState` is exported for downstream Rust consumers that
+// want to match on the audit outcome programmatically. None currently
+// exist in-tree (the desktop UI consumes it over JSON via the
+// `state` field of `MeshVisibilitySnapshot`), so silence the
+// unused-import warning rather than dropping the export — removing it
+// would force any future caller to reach through a private re-export.
+#[allow(unused_imports)]
+pub use visibility::MeshVisibilityState;
 #[allow(unused_imports)]
 use gossip::{apply_transitive_ann, peer_meaningfully_changed};
 #[allow(unused_imports)]
