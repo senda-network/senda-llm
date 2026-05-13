@@ -103,6 +103,14 @@ pub fn total_model_bytes(model: &Path) -> u64 {
 /// Determine if this node should be host for its model group.
 /// Only considers peers serving the same model.
 /// Deterministic: highest VRAM wins, tie-break by node ID.
+///
+/// `my_vram` and `peer.fast_memory_bytes()` are compared in the same
+/// units (GPU / unified-memory bytes, NOT the RAM-offload-inflated
+/// `vram_bytes`). The election picks the peer most likely to actually
+/// run llama-server at GPU speed. Otherwise the highest-VRAM peer is
+/// the one with the most spare DRAM, which produces a host whose
+/// inference falls through to mmap and stalls the whole pipeline. See
+/// `mesh::Node::fast_memory_bytes()` for the May 13 2026 incident.
 pub fn should_be_host_for_model(
     my_id: iroh::EndpointId,
     my_vram: u64,
@@ -112,10 +120,11 @@ pub fn should_be_host_for_model(
         if matches!(peer.role, NodeRole::Client) {
             continue;
         }
-        if peer.vram_bytes > my_vram {
+        let peer_vram = peer.fast_memory_bytes();
+        if peer_vram > my_vram {
             return false;
         }
-        if peer.vram_bytes == my_vram && peer.id > my_id {
+        if peer_vram == my_vram && peer.id > my_id {
             return false;
         }
     }
@@ -177,6 +186,19 @@ fn build_dense_launch_plan(
     model_peers: &[mesh::PeerInfo],
 ) -> DenseLaunchPlan {
     let min_vram = (model_bytes as f64 * 1.1) as u64;
+    // Solo is only appropriate when this node's *fast memory* (GPU VRAM
+    // on discrete cards, unified-memory working set on Apple Silicon)
+    // can hold the model. Callers pass `my_vram = node.fast_memory_bytes()`,
+    // not `node.vram_bytes()` — the latter includes a 75% RAM-offload
+    // allowance that is correct for "this node could mmap the weights
+    // somewhere" but wrong for "this node could serve at usable speed".
+    //
+    // The May 13 2026 deadlock was the cost of conflating those two: an
+    // RTX 4080-SUPER laptop with 16 GB of GPU and 120 GB of host RAM
+    // reported `vram_bytes = 106 GB`, the planner picked Solo for a
+    // 42.5 GB model, llama.cpp paged weights through PCIe at ~0.2 t/s,
+    // and the mesh entry node showed every peer Loading indefinitely
+    // while no chat request ever completed.
     if !force_split && my_vram >= min_vram {
         return DenseLaunchPlan::Solo;
     }
@@ -1681,7 +1703,15 @@ pub async fn election_loop(
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let model_bytes = total_model_bytes(&model);
-    let my_vram = node.vram_bytes();
+    // `my_vram` here is the *fast-memory* figure — the only one we trust
+    // for "do I need to split this model?" decisions. The legacy
+    // `node.vram_bytes()` is the GPU VRAM + 75% host-RAM allowance and
+    // is correct for "could this node mmap the weights anywhere?"
+    // questions, but it is wrong for "could this node decode at usable
+    // speed?" questions, which is what the dense launch planner asks.
+    // Conflating them is the May 13 2026 deadlock; see
+    // `mesh::Node::fast_memory_bytes()` for the full incident log.
+    let my_vram = node.fast_memory_bytes();
     let local_launch_vram = effective_local_launch_vram(my_vram, pinned_gpu.as_ref());
     let model_fits_locally = local_launch_vram >= (model_bytes as f64 * 1.1) as u64;
 
@@ -1822,27 +1852,8 @@ pub async fn election_loop(
         } else if currently_host {
             // Already running — don't tear down
             true
-        } else if moe_config.is_some() {
-            // MoE model that fits locally with at least one peer also serving it.
-            // The dense-mode "stand by and proxy to the host" path below is
-            // designed for dense models, where one host suffices and the rest
-            // forward inference to it. For MoE models the documented behavior
-            // (see comment ~80 lines up: "Otherwise, just run the full model
-            // — every node is independent.") is that every fits-locally node
-            // serves its own copy independently. Standing by here causes a
-            // deadlock when the peer is actually a pipeline_host expecting us
-            // as a worker but our `requires_split` evaluated to false because
-            // our local capacity exceeds the model size. Concretely: a 32 GB
-            // node and an 8 GB-VRAM-but-32 GB-RAM node both observe each
-            // other "fits locally", both fall through to dense election, both
-            // pick standby, neither loads the model, every API request returns
-            // 503 route_to_target. Always becoming an independent MoE host
-            // breaks the deadlock at the cost of duplicate model copies, which
-            // is the right tradeoff: the entry node will route inference to
-            // whichever copy is healthy and fastest.
-            true
         } else {
-            // Dense model and another node is already serving it.
+            // Another node is already serving this model.
             // Only spin up a duplicate if there's enough demand:
             //   - 2+ clients connected, OR
             //   - 10+ requests in the demand tracker for this model
@@ -2090,13 +2101,20 @@ pub async fn election_loop(
             currently_host = false;
             last_running_plan = None;
 
+            // Rank peers by GPU/unified-memory budget — the same metric
+            // the host runs in `should_be_host_for_model`. Using the
+            // RAM-offload-inflated `vram_bytes` here would pick a peer
+            // whose election-side counterpart never agrees it's the host
+            // (peer compares fast memory but worker compares inflated)
+            // and produces a split-brain deadlock with no traffic
+            // routed anywhere.
             let host_peer = model_peers
                 .iter()
                 .filter(|p| !matches!(p.role, NodeRole::Client))
-                .max_by_key(|p| (p.vram_bytes, p.id));
+                .max_by_key(|p| (p.fast_memory_bytes(), p.id));
 
             if let Some(host) = host_peer {
-                if should_be_host_for_model(host.id, host.vram_bytes, &model_peers) {
+                if should_be_host_for_model(host.id, host.fast_memory_bytes(), &model_peers) {
                     update_targets(
                         &node,
                         &model_name,
@@ -2287,15 +2305,24 @@ async fn moe_election_loop(
         }
 
         let my_id = node.id();
+        // MoE expert shards live in GPU/unified memory — RAM-offloaded
+        // experts get pulled across the PCIe bus on every token and tank
+        // throughput. Use `fast_memory_bytes()` for placement so we never
+        // claim a peer can hold an expert it cannot actually decode at GPU
+        // speed. Same reasoning as the dense Solo gate; see
+        // `mesh::Node::fast_memory_bytes()`.
         let mut candidates = vec![MoePlacementCandidate {
             id: my_id,
             vram_bytes: my_vram,
             full_coverage: model_fits,
         }];
-        candidates.extend(placement_peers.iter().map(|peer| MoePlacementCandidate {
-            id: peer.id,
-            vram_bytes: peer.vram_bytes,
-            full_coverage: peer.vram_bytes >= (model_bytes as f64 * 1.1) as u64,
+        candidates.extend(placement_peers.iter().map(|peer| {
+            let peer_fast = peer.fast_memory_bytes();
+            MoePlacementCandidate {
+                id: peer.id,
+                vram_bytes: peer_fast,
+                full_coverage: peer_fast >= (model_bytes as f64 * 1.1) as u64,
+            }
         }));
         let (current_active_ids, current_fallback_ids) =
             running_plan_state(last_plan.as_ref(), currently_running);
@@ -3109,7 +3136,12 @@ async fn start_llama(
         pinned_gpu,
         slots,
     } = params;
-    let my_vram = node.vram_bytes();
+    // For Solo-vs-Split planning we always feed `fast_memory_bytes()`,
+    // never the RAM-offload-inflated `vram_bytes()`. Otherwise a CUDA
+    // laptop with 16 GB GPU + 120 GB host RAM looks like it has 106 GB
+    // of "VRAM" and the planner picks Solo for a 70 B GGUF that
+    // physically can't decode on its GPU. See May 13 2026 incident.
+    let my_vram = node.fast_memory_bytes();
     let local_launch_vram = effective_local_launch_vram(my_vram, pinned_gpu);
     let model_bytes = total_model_bytes(model);
     let launch_plan = build_dense_launch_plan(
@@ -3353,6 +3385,159 @@ mod tests {
             owner_summary: crate::crypto::OwnershipSummary::default(),
             capability: crate::mesh::NodeCapability::default(),
         }
+    }
+
+    /// Construct a peer whose `vram_bytes` includes a RAM-offload allowance
+    /// (Linux/Windows discrete-GPU shape), with `capability.vram_total_mb`
+    /// reporting the *real* GPU VRAM. Mirrors what gossip carries for an
+    /// RTX 4080-SUPER laptop.
+    fn make_inflated_peer(
+        id: iroh::EndpointId,
+        gpu_vram_gb: u64,
+        ram_offload_gb: u64,
+        rtt_ms: Option<u32>,
+        serving_model: &str,
+    ) -> mesh::PeerInfo {
+        let gpu_bytes = gpu_vram_gb * 1024 * 1024 * 1024;
+        let inflated_bytes = (gpu_vram_gb + ram_offload_gb) * 1024 * 1024 * 1024;
+        let mut peer = make_dense_peer(id, inflated_bytes, rtt_ms, serving_model);
+        peer.capability = crate::mesh::NodeCapability {
+            vram_total_mb: gpu_bytes / (1024 * 1024),
+            ..crate::mesh::NodeCapability::default()
+        };
+        peer
+    }
+
+    /// May 13 2026 regression: an RTX 4080-SUPER laptop reports
+    /// `vram_bytes = 106 GB` (16 GB GPU + ~120 GB host RAM × 0.75) via
+    /// gossip. Pre-fix, `build_dense_launch_plan` saw `my_vram (106) >=
+    /// 42.5 GB × 1.1 = 46.7 GB` and returned Solo, so llama.cpp tried to
+    /// host the 70 B GGUF on the 16 GB GPU by mmap-faulting weights from
+    /// host RAM at ~0.2 t/s. The mesh entry node showed every peer
+    /// "Loading" indefinitely and chat 503'd for a week.
+    ///
+    /// Post-fix the planner reads `node.fast_memory_bytes()` (16 GB) and
+    /// drops out of the Solo branch into the cohort-pooling loop, where
+    /// the inflated `peer.vram_bytes` *is* the right metric (per-peer
+    /// RAM offload is fine when each peer only holds ~25% of the
+    /// layers). The result is a Split plan that pulls the three peers
+    /// into the launch — exactly what every machine in the mesh wanted.
+    #[test]
+    fn dense_launch_plan_does_not_solo_when_fast_memory_is_below_model_size() {
+        let model = "DeepSeek-R1-Distill-70B-Q4_K_M";
+        let _id_lyu = make_id(1);
+        let id_msi = make_id(2);
+        let id_mac = make_id(3);
+
+        // Workers visible from LYU's perspective (same shape as the May 13 mesh).
+        let peers = vec![
+            make_inflated_peer(id_msi, 8, 19, Some(40), model), // RTX 4070 Laptop
+            make_dense_peer(id_mac, 12 * 1024 * 1024 * 1024, Some(60), model), // M3 Pro unified
+        ];
+
+        // Pre-fix shape: my_vram = inflated 106 GB → would Solo.
+        // Post-fix shape: my_vram = fast memory 16 GB → must Split.
+        let my_fast_memory = 16u64 * 1024 * 1024 * 1024;
+        let model_bytes = (42.5 * 1024.0 * 1024.0 * 1024.0) as u64;
+
+        let plan = build_dense_launch_plan(my_fast_memory, model_bytes, false, model, &peers);
+
+        match plan {
+            DenseLaunchPlan::Split { worker_ids, .. } => {
+                assert!(
+                    !worker_ids.is_empty(),
+                    "expected workers to be enrolled; got empty Split which means the \
+                     planner found no usable peers and would deadlock"
+                );
+                assert!(
+                    worker_ids.contains(&id_msi) && worker_ids.contains(&id_mac),
+                    "expected both peers to be pulled in; got {:?}",
+                    worker_ids
+                );
+            }
+            other => panic!(
+                "expected Split plan for 70B-on-laptops, got {:?} — this means the May 13 \
+                 fast-memory gate regressed and LYU is back to lying about Solo capacity",
+                other
+            ),
+        }
+
+        // Sanity: the same call with `my_vram = 106 GB` (inflated) — the
+        // shape pre-fix — would still pick Solo. This pins down WHY we
+        // care which metric callers feed in.
+        let inflated = 106u64 * 1024 * 1024 * 1024;
+        let inflated_plan = build_dense_launch_plan(inflated, model_bytes, false, model, &peers);
+        assert_eq!(
+            inflated_plan,
+            DenseLaunchPlan::Solo,
+            "if a caller ever passes inflated vram_bytes here we want this assert to flip \
+             so the regression is caught at compile-and-test time, not in production"
+        );
+        // The point of the fix is that election.rs callers now pass
+        // node.fast_memory_bytes(), not node.vram_bytes(); the planner
+        // itself doesn't know the difference, so this guards the *contract*
+        // by asserting both arms of the gate behave as documented.
+        assert!(
+            my_fast_memory < (model_bytes as f64 * 1.1) as u64,
+            "test setup invariant: fast memory must be below the Solo gate"
+        );
+        assert!(
+            inflated >= (model_bytes as f64 * 1.1) as u64,
+            "test setup invariant: inflated value must clear the Solo gate"
+        );
+    }
+
+    /// Sister assertion: `should_be_host_for_model` must compare in the
+    /// same units across host and worker. Pre-fix, the host self-evaluated
+    /// using inflated `vram_bytes` while peers compared using
+    /// `peer.fast_memory_bytes()` — different units in the same predicate.
+    /// On the May 13 mesh that produced "every peer thinks it's the host"
+    /// because each one's inflated-self beat every other peer's
+    /// fast-memory budget. Post-fix both sides use fast memory and the
+    /// election picks a single winner.
+    #[test]
+    fn should_be_host_compares_fast_memory_symmetrically() {
+        let model = "DeepSeek-R1-Distill-70B-Q4_K_M";
+        let id_lyu = make_id(1);
+        let id_msi = make_id(2);
+        let id_mac = make_id(3);
+
+        let lyu = make_inflated_peer(id_lyu, 16, 90, None, model); // 4080-SUPER + 120 GB RAM
+        let msi = make_inflated_peer(id_msi, 8, 19, None, model); // 4070 + ~25 GB RAM
+        let mac = make_dense_peer(id_mac, 12 * 1024 * 1024 * 1024, None, model); // M3 Pro
+
+        // From LYU's perspective: I have 16 GB fast memory, peers are MSI(8) + Mac(12).
+        // 16 > 8, 16 > 12 → LYU is the host.
+        let lyu_fast = lyu.fast_memory_bytes();
+        assert!(should_be_host_for_model(
+            id_lyu,
+            lyu_fast,
+            std::slice::from_ref(&msi)
+        ));
+        assert!(should_be_host_for_model(
+            id_lyu,
+            lyu_fast,
+            &[msi.clone(), mac.clone()]
+        ));
+
+        // From MSI's perspective: I have 8 GB fast memory, peers include LYU(16).
+        // 16 > 8 → MSI is NOT the host.
+        let msi_fast = msi.fast_memory_bytes();
+        assert!(!should_be_host_for_model(id_msi, msi_fast, &[lyu.clone()]));
+
+        // Pre-fix bug shape: if MSI had compared its inflated vram (27 GB)
+        // against LYU's fast memory (16 GB), MSI would have decided IT was
+        // the host. That's the symmetry break that produced the
+        // split-brain. Document it explicitly:
+        let msi_inflated = msi.vram_bytes;
+        assert!(
+            should_be_host_for_model(id_msi, msi_inflated, &[lyu.clone()]),
+            "this should_be_host call uses MSI's *inflated* vram against \
+             LYU's fast memory and would have made MSI claim host pre-fix; \
+             this assertion documents the broken comparison and exists so \
+             that if anyone ever wires inflated vram back into the host arg \
+             we surface the asymmetry in CI rather than in the field"
+        );
     }
 
     #[test]

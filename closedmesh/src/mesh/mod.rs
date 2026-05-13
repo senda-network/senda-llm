@@ -775,6 +775,28 @@ pub struct MeshCatalogEntry {
 }
 
 impl PeerInfo {
+    /// Bytes of fast memory on this peer — the GPU/unified-memory budget
+    /// only, NOT inflated with a RAM-offload allowance.
+    ///
+    /// Reads `capability.vram_total_mb` (a per-peer, capability-advertised
+    /// figure populated from `nvidia-smi --query-gpu=memory.total`,
+    /// `recommendedMaxWorkingSetSize` on Apple Silicon, etc.). Falls back
+    /// to `vram_bytes` for peers on protocol versions that didn't carry
+    /// the capability block — those are necessarily older Linux/Windows
+    /// peers whose `vram_bytes` was inflated with RAM offload, so the
+    /// fallback over-counts on purpose. Tests that build `PeerInfo`
+    /// directly without populating the capability rely on this fallback.
+    ///
+    /// See `Node::fast_memory_bytes()` for the regression context.
+    pub fn fast_memory_bytes(&self) -> u64 {
+        let cap_bytes = self.capability.vram_total_mb.saturating_mul(1024 * 1024);
+        if cap_bytes > 0 {
+            cap_bytes
+        } else {
+            self.vram_bytes
+        }
+    }
+
     fn from_announcement(
         id: EndpointId,
         addr: EndpointAddr,
@@ -1039,6 +1061,14 @@ pub struct Node {
     first_joined_mesh_ts: Arc<Mutex<Option<u64>>>,
     accepting: Arc<(tokio::sync::Notify, std::sync::atomic::AtomicBool)>,
     vram_bytes: u64,
+    /// Sum of per-GPU VRAM bytes detected at startup, with NO RAM-offload
+    /// inflation. On Apple Silicon this equals `vram_bytes` (the
+    /// `derive_macos_gpu_budget` Metal working set). On Linux/Windows
+    /// discrete-GPU boxes it's the literal `nvidia-smi --query-gpu=
+    /// memory.total` / equivalent figure summed across cards. Used by
+    /// `fast_memory_bytes()` for split-vs-solo planning. See that method's
+    /// docstring for the regression motivation.
+    gpu_vram_total_bytes: u64,
     peer_change_tx: watch::Sender<usize>,
     pub peer_change_rx: watch::Receiver<usize>,
     inflight_requests: Arc<std::sync::atomic::AtomicUsize>,
@@ -1532,6 +1562,15 @@ impl Node {
 
         let hw = crate::system::hardware::survey();
         let mut vram = hw.vram_bytes;
+        // Sum per-GPU VRAM bytes WITHOUT the RAM-offload allowance that
+        // `hw.vram_bytes` includes on Linux/Windows discrete-GPU boxes.
+        // This is the budget the launch planner uses for Solo-vs-Split
+        // decisions; mmap'ing 90 GB of weights from system RAM is correct
+        // but slow, and we explicitly want the planner to refuse Solo when
+        // GPU memory alone can't hold the model. See
+        // `Node::fast_memory_bytes()` for the May 13 2026 regression that
+        // motivates this split.
+        let gpu_vram_total_bytes: u64 = hw.gpu_vram.iter().sum();
         let gpu_name = if matches!(role, NodeRole::Client) {
             None
         } else {
@@ -1647,6 +1686,11 @@ impl Node {
                 std::sync::atomic::AtomicBool::new(false),
             )),
             vram_bytes: vram,
+            // If the cap reduces vram below the raw GPU VRAM sum, also clamp
+            // gpu_vram_total_bytes — operators capping with `--max-vram` are
+            // expressing intent about how much memory to advertise *and* use
+            // on the local GPU, not just the RAM-offload total.
+            gpu_vram_total_bytes: gpu_vram_total_bytes.min(vram),
             peer_change_tx,
             peer_change_rx,
             inflight_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -1748,6 +1792,7 @@ impl Node {
                 std::sync::atomic::AtomicBool::new(false),
             )),
             vram_bytes: 0,
+            gpu_vram_total_bytes: 0,
             peer_change_tx,
             peer_change_rx,
             inflight_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -2998,6 +3043,32 @@ impl Node {
 
     pub fn vram_bytes(&self) -> u64 {
         self.vram_bytes
+    }
+
+    /// Bytes of fast memory on the local node — GPU VRAM on discrete cards,
+    /// the Metal/unified-memory working set on Apple Silicon. Distinct from
+    /// `vram_bytes()`, which on Linux/Windows includes a 75% RAM-offload
+    /// allowance because the runtime can mmap weights from system RAM in a
+    /// pinch.
+    ///
+    /// The two figures matter for two different decisions:
+    /// - `vram_bytes()` answers "could this node theoretically fit the model
+    ///   somewhere on its hardware (slowly, via mmap)?" — useful for catalog
+    ///   UI and mesh-fit estimates.
+    /// - `fast_memory_bytes()` answers "could this node fit the model in a
+    ///   place llama.cpp can read at GPU speeds?" — the input the
+    ///   election + dense-launch planner actually wants when deciding Solo
+    ///   vs Split.
+    ///
+    /// Conflating the two is the May 13 2026 deadlock: LYU's
+    /// `vram_bytes()` was 106 GB (16 GB 4080-SUPER + ~120 GB host RAM × 0.75),
+    /// the 42.5 GB DeepSeek-70B Q4_K_M cleared the `>= model_bytes * 1.1`
+    /// gate, and the planner picked Solo. Solo-on-LYU then hit 0.2 t/s
+    /// because llama.cpp had to page weights through the PCIe bus on every
+    /// token, and the mesh entry node showed all four peers as Loading
+    /// indefinitely while the 70B never came up.
+    pub fn fast_memory_bytes(&self) -> u64 {
+        self.gpu_vram_total_bytes
     }
 
     pub async fn peers(&self) -> Vec<PeerInfo> {
