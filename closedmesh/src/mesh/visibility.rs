@@ -349,8 +349,13 @@ async fn run_audit_loop(
                 s.soft_reconnect_triggered = true;
             }
             last_soft_reconnect = Some(Instant::now());
-            attempt_soft_reconnect(&node, &entry_url, cached_fresh_token.as_deref(), &fallback_tokens)
-                .await;
+            attempt_soft_reconnect(
+                &node,
+                &entry_url,
+                cached_fresh_token.as_deref(),
+                &fallback_tokens,
+            )
+            .await;
         }
 
         tokio::time::sleep(AUDIT_INTERVAL).await;
@@ -751,10 +756,8 @@ mod tests {
 
     #[test]
     fn classify_captures_fresh_token() {
-        let body = entry_status_with_peers(
-            &["MSI_id"],
-            serde_json::json!({ "token": "fresh-tok-xyz" }),
-        );
+        let body =
+            entry_status_with_peers(&["MSI_id"], serde_json::json!({ "token": "fresh-tok-xyz" }));
         let outcome = classify_entry_response(&body, "MSI_id");
         assert_eq!(outcome.state, MeshVisibilityState::Visible);
         assert_eq!(outcome.fresh_token.as_deref(), Some("fresh-tok-xyz"));
@@ -765,10 +768,8 @@ mod tests {
         // Crucial for soft-reconnect: even when we're invisible, the
         // entry's currently-advertised token is what we'll use to
         // re-join — so we must extract it from the same response.
-        let body = entry_status_with_peers(
-            &["LYU_id"],
-            serde_json::json!({ "token": "fresh-tok-xyz" }),
-        );
+        let body =
+            entry_status_with_peers(&["LYU_id"], serde_json::json!({ "token": "fresh-tok-xyz" }));
         let outcome = classify_entry_response(&body, "MSI_id");
         assert_eq!(outcome.state, MeshVisibilityState::Invisible);
         assert_eq!(outcome.fresh_token.as_deref(), Some("fresh-tok-xyz"));
@@ -792,7 +793,9 @@ mod tests {
     use std::net::SocketAddr;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    async fn spawn_fake_entry(handler_body: serde_json::Value) -> (String, tokio::task::JoinHandle<()>) {
+    async fn spawn_fake_entry(
+        handler_body: serde_json::Value,
+    ) -> (String, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
         let body = Arc::new(handler_body);
@@ -814,12 +817,7 @@ mod tests {
         let addr: SocketAddr = listener.local_addr().unwrap();
         let app = Router::new().route(
             "/api/status",
-            get(|| async {
-                (
-                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                    "boom",
-                )
-            }),
+            get(|| async { (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "boom") }),
         );
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
@@ -830,10 +828,7 @@ mod tests {
     async fn spawn_fake_entry_garbage() -> (String, tokio::task::JoinHandle<()>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr: SocketAddr = listener.local_addr().unwrap();
-        let app = Router::new().route(
-            "/api/status",
-            get(|| async { "this is not JSON" }),
-        );
+        let app = Router::new().route("/api/status", get(|| async { "this is not JSON" }));
         let task = tokio::spawn(async move {
             let _ = axum::serve(listener, app).await;
         });
@@ -1048,7 +1043,11 @@ mod tests {
         };
         let body = build_peer_report_body("id", None, None, &[], &snap);
         let err = body["mesh_visibility"]["last_error"].as_str().unwrap();
-        assert!(err.len() <= 1024 + 32, "should be trimmed: len = {}", err.len());
+        assert!(
+            err.len() <= 1024 + 32,
+            "should be trimmed: len = {}",
+            err.len()
+        );
         assert!(err.contains("truncated"), "should mark as truncated");
     }
 
