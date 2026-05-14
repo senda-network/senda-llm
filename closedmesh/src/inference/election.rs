@@ -2281,8 +2281,7 @@ pub async fn election_loop(
                     // `HOST_ATTEMPT_BACKOFF` so the next iteration sees
                     // `host_attempt_backoff.is_active()` go false) gets us
                     // a fresh election attempt with warm tunnels.
-                    let wake_after =
-                        HOST_ATTEMPT_BACKOFF + std::time::Duration::from_secs(2);
+                    let wake_after = HOST_ATTEMPT_BACKOFF + std::time::Duration::from_secs(2);
                     tokio::select! {
                         _ = peer_rx.changed() => {}
                         _ = tokio::time::sleep(wake_after) => {}
@@ -3558,8 +3557,7 @@ async fn start_llama(
                 .filter(|(_, port)| !bad_ports.contains(port))
                 .map(|(id, port)| (*id, *port))
                 .collect();
-            let new_worker_ids: Vec<iroh::EndpointId> =
-                kept.iter().map(|(id, _)| *id).collect();
+            let new_worker_ids: Vec<iroh::EndpointId> = kept.iter().map(|(id, _)| *id).collect();
             let new_rpc_ports: Vec<u16> = kept.iter().map(|(_, port)| *port).collect();
 
             // Recompute group capacity from the survivors plus the host.
@@ -3806,12 +3804,7 @@ mod tests {
         let peers = vec![
             make_inflated_peer(id_msi, 8, 19, Some(40), model), // RTX 4070 Laptop
             make_dense_peer(id_mac, 12 * 1024 * 1024 * 1024, Some(60), model), // M3 Pro unified
-            make_dense_peer(
-                id_manonas,
-                12 * 1024 * 1024 * 1024,
-                Some(70),
-                model,
-            ), // M1 unified
+            make_dense_peer(id_manonas, 12 * 1024 * 1024 * 1024, Some(70), model), // M1 unified
         ];
 
         // Pre-fix shape: my_vram = inflated 106 GB → would Solo.
