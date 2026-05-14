@@ -3403,7 +3403,7 @@ async fn start_llama(
         model_name,
         model_peers,
     );
-    let worker_ids = match launch_plan {
+    let mut worker_ids = match launch_plan {
         DenseLaunchPlan::Solo => {
             let worker_count = model_peers
                 .iter()
@@ -3472,7 +3472,7 @@ async fn start_llama(
     // The host's own GPU is used directly on the local backend — no need to route
     // through the local rpc-server (which would add unnecessary TCP round trips).
     let all_ports = tunnel_mgr.peer_ports_map().await;
-    let Some(rpc_ports) = rpc_ports_for_worker_ids(&all_ports, &worker_ids) else {
+    let Some(mut rpc_ports) = rpc_ports_for_worker_ids(&all_ports, &worker_ids) else {
         emit_warning(
             format!(
                 "Waiting for selected worker tunnels ({}/{} ready)",
@@ -3492,8 +3492,17 @@ async fn start_llama(
     // its own `negotiate_hello`, hits `RPC_STATUS_ASSERT`, and SIGABRTs
     // before the HTTP port binds. The election loop then sees the launch
     // failure, retries, and crashes again forever (May 14 2026 incident).
-    // Probing here lets us return None and trip the host-attempt backoff
-    // so the runner-up takes over instead.
+    //
+    // If only *some* of the workers fail the probe, we drop them from the
+    // cohort and retry with the survivors — as long as the remaining
+    // group's capacity is still big enough for the model. This is what
+    // unblocked the May 14 2026 cluster: one peer's rpc-server tunnel
+    // was silent (probably stuck after a runtime upgrade or a Quic stream
+    // never recovered after the entry rotated its node_id), and every
+    // election that included it deadlocked the whole mesh in "loading"
+    // because every host candidate tried to include it for capacity.
+    // Dropping the silent peer keeps the model serving on the reachable
+    // 3-of-4 cohort while the broken peer recovers on its own schedule.
     if !rpc_ports.is_empty() {
         let mut probe_set = tokio::task::JoinSet::new();
         for port in &rpc_ports {
@@ -3509,24 +3518,69 @@ async fn start_llama(
             });
         }
         let mut bad: Vec<String> = Vec::new();
+        let mut bad_ports: std::collections::HashSet<u16> = std::collections::HashSet::new();
         while let Some(joined) = probe_set.join_next().await {
             if let Ok((port, outcome)) = joined {
                 if !outcome.is_healthy() {
                     bad.push(format!("127.0.0.1:{port} ({outcome:?})"));
+                    bad_ports.insert(port);
                 }
             }
         }
         if !bad.is_empty() {
-            emit_warning(
-                format!(
-                    "Aborting launch — {}/{} worker rpc tunnels failed HELLO probe: {}",
-                    bad.len(),
-                    rpc_ports.len(),
-                    bad.join(", ")
-                ),
-                Some(format!("model={model_name}")),
-            );
-            return None;
+            // Filter cohort down to workers whose probe was healthy.
+            // worker_ids and rpc_ports stay aligned because both lists
+            // were built in the same order from the same launch_plan.
+            let original_count = rpc_ports.len();
+            let kept: Vec<(iroh::EndpointId, u16)> = worker_ids
+                .iter()
+                .zip(rpc_ports.iter())
+                .filter(|(_, port)| !bad_ports.contains(port))
+                .map(|(id, port)| (*id, *port))
+                .collect();
+            let new_worker_ids: Vec<iroh::EndpointId> =
+                kept.iter().map(|(id, _)| *id).collect();
+            let new_rpc_ports: Vec<u16> = kept.iter().map(|(_, port)| *port).collect();
+
+            // Recompute group capacity from the survivors plus the host.
+            let survivor_capacity: u64 = new_worker_ids
+                .iter()
+                .filter_map(|id| model_peers.iter().find(|p| &p.id == id))
+                .map(|peer| split_peer_vram_bytes(peer, local_launch_vram))
+                .sum();
+            let group_capacity = local_launch_vram.saturating_add(survivor_capacity);
+            let min_vram = (model_bytes as f64 * 1.1) as u64;
+
+            if group_capacity >= min_vram && !new_worker_ids.is_empty() {
+                emit_warning(
+                    format!(
+                        "Dropping {}/{} worker(s) from cohort after failed HELLO probe \
+                         ({}); proceeding with {} survivor(s) at {:.1}GB capacity",
+                        bad.len(),
+                        original_count,
+                        bad.join(", "),
+                        new_worker_ids.len(),
+                        group_capacity as f64 / 1e9
+                    ),
+                    Some(format!("model={model_name}")),
+                );
+                worker_ids = new_worker_ids;
+                rpc_ports = new_rpc_ports;
+            } else {
+                emit_warning(
+                    format!(
+                        "Aborting launch — {}/{} worker rpc tunnels failed HELLO probe: {} \
+                         (remaining capacity {:.1}GB < {:.1}GB required)",
+                        bad.len(),
+                        original_count,
+                        bad.join(", "),
+                        group_capacity as f64 / 1e9,
+                        min_vram as f64 / 1e9,
+                    ),
+                    Some(format!("model={model_name}")),
+                );
+                return None;
+            }
         }
     }
 
