@@ -190,6 +190,96 @@ pub fn viable_host_candidates(
         .collect()
 }
 
+/// Sliding-window cap on how many failed `start_llama` attempts a single
+/// node will burn before stepping aside. Picked at 2 (with the window
+/// below) so a transient hiccup doesn't bench us, but a genuinely stuck
+/// host (e.g. workers behind broken iroh tunnels — May 14 2026 incident)
+/// surrenders quickly enough for the runner-up to take a turn.
+pub const HOST_ATTEMPT_MAX_FAILURES: usize = 2;
+
+/// Window for `HOST_ATTEMPT_MAX_FAILURES`. After this much elapsed time
+/// without a fresh failure the counter resets — we don't want yesterday's
+/// network blip to keep us out of host election today.
+pub const HOST_ATTEMPT_FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// How long we step aside once the threshold trips. Long enough for
+/// `HOST_CLAIM_GRACE` (30 s) to expire on the runner-up's view of us, plus
+/// some padding so we don't ping-pong between candidates each cycle.
+pub const HOST_ATTEMPT_BACKOFF: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Tracks repeated `start_llama` failures so a single node can't pin the
+/// cohort by failing over and over. Records each failure with a timestamp,
+/// trims out anything older than `HOST_ATTEMPT_FAILURE_WINDOW`, and once
+/// `HOST_ATTEMPT_MAX_FAILURES` accumulate within that window flips into a
+/// `backoff_until` state for `HOST_ATTEMPT_BACKOFF`.
+///
+/// Pure logic, no clock — every method takes `now` from the caller, which
+/// makes the regression tests trivial. See the May 14 2026 incident in
+/// issue #10: `v0.66.21` correctly elected `1024286234` (Mac) but the
+/// elected host SIGABRT'd on every relaunch because its iroh tunnels to
+/// the Windows workers were silently dropping bytes. Without this backoff
+/// the runtime would loop on the same `recv failed (bytes_recv=0)` crash
+/// forever instead of demoting and letting the runner-up try.
+#[derive(Default, Debug)]
+pub struct HostAttemptBackoff {
+    failures: std::collections::VecDeque<std::time::Instant>,
+    backoff_until: Option<std::time::Instant>,
+}
+
+impl HostAttemptBackoff {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns `true` once a backoff has tripped and is still active.
+    /// Callers should treat this as "force-disable host candidacy for me".
+    pub fn is_active(&self, now: std::time::Instant) -> bool {
+        self.backoff_until.map(|until| now < until).unwrap_or(false)
+    }
+
+    /// Records a failed `start_llama` attempt and, if the per-window
+    /// threshold is crossed, arms the backoff. Returns the new
+    /// `backoff_until` instant whenever the call *transitioned* from "no
+    /// active backoff" to "active backoff" so the caller can emit a
+    /// user-visible warning exactly once per trip.
+    pub fn record_failure(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        // If a previous backoff has expired, clear it so the next trip
+        // emits a fresh warning instead of being silently swallowed.
+        if let Some(until) = self.backoff_until {
+            if now >= until {
+                self.backoff_until = None;
+                self.failures.clear();
+            }
+        }
+        if self.is_active(now) {
+            return None;
+        }
+        self.failures.push_back(now);
+        while let Some(&earliest) = self.failures.front() {
+            if now.saturating_duration_since(earliest) > HOST_ATTEMPT_FAILURE_WINDOW {
+                self.failures.pop_front();
+            } else {
+                break;
+            }
+        }
+        if self.failures.len() >= HOST_ATTEMPT_MAX_FAILURES {
+            let until = now + HOST_ATTEMPT_BACKOFF;
+            self.backoff_until = Some(until);
+            self.failures.clear();
+            return Some(until);
+        }
+        None
+    }
+
+    /// Marks the cohort as serving (e.g. we just successfully launched).
+    /// Wipes any in-progress failure counter so the next failure starts
+    /// from a clean slate.
+    pub fn record_success(&mut self) {
+        self.failures.clear();
+        self.backoff_until = None;
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum DenseLaunchPlan {
     Solo,
@@ -1762,6 +1852,11 @@ pub async fn election_loop(
     // and issue #9 for why `peer.last_seen` would be wrong here.
     let mut first_observed: std::collections::HashMap<iroh::EndpointId, std::time::Instant> =
         std::collections::HashMap::new();
+    // Sliding-window cap on consecutive failed `start_llama` attempts on
+    // this node. When it trips, we force `i_am_host = false` for
+    // `HOST_ATTEMPT_BACKOFF` so the runner-up gets a turn. See issue #10
+    // and the May 14 2026 incident.
+    let mut host_attempt_backoff = HostAttemptBackoff::new();
 
     // Initial settle
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1922,7 +2017,17 @@ pub async fn election_loop(
         // (no election needed — everyone is a host).
         let requires_split = force_split || !model_fits_locally;
 
-        let i_am_host = if requires_split {
+        // If our recent `start_llama` attempts have piled up (e.g. all
+        // workers behind broken iroh tunnels — see issue #10) we force
+        // ourselves out of host candidacy for `HOST_ATTEMPT_BACKOFF` so
+        // the next-best peer can try. This complements `HOST_CLAIM_GRACE`
+        // which handles the *peers'* view of a stuck host; the backoff
+        // here is the host's view of itself.
+        let host_backoff_active = host_attempt_backoff.is_active(now);
+
+        let i_am_host = if host_backoff_active {
+            false
+        } else if requires_split {
             // Distributed mode: elect one host from the model group using the
             // same advertised node capacity every peer observes through gossip.
             // Election runs over `host_candidates` rather than `model_peers`
@@ -2131,6 +2236,20 @@ pub async fn election_loop(
             {
                 Some((port, death_rx)) => (port, death_rx),
                 None => {
+                    if let Some(until) =
+                        host_attempt_backoff.record_failure(std::time::Instant::now())
+                    {
+                        let secs = until
+                            .saturating_duration_since(std::time::Instant::now())
+                            .as_secs();
+                        emit_warning(
+                            format!(
+                                "Stepping aside as host for {secs}s after {} failed launches — letting the runner-up try",
+                                HOST_ATTEMPT_MAX_FAILURES
+                            ),
+                            Some(format!("model={model_name}")),
+                        );
+                    }
                     on_change(true, false);
                     let _ = peer_rx.changed().await;
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
@@ -2164,6 +2283,9 @@ pub async fn election_loop(
             currently_host = true;
             current_local_port = Some(local_proxy_port);
             last_running_plan = desired_launch.running_plan();
+            // Successful launch — clear any in-progress failure counter
+            // so the next launch starts from a clean slate.
+            host_attempt_backoff.record_success();
             // Re-gossip so peers learn we're the host for this model
             node.regossip().await;
             update_targets(
@@ -3350,6 +3472,49 @@ async fn start_llama(
         return None;
     };
 
+    // Pre-launch HELLO probe — fail fast if any tunneled rpc-server is
+    // silent. Without this, llama-server discovers the bad tunnel during
+    // its own `negotiate_hello`, hits `RPC_STATUS_ASSERT`, and SIGABRTs
+    // before the HTTP port binds. The election loop then sees the launch
+    // failure, retries, and crashes again forever (May 14 2026 incident).
+    // Probing here lets us return None and trip the host-attempt backoff
+    // so the runner-up takes over instead.
+    if !rpc_ports.is_empty() {
+        let mut probe_set = tokio::task::JoinSet::new();
+        for port in &rpc_ports {
+            let port = *port;
+            probe_set.spawn(async move {
+                let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+                let outcome = crate::network::rpc_probe::probe_hello(
+                    addr,
+                    crate::network::rpc_probe::DEFAULT_PROBE_TIMEOUT,
+                )
+                .await;
+                (port, outcome)
+            });
+        }
+        let mut bad: Vec<String> = Vec::new();
+        while let Some(joined) = probe_set.join_next().await {
+            if let Ok((port, outcome)) = joined {
+                if !outcome.is_healthy() {
+                    bad.push(format!("127.0.0.1:{port} ({outcome:?})"));
+                }
+            }
+        }
+        if !bad.is_empty() {
+            emit_warning(
+                format!(
+                    "Aborting launch — {}/{} worker rpc tunnels failed HELLO probe: {}",
+                    bad.len(),
+                    rpc_ports.len(),
+                    bad.join(", ")
+                ),
+                Some(format!("model={model_name}")),
+            );
+            return None;
+        }
+    }
+
     // Calculate tensor split from VRAM.
     // Device order: RPC workers first (matching --rpc order), then the local host device last.
     let my_vram_f = local_launch_vram as f64;
@@ -3858,6 +4023,106 @@ mod tests {
             "honest peer takes over once attacker is filtered out — \
              this is the resilience property the mesh promises"
         );
+    }
+
+    /// A single failure inside the window is not enough to bench us —
+    /// transient hiccups (e.g. a port collision on the random ephemeral
+    /// pick) shouldn't surrender host candidacy to a smaller peer.
+    #[test]
+    fn host_attempt_backoff_one_failure_keeps_us_eligible() {
+        let mut backoff = HostAttemptBackoff::new();
+        let t0 = std::time::Instant::now();
+        let armed = backoff.record_failure(t0);
+        assert!(armed.is_none(), "single failure must not arm the backoff");
+        assert!(!backoff.is_active(t0));
+        assert!(!backoff.is_active(t0 + std::time::Duration::from_secs(5)));
+    }
+
+    /// Two failures inside the 90 s window arm a 60 s backoff. This is
+    /// the May 14 2026 incident: Mac SIGABRT'd on every relaunch because
+    /// LYU's iroh tunnel was silent. Without this, the loop would burn
+    /// hundreds of attempts/hour on the same crash.
+    #[test]
+    fn host_attempt_backoff_arms_after_threshold_and_disables_candidacy() {
+        let mut backoff = HostAttemptBackoff::new();
+        let t0 = std::time::Instant::now();
+
+        assert!(backoff.record_failure(t0).is_none());
+        let until = backoff
+            .record_failure(t0 + std::time::Duration::from_secs(5))
+            .expect("second failure inside window arms backoff");
+        assert!(backoff.is_active(t0 + std::time::Duration::from_secs(5)));
+        // Backoff window is exactly HOST_ATTEMPT_BACKOFF.
+        assert_eq!(
+            until - (t0 + std::time::Duration::from_secs(5)),
+            HOST_ATTEMPT_BACKOFF
+        );
+
+        // Just before expiry: still locked out.
+        let almost = until - std::time::Duration::from_millis(1);
+        assert!(backoff.is_active(almost));
+
+        // After expiry: free to try again, with a fresh failure counter.
+        let after = until + std::time::Duration::from_millis(1);
+        assert!(!backoff.is_active(after));
+        assert!(
+            backoff.record_failure(after).is_none(),
+            "first failure after backoff expires must NOT immediately re-arm — counter resets"
+        );
+    }
+
+    /// Failures that fall outside the 90 s window must not accumulate.
+    /// Otherwise a peer with brief network blips spread over hours could
+    /// disqualify itself even though it's perfectly healthy right now.
+    #[test]
+    fn host_attempt_backoff_old_failures_age_out_of_window() {
+        let mut backoff = HostAttemptBackoff::new();
+        let t0 = std::time::Instant::now();
+        assert!(backoff.record_failure(t0).is_none());
+        let later = t0 + HOST_ATTEMPT_FAILURE_WINDOW + std::time::Duration::from_secs(1);
+        assert!(
+            backoff.record_failure(later).is_none(),
+            "failure outside window must reset the counter, not arm the backoff"
+        );
+        assert!(!backoff.is_active(later));
+    }
+
+    /// A successful launch wipes the in-progress counter. Pinning this
+    /// because otherwise a host that recovers from a transient failure
+    /// would be one bad cycle away from involuntarily benching itself.
+    #[test]
+    fn host_attempt_backoff_success_clears_counter() {
+        let mut backoff = HostAttemptBackoff::new();
+        let t0 = std::time::Instant::now();
+        assert!(backoff.record_failure(t0).is_none());
+        backoff.record_success();
+        // Next failure starts from scratch — should NOT arm the backoff
+        // even though it's the second failure overall.
+        assert!(backoff
+            .record_failure(t0 + std::time::Duration::from_secs(5))
+            .is_none());
+        assert!(!backoff.is_active(t0 + std::time::Duration::from_secs(5)));
+    }
+
+    /// While backoff is active any further failure recordings are
+    /// no-ops. Otherwise a node burning through retries during its
+    /// own backoff window would extend the window for everyone.
+    #[test]
+    fn host_attempt_backoff_active_window_is_idempotent() {
+        let mut backoff = HostAttemptBackoff::new();
+        let t0 = std::time::Instant::now();
+        assert!(backoff.record_failure(t0).is_none());
+        let armed_at = backoff
+            .record_failure(t0 + std::time::Duration::from_secs(5))
+            .unwrap();
+
+        // Repeated failures while backoff is active: no new arming, same
+        // expiry instant.
+        let mid = t0 + std::time::Duration::from_secs(20);
+        assert!(backoff.record_failure(mid).is_none());
+        assert!(backoff.is_active(mid));
+        // Expiry hasn't slipped forward.
+        assert!(!backoff.is_active(armed_at + std::time::Duration::from_millis(1)));
     }
 
     #[test]

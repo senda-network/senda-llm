@@ -5,4 +5,5 @@ pub(crate) mod openai;
 pub(crate) mod proxy;
 pub(crate) mod rewrite;
 pub(crate) mod router;
+pub(crate) mod rpc_probe;
 pub(crate) mod tunnel;
