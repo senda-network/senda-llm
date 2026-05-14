@@ -312,9 +312,24 @@ impl DenseLaunchPlan {
     }
 }
 
+/// Bytes a peer can actually hold in fast memory for split planning.
+///
+/// Must match what `peer.fast_memory_bytes()` returns elsewhere — see
+/// `mesh::Node::fast_memory_bytes()` and the May 13 2026 deadlock notes
+/// in `mesh/mod.rs`. Using `peer.vram_bytes` directly here was the
+/// May 14 2026 incident: on Linux NVIDIA peers `vram_bytes` includes
+/// the `0.75 * RAM_offload` allowance (~106 GB on LYU's 16 GB 4080-SUPER
+/// with 120 GB system RAM), so the split planner happily put 36 GB of
+/// DeepSeek-R1-Distill-70B-Q4_K_M weights on a 16 GB GPU and llama-server
+/// died with `alloc_tensor_range: failed to allocate RPC0 buffer of size
+/// 36706976000`. `fast_memory_bytes` clamps to the actual GPU/unified-memory
+/// budget on every platform, so the split ratio reflects what each device
+/// can hold and the planner correctly stops adding workers only once the
+/// real fast-memory total covers the model.
 fn split_peer_vram_bytes(peer: &mesh::PeerInfo, my_vram: u64) -> u64 {
-    if peer.vram_bytes > 0 {
-        peer.vram_bytes
+    let fast = peer.fast_memory_bytes();
+    if fast > 0 {
+        fast
     } else {
         my_vram
     }
@@ -3688,31 +3703,41 @@ mod tests {
         peer
     }
 
-    /// May 13 2026 regression: an RTX 4080-SUPER laptop reports
-    /// `vram_bytes = 106 GB` (16 GB GPU + ~120 GB host RAM × 0.75) via
-    /// gossip. Pre-fix, `build_dense_launch_plan` saw `my_vram (106) >=
-    /// 42.5 GB × 1.1 = 46.7 GB` and returned Solo, so llama.cpp tried to
-    /// host the 70 B GGUF on the 16 GB GPU by mmap-faulting weights from
-    /// host RAM at ~0.2 t/s. The mesh entry node showed every peer
-    /// "Loading" indefinitely and chat 503'd for a week.
+    /// May 13 2026 regression (host-side half): an RTX 4080-SUPER laptop
+    /// reports `vram_bytes = 106 GB` (16 GB GPU + ~120 GB host RAM × 0.75)
+    /// via gossip. Pre-fix, `build_dense_launch_plan` saw `my_vram (106)
+    /// >= 42.5 GB × 1.1 = 46.7 GB` and returned Solo, so llama.cpp tried
+    /// to host the 70 B GGUF on the 16 GB GPU by mmap-faulting weights
+    /// from host RAM at ~0.2 t/s.
     ///
     /// Post-fix the planner reads `node.fast_memory_bytes()` (16 GB) and
-    /// drops out of the Solo branch into the cohort-pooling loop, where
-    /// the inflated `peer.vram_bytes` *is* the right metric (per-peer
-    /// RAM offload is fine when each peer only holds ~25% of the
-    /// layers). The result is a Split plan that pulls the three peers
-    /// into the launch — exactly what every machine in the mesh wanted.
+    /// drops out of the Solo branch into the cohort-pooling loop. The
+    /// May 14 2026 follow-up (this commit) extends the same honesty to
+    /// the cohort itself: each peer also contributes `fast_memory_bytes`
+    /// rather than its inflated `vram_bytes`, so the planner stops
+    /// adding workers only once the *real* fast-memory total covers the
+    /// model — not after the first inflated peer pretends to have 106 GB.
+    /// See `split_peer_vram_bytes` for the matching peer-side fix.
     #[test]
     fn dense_launch_plan_does_not_solo_when_fast_memory_is_below_model_size() {
         let model = "DeepSeek-R1-Distill-70B-Q4_K_M";
-        let _id_lyu = make_id(1);
         let id_msi = make_id(2);
         let id_mac = make_id(3);
+        let id_manonas = make_id(4);
 
-        // Workers visible from LYU's perspective (same shape as the May 13 mesh).
+        // Workers visible from LYU's perspective. Reflects the real live
+        // mesh on May 14 2026: 4 nodes total (LYU + these 3) all reporting
+        // inflated vram_bytes but small real GPUs, and a 42.5 GB model
+        // that only fits across the full cohort's fast memory budget.
         let peers = vec![
             make_inflated_peer(id_msi, 8, 19, Some(40), model), // RTX 4070 Laptop
             make_dense_peer(id_mac, 12 * 1024 * 1024 * 1024, Some(60), model), // M3 Pro unified
+            make_dense_peer(
+                id_manonas,
+                12 * 1024 * 1024 * 1024,
+                Some(70),
+                model,
+            ), // M1 unified
         ];
 
         // Pre-fix shape: my_vram = inflated 106 GB → would Solo.
@@ -3725,13 +3750,14 @@ mod tests {
         match plan {
             DenseLaunchPlan::Split { worker_ids, .. } => {
                 assert!(
-                    !worker_ids.is_empty(),
-                    "expected workers to be enrolled; got empty Split which means the \
-                     planner found no usable peers and would deadlock"
-                );
-                assert!(
-                    worker_ids.contains(&id_msi) && worker_ids.contains(&id_mac),
-                    "expected both peers to be pulled in; got {:?}",
+                    worker_ids.contains(&id_msi)
+                        && worker_ids.contains(&id_mac)
+                        && worker_ids.contains(&id_manonas),
+                    "expected all 3 peers to be pulled in; got {:?} — \
+                     `split_peer_vram_bytes` must use fast_memory_bytes, not \
+                     inflated vram_bytes (otherwise the loop stops after one \
+                     peer 'covers' the model on paper but oversubscribes its \
+                     GPU when llama-server actually tries to allocate the split)",
                     worker_ids
                 );
             }
