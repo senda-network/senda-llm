@@ -878,78 +878,58 @@ async fn resolve_join_url(cli: &mut Cli) {
         return;
     }
 
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            let _ = emit_event(OutputEvent::Warning {
-                message: format!(
-                    "Could not build HTTP client for --join-url: {e}. Falling back to --auto discovery."
-                ),
-                context: Some("join-url".into()),
-            });
-            return;
-        }
-    };
-
-    let resp = match client.get(&url).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            let _ = emit_event(OutputEvent::Warning {
-                message: format!(
-                    "Could not fetch join token from --join-url {url}: {e}. Falling back to --auto discovery."
-                ),
-                context: Some("join-url".into()),
-            });
-            return;
-        }
-    };
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let _ = emit_event(OutputEvent::Warning {
-            message: format!(
-                "Join-url {url} returned HTTP {status}. Falling back to --auto discovery."
-            ),
-            context: Some("join-url".into()),
-        });
-        return;
-    }
-    let payload: serde_json::Value = match resp.json().await {
-        Ok(v) => v,
-        Err(e) => {
-            let _ = emit_event(OutputEvent::Warning {
-                message: format!(
-                    "Join-url {url} returned non-JSON response: {e}. Falling back to --auto discovery."
-                ),
-                context: Some("join-url".into()),
-            });
-            return;
-        }
-    };
-    let token = payload
-        .get("token")
-        .and_then(|t| t.as_str())
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty());
-    match token {
-        Some(t) => {
+    match fetch_join_url_token(&url).await {
+        Ok(t) => {
             let _ = emit_event(OutputEvent::Info {
                 message: format!("Resolved --join-url {url} into a join token"),
                 context: Some("join-url".into()),
             });
             cli.join.push(t);
         }
-        None => {
+        Err(e) => {
             let _ = emit_event(OutputEvent::Warning {
-                message: format!(
-                    "Join-url {url} response missing `token` field. Falling back to --auto discovery."
-                ),
+                message: join_url_failure_message(&url, &e.to_string(), cli.auto, cli.private_only),
                 context: Some("join-url".into()),
             });
         }
     }
+}
+
+fn join_url_failure_message(url: &str, err: &str, auto: bool, private_only: bool) -> String {
+    let fallback = if auto && !private_only {
+        "falling back to --auto discovery"
+    } else {
+        "no discovery fallback is available; will keep retrying --join-url"
+    };
+    format!("Could not resolve join token from --join-url {url}: {err}; {fallback}.")
+}
+
+async fn fetch_join_url_token(url: &str) -> Result<String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .context("building HTTP client")?;
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("fetching {url}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        anyhow::bail!("HTTP {status}");
+    }
+    let payload: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => anyhow::bail!("non-JSON response: {e}"),
+    };
+    let token = payload
+        .get("token")
+        .and_then(|t| t.as_str())
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("response missing `token` field"))?;
+    Ok(token)
 }
 
 async fn wait_shutdown_signal() {
@@ -2384,7 +2364,8 @@ async fn run_auto(
     };
     tracing::info!("Local models on disk: {:?}", local_models);
 
-    // Start mesh node — clients use ephemeral key (unique identity per run)
+    // Start mesh node. Clients are ephemeral by default; long-lived entry
+    // clients can opt into a persisted key with CLOSEDMESH_PERSIST_CLIENT_KEY.
     let role = if is_client {
         NodeRole::Client
     } else {
@@ -2571,16 +2552,30 @@ async fn run_auto(
             mesh_name: cli.mesh_name.clone(),
         });
 
-        // Periodic rejoin: re-connect to bootstrap tokens every 60s.
-        // No-op if already connected (connect_to_peer returns early).
-        // Recovers from dropped connections without manual intervention.
+        // Periodic rejoin: reconnect to bootstrap tokens every 60s. When a
+        // --join-url is configured, refresh it too so peers can recover from
+        // entry restarts or first-start races without a process restart.
         let rejoin_node = node.clone();
         let rejoin_tokens: Vec<String> = cli.join.clone();
+        let rejoin_join_url = cli
+            .join_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
-                for t in &rejoin_tokens {
-                    if let Err(e) = rejoin_node.join(t).await {
+                let mut tokens = rejoin_tokens.clone();
+                if let Some(url) = &rejoin_join_url {
+                    match fetch_join_url_token(url).await {
+                        Ok(token) if !tokens.iter().any(|t| t == &token) => tokens.insert(0, token),
+                        Ok(_) => {}
+                        Err(e) => tracing::debug!("Rejoin join-url refresh failed: {e}"),
+                    }
+                }
+                for token in &tokens {
+                    if let Err(e) = rejoin_node.join(token).await {
                         tracing::debug!("Rejoin failed: {e}");
                     }
                 }
@@ -3829,6 +3824,30 @@ async fn run_passive(
         .set_nostr_relays(nostr_relays(&cli.nostr_relay))
         .await;
     console_state.set_nostr_discovery(cli.nostr_discovery).await;
+    if let Some(url) = cli
+        .join_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let entry_base = url
+            .trim_end_matches('/')
+            .trim_end_matches("/api/status")
+            .to_string();
+        let peer_report = derive_peer_report_config(
+            &entry_base,
+            cli.peer_report_url.as_deref(),
+            node.hostname.clone(),
+            Some(crate::VERSION.to_string()),
+        );
+        let (handle, _task) = mesh::spawn_mesh_visibility_monitor(
+            node.clone(),
+            entry_base,
+            cli.join.clone(),
+            peer_report,
+        );
+        console_state.set_mesh_visibility(handle).await;
+    }
     if is_client {
         console_state.set_client(true).await;
     }

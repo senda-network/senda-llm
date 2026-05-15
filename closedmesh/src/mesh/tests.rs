@@ -2682,6 +2682,35 @@ fn worker_only_legacy_models_are_excluded_from_http_routes() {
     assert!(!legacy_worker.routes_http_model("worker-only-model"));
 }
 
+#[tokio::test]
+async fn rpc_pipeline_workers_make_hosted_model_routable() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Client).await?;
+    let model = "DeepSeek-R1-Distill-70B-Q4_K_M";
+    let host_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xD4; 32]).public());
+    let worker_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xD5; 32]).public());
+
+    let mut host = make_test_peer_info(host_id);
+    host.role = super::NodeRole::Host { http_port: 9337 };
+    host.serving_models = vec![model.to_string()];
+    host.hosted_models = vec![model.to_string()];
+    host.hosted_models_known = true;
+
+    let mut worker = make_test_peer_info(worker_id);
+    worker.role = super::NodeRole::Worker;
+    worker.serving_models = vec![model.to_string()];
+    worker.hosted_models_known = true;
+    worker.tunnel_port = Some(50123);
+
+    node.insert_test_peer(host).await;
+    node.insert_test_peer(worker).await;
+
+    assert_eq!(
+        node.models_being_served_routable().await,
+        vec![model.to_string()]
+    );
+    Ok(())
+}
+
 /// Verifies that dead-peer cleanup prevents re-admission: after a peer is cleaned
 /// up and added to dead_peers, the HashSet blocks any further connection attempts,
 /// and a subsequent PeerLeaving from the same peer is rejected as forged (peer_id

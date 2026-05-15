@@ -508,23 +508,24 @@ async fn attempt_soft_reconnect(
     cached_fresh_token: Option<&str>,
     fallback_tokens: &[String],
 ) {
-    // Prefer the most-recently observed token from the probe loop —
-    // that's by definition fresh as of <30 s ago. If the cache is empty
-    // (first audit window, or every probe so far has been
-    // EntryUnreachable) try a one-shot fetch. Both can fail, so cycle
-    // through any startup fallback tokens last.
+    // Prefer the most-recently observed token from the probe loop, but also
+    // perform a best-effort fresh fetch during reconnect. That covers entry
+    // restarts where the cached token is stale or a proxy returned a partial
+    // status payload without updating our cache.
     let mut candidates: Vec<String> = Vec::new();
     if let Some(t) = cached_fresh_token {
         candidates.push(t.to_string());
     }
-    if candidates.is_empty() {
-        match fetch_fresh_token(entry_url).await {
-            Ok(t) => candidates.push(t),
-            Err(e) => tracing::warn!(
-                "mesh visibility: soft reconnect token refresh failed ({e}); \
-                 falling back to startup tokens"
-            ),
+    match fetch_fresh_token(entry_url).await {
+        Ok(t) => {
+            if !candidates.iter().any(|existing| existing == &t) {
+                candidates.push(t);
+            }
         }
+        Err(e) => tracing::warn!(
+            "mesh visibility: soft reconnect token refresh failed ({e}); \
+             falling back to cached/startup tokens"
+        ),
     }
     candidates.extend(fallback_tokens.iter().cloned());
 

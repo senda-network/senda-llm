@@ -156,6 +156,18 @@ fn endpoint_id_hex(id: EndpointId) -> String {
     hex::encode(id.as_bytes())
 }
 
+fn truthy_env(name: &str) -> bool {
+    std::env::var(name)
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn new_plugin_message_id(source_peer_id: &str) -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1506,17 +1518,22 @@ impl Node {
         owner_config: Option<OwnerRuntimeConfig>,
         config_path: Option<&std::path::Path>,
     ) -> Result<(Self, TunnelChannels)> {
-        // Clients use an ephemeral key so they get a unique identity even
-        // when running on the same machine as a GPU node.
-        let secret_key = if matches!(role, NodeRole::Client)
-            || std::env::var("CLOSEDMESH_EPHEMERAL_KEY").is_ok()
-        {
-            let key = SecretKey::generate();
-            tracing::info!("Using ephemeral key (unique identity)");
-            key
-        } else {
-            load_or_create_key().await?
-        };
+        // Clients normally use an ephemeral key so they get a unique
+        // identity even when running on the same machine as a GPU node.
+        // The public entry node is also a Client, but it runs alone with
+        // ~/.closedmesh mounted on persistent storage; let it opt into the
+        // same durable key path workers use so container restarts do not
+        // rotate the join-token EndpointId and strand running peers.
+        let force_ephemeral_key = truthy_env("CLOSEDMESH_EPHEMERAL_KEY");
+        let persist_client_key = truthy_env("CLOSEDMESH_PERSIST_CLIENT_KEY");
+        let secret_key =
+            if force_ephemeral_key || (matches!(role, NodeRole::Client) && !persist_client_key) {
+                let key = SecretKey::generate();
+                tracing::info!("Using ephemeral key (unique identity)");
+                key
+            } else {
+                load_or_create_key().await?
+            };
         // Configure QUIC transport for heavy RPC traffic:
         // Use iroh's default transport config — it sets keep_alive, path timeouts,
         // and multipath correctly. Only override the bidi stream limit.
@@ -1958,8 +1975,21 @@ impl Node {
     pub async fn join(&self, invite_token: &str) -> Result<()> {
         let json = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(invite_token)?;
         let addr: EndpointAddr = serde_json::from_slice(&json)?;
-        // Clear dead status — explicit join should always attempt connection
-        self.state.lock().await.dead_peers.remove(&addr.id);
+        // Clear dead status — explicit join should always be allowed to
+        // recover a bootstrap peer. If we only know the peer transitively and
+        // have no live QUIC connection, drop that stale peer record so this
+        // explicit join can dial the fresh invite addresses instead of being
+        // short-circuited by connect_to_peer's gossip-discovery guard.
+        {
+            let mut state = self.state.lock().await;
+            state.dead_peers.remove(&addr.id);
+            if state.peers.contains_key(&addr.id)
+                && !state.connections.contains_key(&addr.id)
+                && !addr.addrs.is_empty()
+            {
+                state.peers.remove(&addr.id);
+            }
+        }
         self.connect_to_peer(addr).await
     }
 
@@ -2957,6 +2987,15 @@ impl Node {
             // Legacy schema (no hosted_models field): serving_models
             // was authoritative.
             if !p.hosted_models_known && p.serving_models.iter().any(|m| m == model) {
+                return true;
+            }
+            // Pipeline workers do not run an HTTP llama-server and therefore
+            // never populate hosted_models. Their readiness signal is the
+            // RPC tunnel they expose for the host's llama.cpp process.
+            if matches!(p.role, NodeRole::Worker)
+                && p.tunnel_port.is_some()
+                && p.is_assigned_model(model)
+            {
                 return true;
             }
             false
