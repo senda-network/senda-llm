@@ -4335,44 +4335,38 @@ impl Node {
 
     // --- Gossip ---
 
-    async fn connect_to_peer(&self, addr: EndpointAddr) -> Result<()> {
+    /// Shared dial-and-attach plumbing for `connect_to_peer` and
+    /// `dial_for_split`: time-bounded `connect_mesh`, install the
+    /// connection in `state.connections`, spawn the stream dispatcher.
+    /// Returns the live `Connection` so the caller can drive gossip on
+    /// their own preferred synchronicity (`connect_to_peer` blocks on
+    /// it, `dial_for_split` fires it off in the background).
+    ///
+    /// Neither short-circuit lives here — callers enforce their own
+    /// invariants before dialing (see the two regression tests pinned
+    /// to those semantics: `test_connect_to_peer_skips_known_peer_*`
+    /// and `dial_for_split_short_circuits_when_already_connected`).
+    async fn dial_and_attach(
+        &self,
+        addr: EndpointAddr,
+        timeout: std::time::Duration,
+    ) -> Result<iroh::endpoint::Connection> {
         let peer_id = addr.id;
-        if peer_id == self.endpoint.id() {
-            return Ok(());
-        }
+        let conn =
+            match tokio::time::timeout(timeout, connect_mesh(&self.endpoint, addr.clone())).await {
+                Ok(Ok(c)) => c,
+                Ok(Err(e)) => {
+                    anyhow::bail!("Dial to {} failed: {e}", peer_id.fmt_short());
+                }
+                Err(_) => {
+                    anyhow::bail!(
+                        "Dial to {} timed out after {:.1}s",
+                        peer_id.fmt_short(),
+                        timeout.as_secs_f64()
+                    );
+                }
+            };
 
-        {
-            let state = self.state.lock().await;
-            if state.peers.contains_key(&peer_id) {
-                return Ok(());
-            }
-            if state.dead_peers.contains(&peer_id) {
-                tracing::debug!("Skipping connection to dead peer {}", peer_id.fmt_short());
-                return Ok(());
-            }
-        }
-
-        tracing::info!("Connecting to peer {}...", peer_id.fmt_short());
-        let conn = match tokio::time::timeout(
-            PEER_CONNECT_AND_GOSSIP_TIMEOUT,
-            connect_mesh(&self.endpoint, addr.clone()),
-        )
-        .await
-        {
-            Ok(Ok(c)) => c,
-            Ok(Err(e)) => {
-                anyhow::bail!("Failed to connect to {}: {e}", peer_id.fmt_short());
-            }
-            Err(_) => {
-                anyhow::bail!(
-                    "Timeout connecting to {} ({}s)",
-                    peer_id.fmt_short(),
-                    PEER_CONNECT_AND_GOSSIP_TIMEOUT.as_secs()
-                );
-            }
-        };
-
-        // Store connection and start dispatcher for inbound streams from this peer
         {
             let mut state = self.state.lock().await;
             state.connections.insert(peer_id, conn.clone());
@@ -4384,6 +4378,37 @@ impl Node {
                 .dispatch_streams(conn_for_dispatch, peer_id)
                 .await;
         });
+
+        Ok(conn)
+    }
+
+    async fn connect_to_peer(&self, addr: EndpointAddr) -> Result<()> {
+        let peer_id = addr.id;
+        if peer_id == self.endpoint.id() {
+            return Ok(());
+        }
+
+        {
+            let state = self.state.lock().await;
+            // Short-circuit on `peers` membership (not `connections`):
+            // this is the startup-cost preservation that
+            // `test_connect_to_peer_skips_known_peer_without_connection`
+            // pins. Transitive peers we already know about don't
+            // re-dial here; the election layer uses `dial_for_split`
+            // when it actually needs a live connection.
+            if state.peers.contains_key(&peer_id) {
+                return Ok(());
+            }
+            if state.dead_peers.contains(&peer_id) {
+                tracing::debug!("Skipping connection to dead peer {}", peer_id.fmt_short());
+                return Ok(());
+            }
+        }
+
+        tracing::info!("Connecting to peer {}...", peer_id.fmt_short());
+        let conn = self
+            .dial_and_attach(addr, PEER_CONNECT_AND_GOSSIP_TIMEOUT)
+            .await?;
 
         // Gossip exchange to learn peer's role/VRAM and announce ourselves
         self.initiate_gossip(conn.clone(), peer_id).await?;
@@ -4478,31 +4503,7 @@ impl Node {
             "Pre-dial: forcing QUIC connection to known peer {}",
             peer_id.fmt_short()
         );
-        let conn =
-            match tokio::time::timeout(timeout, connect_mesh(&self.endpoint, addr.clone())).await {
-                Ok(Ok(c)) => c,
-                Ok(Err(e)) => {
-                    anyhow::bail!("Dial to {} failed: {e}", peer_id.fmt_short());
-                }
-                Err(_) => {
-                    anyhow::bail!(
-                        "Dial to {} timed out after {:.1}s",
-                        peer_id.fmt_short(),
-                        timeout.as_secs_f64()
-                    );
-                }
-            };
-        {
-            let mut state = self.state.lock().await;
-            state.connections.insert(peer_id, conn.clone());
-        }
-        let node_for_dispatch = self.clone();
-        let conn_for_dispatch = conn.clone();
-        tokio::spawn(async move {
-            node_for_dispatch
-                .dispatch_streams(conn_for_dispatch, peer_id)
-                .await;
-        });
+        let conn = self.dial_and_attach(addr, timeout).await?;
         // Refresh peer info + RTT via gossip — fire and forget, the
         // connection is what the launch path needs.
         let node_for_gossip = self.clone();
