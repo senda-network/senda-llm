@@ -647,6 +647,107 @@ fn emit_or_print_model_progress(
     }
 }
 
+/// Filenames that carry actual model weight bytes and therefore MUST be
+/// verified post-download. Tokenizer JSONs, chat templates, and other
+/// sidecars are intentionally excluded — they're small by design and
+/// applying the [`MIN_SERVABLE_MODEL_BYTES`] floor to them would emit
+/// false positives.
+///
+/// Kept deliberately narrow: anything not in this set is treated as
+/// metadata and trusted as-is when the HF crate returns Ok. Add new
+/// suffixes here only when we ship support for a new weight format.
+fn is_weight_asset_filename(filename: &str) -> bool {
+    filename.ends_with(".gguf") || filename.ends_with(".safetensors") || filename.ends_with(".bin")
+}
+
+/// Verify the path the HF crate returned for a weight asset actually points
+/// at a real blob of plausible size. If not, clean up the dangling state
+/// and retry the download once before giving up.
+///
+/// Why this exists: `hf_hub::ApiRepo::download_file` returns `Ok(path)`
+/// even when its short-circuit logic (snapshot symlink + `refs/<rev>` +
+/// `config.json` already on disk) makes it decide "nothing to do" — but
+/// the blob the snapshot symlink points to is missing. End state: dangling
+/// symlink, downloader says "✅ Ready", runtime later bails with "weights
+/// missing on disk", KeepAlive respawns, doom loop. Observed on the M3
+/// Pro for Qwen3-32B-Q4_K_M (May 16). This helper closes that gap by
+/// trusting only what we can stat ourselves.
+fn verify_weight_asset_present(
+    path: PathBuf,
+    api_repo: &hf_hub::HFRepositorySync,
+    asset: &HfAsset,
+) -> Result<PathBuf> {
+    let min_bytes = crate::runtime::MIN_SERVABLE_MODEL_BYTES;
+    let observed = crate::inference::election::try_total_model_bytes(&path);
+    if observed.is_some_and(|b| b >= min_bytes) {
+        return Ok(path);
+    }
+
+    let detail = match observed {
+        Some(b) => format!("file present but only {} bytes (need >= {})", b, min_bytes),
+        None => format!(
+            "no readable file at {} (dangling symlink or never downloaded)",
+            path.display()
+        ),
+    };
+
+    tracing::warn!(
+        "hf-hub reported `{}` as ready but verification failed: {}; clearing local state and retrying once",
+        asset.file,
+        detail,
+    );
+    let _ = emit_event(OutputEvent::Warning {
+        message: format!(
+            "Download of `{}` reported success but the file is not on disk ({}). \
+             Clearing local cache state and retrying once.",
+            asset.file, detail,
+        ),
+        context: Some(format!("model={}", asset.file)),
+    });
+
+    if path.symlink_metadata().is_ok() {
+        let _ = std::fs::remove_file(&path);
+    }
+
+    let retry_path = api_repo
+        .download_file(
+            &RepoDownloadFileParams::builder()
+                .filename(asset.file.clone())
+                .revision(asset.revision.clone())
+                .progress(None)
+                .build(),
+        )
+        .with_context(|| {
+            format!(
+                "retry download of {}/{}@{} after first attempt returned a missing file",
+                asset.repo, asset.file, asset.revision
+            )
+        })?;
+
+    let observed_retry = crate::inference::election::try_total_model_bytes(&retry_path);
+    if observed_retry.is_some_and(|b| b >= min_bytes) {
+        tracing::info!(
+            "retry of `{}` succeeded ({} bytes)",
+            asset.file,
+            observed_retry.unwrap(),
+        );
+        return Ok(retry_path);
+    }
+
+    anyhow::bail!(
+        "Hugging Face downloader returned a path for `{}` but the file is still {} after \
+         a clean retry. The cache for repo `{}` may be corrupt; manual fix: \
+         `rm -rf ~/.cache/huggingface/hub/models--{}` and rerun.",
+        asset.file,
+        match observed_retry {
+            Some(b) => format!("only {} bytes", b),
+            None => "missing".to_string(),
+        },
+        asset.repo,
+        asset.repo.replace('/', "--"),
+    )
+}
+
 fn download_hf_assets_blocking(
     label: &str,
     assets: Vec<HfAsset>,
@@ -783,6 +884,15 @@ fn download_hf_assets_blocking(
                     )
                 });
             }
+        };
+        // CRITICAL: only weight blobs get post-download verification.
+        // Metadata sidecars (config.json, tokenizer.json, *.jinja) are
+        // small by design and would always trip the MIN_SERVABLE_MODEL_BYTES
+        // floor; trust the HF crate for those.
+        let path = if required && is_weight_asset_filename(&asset.file) {
+            verify_weight_asset_present(path, &api_repo, &asset)?
+        } else {
+            path
         };
         if required && asset.file != "config.json" {
             primary_paths.push(path);
@@ -1473,6 +1583,91 @@ pub fn list_models() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only the three weight-bearing suffixes should opt into post-download
+    /// verification. Misclassifying tokenizer/chat-template JSON as a
+    /// weight asset would make `verify_weight_asset_present` reject every
+    /// download because those files are below `MIN_SERVABLE_MODEL_BYTES`.
+    #[test]
+    fn is_weight_asset_filename_only_matches_actual_weight_formats() {
+        assert!(is_weight_asset_filename("Qwen3-32B-Q4_K_M.gguf"));
+        assert!(is_weight_asset_filename("model-00001-of-00005.safetensors"));
+        assert!(is_weight_asset_filename("pytorch_model.bin"));
+
+        assert!(!is_weight_asset_filename("config.json"));
+        assert!(!is_weight_asset_filename("tokenizer.json"));
+        assert!(!is_weight_asset_filename("tokenizer_config.json"));
+        assert!(!is_weight_asset_filename("chat_template.jinja"));
+        assert!(!is_weight_asset_filename("README.md"));
+        assert!(!is_weight_asset_filename("Qwen3-32B-Q4_K_M")); // no extension
+    }
+
+    /// Healthy path (real file >= MIN) must be returned unchanged so the
+    /// helper is a pure no-op on the happy path — no spurious cleanup,
+    /// no spurious retries, no unnecessary HF API calls.
+    #[test]
+    fn verify_weight_asset_present_passes_through_healthy_file() {
+        let tmp = std::env::temp_dir().join(format!("verify_healthy_{}.gguf", std::process::id()));
+        let _ = std::fs::remove_file(&tmp);
+        let bytes = vec![0u8; (crate::runtime::MIN_SERVABLE_MODEL_BYTES + 1) as usize];
+        std::fs::write(&tmp, &bytes).unwrap();
+
+        // We can't easily build a `HFRepositorySync` in a unit test (it
+        // requires a live `HFClientSync`), so we exercise the pre-check
+        // only by asserting that `try_total_model_bytes` reports the
+        // file as healthy. If this returns Some(>=MIN), the helper short-
+        // circuits at the top and never touches the api_repo.
+        let observed = crate::inference::election::try_total_model_bytes(&tmp);
+        assert_eq!(
+            observed,
+            Some((crate::runtime::MIN_SERVABLE_MODEL_BYTES + 1) as u64),
+            "healthy fixture must report its real size so verify_weight_asset_present \
+             skips both the cleanup branch and the retry RPC"
+        );
+        assert!(
+            observed.is_some_and(|b| b >= crate::runtime::MIN_SERVABLE_MODEL_BYTES),
+            "this is the exact predicate verify_weight_asset_present uses to decide \
+             whether to short-circuit — keep these in sync"
+        );
+
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    /// The exact failure mode that caused the May 16 M3 Pro doom loop:
+    /// HF crate returns Ok with a path that is a dangling symlink. The
+    /// pre-check must classify this as unservable so the helper enters
+    /// its cleanup + retry branch instead of trusting "✅ Ready".
+    #[cfg(unix)]
+    #[test]
+    fn verify_weight_asset_present_rejects_dangling_symlink() {
+        use std::os::unix::fs::symlink;
+        let tmp_dir = std::env::temp_dir().join(format!("verify_dangling_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+        std::fs::create_dir_all(&tmp_dir).unwrap();
+        let link = tmp_dir.join("Qwen3-32B-Q4_K_M.gguf");
+        let target_that_does_not_exist = tmp_dir.join("blob-that-was-never-downloaded");
+        symlink(&target_that_does_not_exist, &link).unwrap();
+
+        // sanity: lstat must succeed (the symlink exists) while stat
+        // must fail (the target doesn't). This is the on-disk shape of
+        // an aborted HF download.
+        assert!(link.symlink_metadata().is_ok(), "symlink itself exists");
+        assert!(
+            std::fs::metadata(&link).is_err(),
+            "but the resolved target must not exist; otherwise this \
+             fixture isn't reproducing the dangling state"
+        );
+
+        let observed = crate::inference::election::try_total_model_bytes(&link);
+        assert_eq!(
+            observed, None,
+            "dangling symlink must read as None (not Some(0)) — that's how \
+             verify_weight_asset_present distinguishes 'never downloaded' from \
+             'genuinely zero bytes' and decides to wipe + retry"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
 
     #[test]
     fn source_identity_is_exposed_for_hf_catalog_entries() {

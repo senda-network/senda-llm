@@ -2779,6 +2779,58 @@ async fn run_auto(
     let all_declared_raw = build_serving_list(&resolved_models, &model_name);
     let (all_declared, missing_declared) =
         partition_servable_declared_models(&all_declared_raw, &resolved_models);
+
+    // Self-heal: attempt to auto-download missing models before bailing.
+    //
+    // The previous behaviour was to log an error and exit, forcing the user
+    // to manually run `closedmesh models download <name>` and restart. That
+    // worked for an attentive user with a desktop in front of them, but on
+    // headless contributor machines (or after a network blip that aborted
+    // the original download mid-blob) it left the peer in a doom loop:
+    // KeepAlive respawns → "model missing" error → exit → repeat. With
+    // catalog::download_hf_assets_blocking's post-download verification
+    // (v0.66.31), retrying here is safe: a download that silently no-ops
+    // on a dangling snapshot symlink now wipes the symlink and re-fetches;
+    // a network failure surfaces as a real `Err` instead of "✅ Ready".
+    let (all_declared, missing_declared) = if missing_declared.is_empty() {
+        (all_declared, missing_declared)
+    } else {
+        for (missing, _) in &missing_declared {
+            let _ = emit_event(OutputEvent::Info {
+                message: format!(
+                    "Configured to serve `{missing}` but weights are not on disk. \
+                     Attempting auto-download before bailing."
+                ),
+                context: Some(format!("model={missing}")),
+            });
+            tracing::info!("auto-downloading missing model `{}`", missing);
+            match models::resolve::download_exact_ref_with_progress(missing, true).await {
+                Ok(path) => {
+                    let _ = emit_event(OutputEvent::Info {
+                        message: format!("Auto-downloaded `{missing}` to {}", path.display()),
+                        context: Some(format!("model={missing}")),
+                    });
+                    tracing::info!(
+                        "auto-download of `{}` succeeded at {}",
+                        missing,
+                        path.display()
+                    );
+                }
+                Err(e) => {
+                    let _ = emit_event(OutputEvent::Error {
+                        message: format!(
+                            "Auto-download of `{missing}` failed: {e:#}. \
+                             This peer will NOT advertise `{missing}` to the mesh."
+                        ),
+                        context: Some(format!("model={missing}")),
+                    });
+                    tracing::error!("auto-download of `{}` failed: {:#}", missing, e);
+                }
+            }
+        }
+        partition_servable_declared_models(&all_declared_raw, &resolved_models)
+    };
+
     for (missing, observed_bytes) in &missing_declared {
         let path = models::find_model_path(missing);
         let detail = match observed_bytes {
