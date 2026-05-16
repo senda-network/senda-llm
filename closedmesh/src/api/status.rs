@@ -319,6 +319,23 @@ impl NodeCapabilityPayload {
             loaded_models: c.loaded_models.clone(),
         }
     }
+
+    pub(super) fn from_capability_with_usable_vram(
+        c: &crate::mesh::NodeCapability,
+        usable_vram_bytes: u64,
+    ) -> Self {
+        let mut payload = Self::from_capability(c);
+        if usable_vram_bytes > 0 {
+            let usable_vram_mb = usable_vram_bytes / (1024 * 1024);
+            payload.vram_total_mb = if payload.vram_total_mb > 0 {
+                payload.vram_total_mb.min(usable_vram_mb)
+            } else {
+                usable_vram_mb
+            };
+            payload.vram_free_mb = payload.vram_free_mb.min(payload.vram_total_mb);
+        }
+        payload
+    }
 }
 
 #[derive(Serialize)]

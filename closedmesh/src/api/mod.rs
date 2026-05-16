@@ -1528,9 +1528,11 @@ impl MeshApi {
                         p.gpu_compute_tflops_fp32.as_deref(),
                         p.gpu_compute_tflops_fp16.as_deref(),
                     ),
-                    capability: crate::api::status::NodeCapabilityPayload::from_capability(
-                        &p.capability,
-                    ),
+                    capability:
+                        crate::api::status::NodeCapabilityPayload::from_capability_with_usable_vram(
+                            &p.capability,
+                            p.fast_memory_bytes(),
+                        ),
                     first_joined_mesh_ts: p.first_joined_mesh_ts,
                     split_role: split_classification.role,
                     split_group: split_classification.group,
@@ -1669,7 +1671,12 @@ impl MeshApi {
                 .local_node_capability()
                 .await
                 .as_ref()
-                .map(crate::api::status::NodeCapabilityPayload::from_capability)
+                .map(|capability| {
+                    crate::api::status::NodeCapabilityPayload::from_capability_with_usable_vram(
+                        capability,
+                        node.fast_memory_bytes(),
+                    )
+                })
                 .unwrap_or_default(),
             routing_affinity,
             routing_metrics,
