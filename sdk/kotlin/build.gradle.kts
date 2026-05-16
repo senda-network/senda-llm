@@ -6,7 +6,7 @@ plugins {
 }
 
 group = "com.closedmesh"
-version = "0.66.31"
+version = "0.66.32"
 
 val androidArtifactId = "closedmesh-android"
 
