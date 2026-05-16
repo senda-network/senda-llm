@@ -3081,14 +3081,22 @@ impl Node {
         };
         let mut hosts = Vec::new();
 
-        // Include self if we're serving through the local API proxy
+        // Include self if we're serving through the local API proxy.
+        //
+        // `vram_gb` here is intentionally the *fast-memory* figure, not the
+        // RAM-offload-inflated `vram_bytes`. Anything that consumes the
+        // routing table for ranking, fit, or display should see the same
+        // budget the election + planner use; mixing the two is the May
+        // 13–16 2026 incident class in a different surface (`api/mod.rs`
+        // already converted, this is the last hold-out on the routing
+        // path).
         if !matches!(my_role, NodeRole::Client) {
             for model in my_hosted_models {
                 hosts.push(RouteEntry {
                     model,
                     node_id: format!("{}", self.endpoint.id().fmt_short()),
                     endpoint_id: self.endpoint.id(),
-                    vram_gb: self.vram_bytes as f64 / 1e9,
+                    vram_gb: self.fast_memory_bytes() as f64 / 1e9,
                 });
             }
         }
@@ -3100,7 +3108,7 @@ impl Node {
                     model,
                     node_id: format!("{}", peer.id.fmt_short()),
                     endpoint_id: peer.id,
-                    vram_gb: peer.vram_bytes as f64 / 1e9,
+                    vram_gb: peer.fast_memory_bytes() as f64 / 1e9,
                 });
             }
         }
@@ -3109,6 +3117,17 @@ impl Node {
         RoutingTable { hosts, mesh_id }
     }
 
+    /// Raw inventory VRAM in bytes — the number this node *advertises* via
+    /// gossip, which on Linux/Windows discrete-GPU boxes includes a 0.75 ×
+    /// RAM-offload allowance (i.e. an RTX 4080 + 120 GB host RAM reports
+    /// ~106 GB here even though only 16 GB is usable to llama-server).
+    ///
+    /// **Do not use this for planning, election, fit, or routing decisions.**
+    /// Use [`Node::fast_memory_bytes`] (or [`PeerInfo::fast_memory_bytes`]
+    /// on the remote side) for any "can this node actually serve at usable
+    /// speed?" question. The May 13–16 2026 incident class is what happens
+    /// when this contract is broken at any surface — see the doc on
+    /// `fast_memory_bytes` for the full post-mortem.
     pub fn vram_bytes(&self) -> u64 {
         self.vram_bytes
     }

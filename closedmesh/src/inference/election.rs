@@ -764,7 +764,12 @@ const MOE_SCALE_UP_QUIET_SECS: u64 = 45;
 #[derive(Clone, Copy, Debug)]
 struct MoePlacementCandidate {
     id: iroh::EndpointId,
-    vram_bytes: u64,
+    /// Fast-memory budget for this candidate (GPU VRAM on discrete cards,
+    /// unified-memory working set on Apple Silicon). Always populated from
+    /// `Node::fast_memory_bytes` / `PeerInfo::fast_memory_bytes` — never
+    /// from the inflated `vram_bytes` advertised in gossip. See
+    /// `mesh::Node::vram_bytes` doc for why the distinction matters.
+    fast_memory_bytes: u64,
     full_coverage: bool,
 }
 
@@ -821,8 +826,8 @@ fn compute_best_moe_placement(
     }
 
     candidates.sort_by(|a, b| {
-        b.vram_bytes
-            .cmp(&a.vram_bytes)
+        b.fast_memory_bytes
+            .cmp(&a.fast_memory_bytes)
             .then_with(|| a.id.cmp(&b.id))
     });
     let leader_id = candidates[0].id;
@@ -2109,7 +2114,18 @@ pub async fn election_loop(
                 )
                 .await;
             }
-            // Wait for next change OR llama-server death
+            // Wait for next change OR llama-server death.
+            //
+            // The `HOST_CLAIM_GRACE / 2` sleep below is a safety net: many
+            // `PeerInfo` field updates (RTT, VRAM, transitive joins,
+            // capability) intentionally do NOT tick `peer_change_tx`
+            // (see `gossip.rs::add_peer` and `update_transitive_peer`
+            // — only role/serving changes wake the watch channel), so
+            // without a periodic re-eval the elected host could keep
+            // serving against a stale cohort view until the next 60 s
+            // heartbeat round. Cheap to recompute; teardown only
+            // happens if `desired_launch.running_plan()` actually
+            // diverges from `last_running_plan` in the next iteration.
             tokio::select! {
                 res = peer_rx.changed() => {
                     if res.is_err() { break; }
@@ -2118,6 +2134,13 @@ pub async fn election_loop(
                         Some(format!("model={model_name}")),
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    continue;
+                }
+                _ = tokio::time::sleep(HOST_CLAIM_GRACE / 2) => {
+                    tracing::debug!(
+                        "stable-host fast path: periodic re-eval after {:?}",
+                        HOST_CLAIM_GRACE / 2
+                    );
                     continue;
                 }
                 _ = async {
@@ -2584,14 +2607,14 @@ async fn moe_election_loop(
         // `mesh::Node::fast_memory_bytes()`.
         let mut candidates = vec![MoePlacementCandidate {
             id: my_id,
-            vram_bytes: my_vram,
+            fast_memory_bytes: my_vram,
             full_coverage: model_fits,
         }];
         candidates.extend(placement_peers.iter().map(|peer| {
             let peer_fast = peer.fast_memory_bytes();
             MoePlacementCandidate {
                 id: peer.id,
-                vram_bytes: peer_fast,
+                fast_memory_bytes: peer_fast,
                 full_coverage: peer_fast >= (model_bytes as f64 * 1.1) as u64,
             }
         }));
@@ -4686,22 +4709,22 @@ mod tests {
             vec![
                 MoePlacementCandidate {
                     id: id_a,
-                    vram_bytes: 40,
+                    fast_memory_bytes: 40,
                     full_coverage: true,
                 },
                 MoePlacementCandidate {
                     id: id_b,
-                    vram_bytes: 24,
+                    fast_memory_bytes: 24,
                     full_coverage: false,
                 },
                 MoePlacementCandidate {
                     id: id_c,
-                    vram_bytes: 24,
+                    fast_memory_bytes: 24,
                     full_coverage: false,
                 },
                 MoePlacementCandidate {
                     id: id_d,
-                    vram_bytes: 24,
+                    fast_memory_bytes: 24,
                     full_coverage: false,
                 },
             ],
@@ -4727,17 +4750,17 @@ mod tests {
             vec![
                 MoePlacementCandidate {
                     id: id_a,
-                    vram_bytes: 48,
+                    fast_memory_bytes: 48,
                     full_coverage: true,
                 },
                 MoePlacementCandidate {
                     id: id_b,
-                    vram_bytes: 24,
+                    fast_memory_bytes: 24,
                     full_coverage: false,
                 },
                 MoePlacementCandidate {
                     id: id_c,
-                    vram_bytes: 24,
+                    fast_memory_bytes: 24,
                     full_coverage: false,
                 },
             ],
@@ -4762,17 +4785,17 @@ mod tests {
             vec![
                 MoePlacementCandidate {
                     id: id_a,
-                    vram_bytes: 48,
+                    fast_memory_bytes: 48,
                     full_coverage: true,
                 },
                 MoePlacementCandidate {
                     id: id_b,
-                    vram_bytes: 24,
+                    fast_memory_bytes: 24,
                     full_coverage: false,
                 },
                 MoePlacementCandidate {
                     id: id_c,
-                    vram_bytes: 24,
+                    fast_memory_bytes: 24,
                     full_coverage: false,
                 },
             ],
