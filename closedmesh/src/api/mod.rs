@@ -1518,6 +1518,7 @@ impl MeshApi {
                     hosted_models_known: p.hosted_models_known,
                     version: p.version.clone(),
                     rtt_ms: p.rtt_ms,
+                    inflight_requests: p.inflight_requests,
                     hostname: p.hostname.clone(),
                     is_soc: p.is_soc,
                     gpus: build_gpus(
@@ -2766,6 +2767,7 @@ mod tests {
             owner_attestation: None,
             owner_summary: crate::crypto::OwnershipSummary::default(),
             first_joined_mesh_ts: None,
+            inflight_requests: 0,
             capability: crate::mesh::NodeCapability::default(),
         }
     }
@@ -3045,6 +3047,7 @@ mod tests {
             served_model_runtime: Vec::new(),
             owner_attestation: None,
             owner_summary: crate::crypto::OwnershipSummary::default(),
+            inflight_requests: 0,
             capability: crate::mesh::NodeCapability::default(),
         }
     }

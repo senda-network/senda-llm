@@ -1,5 +1,6 @@
 pub(crate) mod config_state;
 mod discovery;
+pub(crate) mod entry_recovery;
 pub mod instance;
 mod interactive;
 mod local;
@@ -904,7 +905,7 @@ fn join_url_failure_message(url: &str, err: &str, auto: bool, private_only: bool
     format!("Could not resolve join token from --join-url {url}: {err}; {fallback}.")
 }
 
-async fn fetch_join_url_token(url: &str) -> Result<String> {
+pub(crate) async fn fetch_join_url_token(url: &str) -> Result<String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
@@ -2386,6 +2387,26 @@ async fn run_auto(
     .await?;
     node.start_accepting();
     let token = node.invite_token();
+    entry_recovery::configure_join_url(
+        cli.join_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+    );
+    {
+        let mut inflight_rx = node.inflight_change_rx();
+        let inflight_node = node.clone();
+        tokio::spawn(async move {
+            loop {
+                if inflight_rx.changed().await.is_err() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                inflight_node.regossip().await;
+            }
+        });
+    }
     node.set_display_name(node_display_name(&cli, &node)).await;
     let (plugin_mesh_tx, plugin_mesh_rx) = tokio::sync::mpsc::channel(256);
     let plugin_manager =
@@ -2894,6 +2915,14 @@ async fn run_auto(
     // Re-gossip so peers learn our catalog/requested state without prematurely
     // routing requests to not-yet-ready local processes.
     node.regossip().await;
+    if cli.loading_watchdog_grace_secs > 0 {
+        crate::inference::loading_watchdog::spawn_loading_watchdog(
+            node.clone(),
+            model_name.clone(),
+            model.clone(),
+            std::time::Duration::from_secs(cli.loading_watchdog_grace_secs),
+        );
+    }
 
     // Ensure draft model is available (downloads if needed, <1GB)
     // `--no-draft` disables automatic draft detection, but should not

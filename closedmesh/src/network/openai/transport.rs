@@ -2175,6 +2175,7 @@ pub async fn handle_mesh_request(
                 status_code,
                 completion_tokens: _,
             } => {
+                crate::runtime::entry_recovery::record_tunnel_success();
                 if should_learn_affinity(status_code) {
                     if let (Some(name), Some(prefix_hash)) =
                         (effective_model.as_ref(), prepared.learn_prefix_hash)
@@ -2224,6 +2225,7 @@ pub async fn handle_mesh_request(
                 last_retryable = true;
             }
             RouteAttemptResult::RetryableTimeout => {
+                crate::runtime::entry_recovery::record_tunnel_failure(node.clone());
                 tracing::warn!("Host {} timed out, trying next", target_host.fmt_short());
                 last_retryable = true;
                 if !refreshed {
@@ -2235,6 +2237,7 @@ pub async fn handle_mesh_request(
                 }
             }
             RouteAttemptResult::RetryableUnavailable => {
+                crate::runtime::entry_recovery::record_tunnel_failure(node.clone());
                 if let (Some(name), Some(prefix_hash), Some(cached_target)) = (
                     effective_model.as_ref(),
                     prepared.learn_prefix_hash,

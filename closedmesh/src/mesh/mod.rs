@@ -709,6 +709,7 @@ pub(crate) struct PeerAnnouncement {
     pub(crate) served_model_descriptors: Vec<ServedModelDescriptor>,
     pub(crate) served_model_runtime: Vec<ModelRuntimeDescriptor>,
     pub(crate) owner_attestation: Option<SignedNodeOwnership>,
+    pub(crate) inflight_requests: u64,
     /// Normalized capability advertisement used for capability-aware routing.
     /// Older peers that don't set this get back-filled from `gpu_*` / `hardware`
     /// when they're upgraded to a `PeerInfo`.
@@ -768,6 +769,10 @@ pub struct PeerInfo {
     pub served_model_runtime: Vec<ModelRuntimeDescriptor>,
     pub owner_attestation: Option<SignedNodeOwnership>,
     pub owner_summary: OwnershipSummary,
+    /// Current in-flight requests reported by this peer. Best-effort gossip
+    /// signal used only to order otherwise-equivalent hosts; zero for legacy
+    /// peers that do not advertise it.
+    pub inflight_requests: u64,
     /// Normalized capability for routing. Always populated — back-filled from
     /// the legacy GPU fields when the announcement didn't include it.
     pub capability: NodeCapability,
@@ -780,6 +785,15 @@ pub struct OwnerRuntimeConfig {
     pub trust_store: TrustStore,
     pub trust_policy: TrustPolicy,
 }
+
+fn stable_host_hash(local_id: EndpointId, host_id: EndpointId) -> u64 {
+    local_id
+        .as_bytes()
+        .iter()
+        .chain(host_id.as_bytes().iter())
+        .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+}
+
 #[derive(Debug, Clone)]
 pub struct MeshCatalogEntry {
     pub model_name: String,
@@ -878,6 +892,7 @@ impl PeerInfo {
             served_model_runtime: ann.served_model_runtime.clone(),
             owner_attestation: ann.owner_attestation.clone(),
             owner_summary,
+            inflight_requests: ann.inflight_requests,
             capability: ann.capability.clone().unwrap_or_else(|| {
                 capability::backfill_from_legacy(
                     ann.gpu_name.as_deref(),
@@ -2989,9 +3004,11 @@ impl Node {
             if !p.hosted_models_known && p.serving_models.iter().any(|m| m == model) {
                 return true;
             }
-            // Pipeline workers do not run an HTTP llama-server and therefore
-            // never populate hosted_models. Their readiness signal is the
-            // RPC tunnel they expose for the host's llama.cpp process.
+            // Non-split workers do not run an HTTP llama-server. Their
+            // readiness signal is the RPC tunnel they expose for another
+            // node's llama.cpp process. Pipeline-split workers are handled in
+            // `route_is_healthy` below because the Host's `hosted_models` bit
+            // is the proof that its full split cohort is ready.
             if matches!(p.role, NodeRole::Worker)
                 && p.tunnel_port.is_some()
                 && p.is_assigned_model(model)
@@ -3009,7 +3026,12 @@ impl Node {
             if cohort.is_empty() {
                 return true; // solo serve
             }
-            cohort.iter().all(|c| peer_serves_model(c, model))
+            cohort.iter().all(|c| {
+                peer_serves_model(c, model)
+                    || (matches!(c.role, NodeRole::Worker)
+                        && c.is_assigned_model(model)
+                        && host.hosted_models.iter().any(|m| m == model))
+            })
         };
 
         let mut routable = std::collections::HashSet::new();
@@ -3041,24 +3063,15 @@ impl Node {
     /// Used for retry: if the first host fails, try the next.
     pub async fn hosts_for_model(&self, model: &str) -> Vec<EndpointId> {
         let state = self.state.lock().await;
-        let mut hosts: Vec<EndpointId> = state
+        let mut hosts: Vec<(EndpointId, u64)> = state
             .peers
             .values()
             .filter(|p| p.routes_http_model(model))
-            .map(|p| p.id)
+            .map(|p| (p.id, p.inflight_requests))
             .collect();
-        hosts.sort();
-        // Put the hash-preferred host first so normal path tries it first
-        if !hosts.is_empty() {
-            let my_id = self.endpoint.id();
-            let id_bytes = my_id.as_bytes();
-            let hash = id_bytes
-                .iter()
-                .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64));
-            let idx = (hash as usize) % hosts.len();
-            hosts.rotate_left(idx);
-        }
-        hosts
+        let my_id = self.endpoint.id();
+        hosts.sort_by_key(|(id, inflight)| (*inflight, stable_host_hash(my_id, *id)));
+        hosts.into_iter().map(|(id, _)| id).collect()
     }
 
     /// Find ANY host in the mesh (fallback when no model match).

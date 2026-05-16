@@ -719,6 +719,7 @@ fn make_test_peer_info(peer_id: EndpointId) -> PeerInfo {
         served_model_runtime: vec![],
         owner_attestation: None,
         owner_summary: OwnershipSummary::default(),
+        inflight_requests: 0,
         capability: super::NodeCapability::default(),
     }
 }
@@ -1383,6 +1384,7 @@ fn gossip_frame_roundtrip_preserves_scanned_model_metadata() {
             ready: true,
         }],
         owner_attestation: None,
+        inflight_requests: 0,
         capability: None,
     };
 
@@ -1605,6 +1607,7 @@ fn transitive_peer_update_refreshes_metadata_fields() {
         served_model_descriptors: vec![],
         served_model_runtime: vec![],
         owner_attestation: None,
+        inflight_requests: 0,
         capability: None,
     };
 
@@ -1678,6 +1681,7 @@ fn transitive_peer_merge_preserves_richer_direct_address() {
         served_model_descriptors: vec![],
         served_model_runtime: vec![],
         owner_attestation: None,
+        inflight_requests: 0,
         capability: None,
     };
 
@@ -1730,6 +1734,7 @@ fn transitive_peer_merge_preserves_richer_direct_address() {
         served_model_descriptors: vec![],
         served_model_runtime: vec![],
         owner_attestation: None,
+        inflight_requests: 0,
         capability: None,
     };
     apply_transitive_ann(&mut existing, &richer_addr, &ann2);
@@ -2276,6 +2281,7 @@ fn transitive_peer_update_refreshes_last_mentioned() {
         served_model_descriptors: vec![],
         served_model_runtime: vec![],
         owner_attestation: None,
+        inflight_requests: 0,
         capability: None,
     };
 
@@ -2699,7 +2705,7 @@ async fn rpc_pipeline_workers_make_hosted_model_routable() -> Result<()> {
     worker.role = super::NodeRole::Worker;
     worker.serving_models = vec![model.to_string()];
     worker.hosted_models_known = true;
-    worker.tunnel_port = Some(50123);
+    worker.tunnel_port = None;
 
     node.insert_test_peer(host).await;
     node.insert_test_peer(worker).await;
@@ -2708,6 +2714,121 @@ async fn rpc_pipeline_workers_make_hosted_model_routable() -> Result<()> {
         node.models_being_served_routable().await,
         vec![model.to_string()]
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn pipeline_worker_for_wrong_model_does_not_make_route_routable() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Client).await?;
+    let model = "Qwen3-32B-Q4_K_M";
+    let other_model = "Qwen3-14B-Q4_K_M";
+    let host_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xD6; 32]).public());
+    let worker_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xD7; 32]).public());
+
+    let mut host = make_test_peer_info(host_id);
+    host.role = super::NodeRole::Host { http_port: 9337 };
+    host.serving_models = vec![model.to_string()];
+    host.hosted_models = vec![model.to_string()];
+    host.hosted_models_known = true;
+
+    let mut worker = make_test_peer_info(worker_id);
+    worker.role = super::NodeRole::Worker;
+    worker.serving_models = vec![other_model.to_string()];
+    worker.hosted_models_known = true;
+    worker.tunnel_port = None;
+
+    node.insert_test_peer(host).await;
+    node.insert_test_peer(worker).await;
+
+    assert_eq!(
+        node.models_being_served_routable().await,
+        vec![model.to_string()],
+        "worker assigned to a different model must not join the host's cohort"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn solo_worker_without_tunnel_port_is_not_routable() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Client).await?;
+    let model = "Qwen3-32B-Q4_K_M";
+    let worker_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xD8; 32]).public());
+
+    let mut worker = make_test_peer_info(worker_id);
+    worker.role = super::NodeRole::Worker;
+    worker.serving_models = vec![model.to_string()];
+    worker.hosted_models_known = true;
+    worker.tunnel_port = None;
+
+    node.insert_test_peer(worker).await;
+
+    assert!(
+        node.models_being_served_routable().await.is_empty(),
+        "a worker alone is not an HTTP-routable host"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn hosts_for_model_prefers_idle_host_over_busy() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Client).await?;
+    let model = "Qwen3-32B-Q4_K_M";
+    let busy_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xD9; 32]).public());
+    let idle_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xDA; 32]).public());
+
+    let mut busy = make_test_peer_info(busy_id);
+    busy.role = super::NodeRole::Host { http_port: 9337 };
+    busy.hosted_models = vec![model.to_string()];
+    busy.hosted_models_known = true;
+    busy.inflight_requests = 8;
+
+    let mut idle = make_test_peer_info(idle_id);
+    idle.role = super::NodeRole::Host { http_port: 9337 };
+    idle.hosted_models = vec![model.to_string()];
+    idle.hosted_models_known = true;
+    idle.inflight_requests = 0;
+
+    node.insert_test_peer(busy).await;
+    node.insert_test_peer(idle).await;
+
+    let hosts = node.hosts_for_model(model).await;
+    assert_eq!(hosts.first().copied(), Some(idle_id));
+    assert_eq!(hosts.len(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn hosts_for_model_keeps_all_equal_load_hosts() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Client).await?;
+    let model = "Qwen3-32B-Q4_K_M";
+    let a_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xDB; 32]).public());
+    let b_id = EndpointId::from(iroh::SecretKey::from_bytes(&[0xDC; 32]).public());
+
+    for id in [a_id, b_id] {
+        let mut host = make_test_peer_info(id);
+        host.role = super::NodeRole::Host { http_port: 9337 };
+        host.hosted_models = vec![model.to_string()];
+        host.hosted_models_known = true;
+        host.inflight_requests = 2;
+        node.insert_test_peer(host).await;
+    }
+
+    let hosts = node.hosts_for_model(model).await;
+    assert_eq!(hosts.len(), 2);
+    assert!(hosts.contains(&a_id));
+    assert!(hosts.contains(&b_id));
+    Ok(())
+}
+
+#[tokio::test]
+async fn inflight_guard_decrements_on_drop() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Worker).await?;
+    assert_eq!(node.inflight_requests(), 0);
+    {
+        let _guard = node.begin_inflight_request();
+        assert_eq!(node.inflight_requests(), 1);
+    }
+    assert_eq!(node.inflight_requests(), 0);
     Ok(())
 }
 
@@ -2964,6 +3085,7 @@ fn make_test_peer(id: EndpointId, rtt_ms: Option<u32>, vram_gb: u64) -> PeerInfo
         served_model_runtime: vec![],
         owner_attestation: None,
         owner_summary: OwnershipSummary::default(),
+        inflight_requests: 0,
         capability: super::NodeCapability::default(),
     }
 }

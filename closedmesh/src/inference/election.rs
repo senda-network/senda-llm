@@ -3939,6 +3939,7 @@ mod tests {
             served_model_runtime: vec![],
             owner_attestation: None,
             owner_summary: crate::crypto::OwnershipSummary::default(),
+            inflight_requests: 0,
             capability: crate::mesh::NodeCapability::default(),
         }
     }

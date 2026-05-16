@@ -111,6 +111,7 @@ pub(super) fn apply_transitive_ann(
     existing.available_models.clear();
     existing.requested_models = ann.requested_models.clone();
     existing.owner_attestation = ann.owner_attestation.clone();
+    existing.inflight_requests = ann.inflight_requests;
     if ann.model_source.is_some() {
         existing.model_source = ann.model_source.clone();
     }
@@ -487,6 +488,7 @@ impl Node {
             }
             existing.owner_attestation = ann.owner_attestation.clone();
             existing.owner_summary = owner_summary.clone();
+            existing.inflight_requests = ann.inflight_requests;
             existing.served_model_descriptors = ann.served_model_descriptors.clone();
             existing.served_model_runtime = ann.served_model_runtime.clone();
             if ann.version.is_some() {
@@ -760,6 +762,7 @@ impl Node {
                     served_model_descriptors: p.served_model_descriptors.clone(),
                     served_model_runtime: p.served_model_runtime.clone(),
                     owner_attestation: p.owner_attestation.clone(),
+                    inflight_requests: p.inflight_requests,
                     capability: Some(p.capability.clone()),
                 })
                 .collect()
@@ -824,6 +827,7 @@ impl Node {
             served_model_descriptors: my_served_model_descriptors,
             served_model_runtime: my_model_runtime_descriptors,
             owner_attestation: my_owner_attestation,
+            inflight_requests: self.inflight_requests(),
             capability: self.local_node_capability().await,
         });
         announcements
@@ -877,6 +881,7 @@ mod tests {
             served_model_descriptors: vec![],
             served_model_runtime: vec![],
             owner_attestation: None,
+            inflight_requests: 0,
             capability: None,
         }
     }

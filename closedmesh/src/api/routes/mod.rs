@@ -68,6 +68,7 @@ pub(super) const DISPATCH_REQUEST: DispatchRequestFn =
                 ("GET", "/api/status")
                 | ("GET", "/api/models")
                 | ("GET", "/api/runtime")
+                | ("GET", "/api/runtime/metrics")
                 | ("GET", "/api/runtime/endpoints")
                 | ("GET", "/api/runtime/processes")
                 | ("POST", "/api/runtime/models")

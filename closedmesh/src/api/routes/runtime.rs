@@ -17,6 +17,7 @@ pub(super) async fn handle(
         ("GET", "/api/status") => handle_status(stream, state).await,
         ("GET", "/api/models") => handle_models(stream, state).await,
         ("GET", "/api/runtime") => handle_runtime_status(stream, state).await,
+        ("GET", "/api/runtime/metrics") => handle_runtime_metrics(stream, state).await,
         ("GET", "/api/runtime/endpoints") => handle_runtime_endpoints(stream, state).await,
         ("GET", "/api/runtime/processes") => handle_runtime_processes(stream, state).await,
         ("POST", "/api/runtime/models") => handle_load_model(stream, state, body).await,
@@ -33,6 +34,33 @@ async fn handle_status(stream: &mut TcpStream, state: &MeshApi) -> anyhow::Resul
         Ok(status) => respond_json(stream, 200, &status).await,
         Err(_) => respond_error(stream, 503, "Status temporarily unavailable").await,
     }
+}
+
+async fn handle_runtime_metrics(stream: &mut TcpStream, state: &MeshApi) -> anyhow::Result<()> {
+    let node = { state.inner.lock().await.node.clone() };
+    let local = node.routing_metrics_snapshot();
+    let peers = node
+        .peers()
+        .await
+        .into_iter()
+        .map(|peer| {
+            serde_json::json!({
+                "id": peer.id.fmt_short().to_string(),
+                "inflightRequests": peer.inflight_requests,
+                "servingModels": peer.serving_models,
+                "hostedModels": peer.hosted_models,
+            })
+        })
+        .collect::<Vec<_>>();
+    respond_json(
+        stream,
+        200,
+        &serde_json::json!({
+            "local": local,
+            "peers": peers,
+        }),
+    )
+    .await
 }
 
 async fn handle_models(stream: &mut TcpStream, state: &MeshApi) -> anyhow::Result<()> {

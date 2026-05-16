@@ -261,6 +261,11 @@ pub(crate) struct Cli {
     #[arg(long)]
     pub(crate) join_url: Option<String>,
 
+    /// Seconds a model may remain non-routable before emitting a diagnostic
+    /// loading error. Set to 0 to disable the watchdog.
+    #[arg(long, default_value_t = 300)]
+    pub(crate) loading_watchdog_grace_secs: u64,
+
     /// Base URL of the website that aggregates peer audit reports
     /// (Slice 4 of the mesh-visibility rollout). After every audit
     /// cycle the runtime POSTs its `mesh_visibility` snapshot to

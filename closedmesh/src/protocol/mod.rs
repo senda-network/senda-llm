@@ -554,6 +554,7 @@ mod tests {
             served_model_runtime: vec![],
             owner_attestation: None,
             owner_summary: OwnershipSummary::default(),
+            inflight_requests: 0,
             capability: crate::mesh::NodeCapability::default(),
         }
     }
@@ -1231,6 +1232,7 @@ mod tests {
                 },
                 signature: "33".repeat(64),
             }),
+            inflight_requests: 0,
             capability: None,
         };
         let proto_pa = local_ann_to_proto_ann(&ann);
@@ -1286,6 +1288,7 @@ mod tests {
             served_model_descriptors: vec![],
             served_model_runtime: vec![],
             owner_attestation: None,
+            inflight_requests: 0,
             capability: None,
         };
 
@@ -1984,6 +1987,7 @@ mod tests {
             served_model_descriptors: vec![],
             served_model_runtime: vec![],
             owner_attestation: None,
+            inflight_requests: 0,
             capability: None,
         };
 
@@ -2028,6 +2032,7 @@ mod tests {
             served_model_descriptors: vec![],
             served_model_runtime: vec![],
             owner_attestation: None,
+            inflight_requests: 0,
             capability: None,
         };
 
