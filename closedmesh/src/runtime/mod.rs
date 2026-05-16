@@ -2759,7 +2759,83 @@ async fn run_auto(
     node.set_model_source(model_source).await;
     // Declare which models this node may serve, but do not advertise them as
     // live/routable until their local processes have passed health checks.
-    let all_declared = build_serving_list(&resolved_models, &model_name);
+    //
+    // CRITICAL: filter to models whose weights are actually on disk before
+    // we gossip `serving_models`. Without this, a configured-but-not-
+    // downloaded model — e.g. an interrupted `closedmesh models download`
+    // that landed `config.json` but never the 19 GB GGUF blob, leaving a
+    // dangling HuggingFace snapshot symlink — would still go out on gossip
+    // as `serving_models = [<missing-model>]`. The cohort election treats
+    // this peer as a candidate host or worker (`PeerInfo::is_assigned_model`
+    // matches on `serving_models`), and the dense-launch planner's
+    // `model_fits_locally = (my_vram >= model_bytes * 1.1)` check passes
+    // trivially because `total_model_bytes` silently returned `0`. The
+    // result: a host that physically cannot serve the model wins the
+    // election, claims `hosted_models = [<missing-model>]` once
+    // llama-server "starts" (with no weights), and the entry node routes
+    // every chat request into the black hole. See the May 16 2026
+    // incident (three Qwen3-32B-Q4_K_M peers, none with the weights on
+    // disk, two weeks of red-herring fixes downstream).
+    let all_declared_raw = build_serving_list(&resolved_models, &model_name);
+    let (all_declared, missing_declared) =
+        partition_servable_declared_models(&all_declared_raw, &resolved_models);
+    for (missing, observed_bytes) in &missing_declared {
+        let path = models::find_model_path(missing);
+        let detail = match observed_bytes {
+            Some(bytes) => format!(
+                "found {:.1} KB at {} (need >= {:.1} MB to qualify as servable)",
+                *bytes as f64 / 1024.0,
+                path.display(),
+                MIN_SERVABLE_MODEL_BYTES as f64 / (1024.0 * 1024.0),
+            ),
+            None => format!(
+                "no readable file at {} (dangling symlink or incomplete download?)",
+                path.display(),
+            ),
+        };
+        let _ = emit_event(OutputEvent::Error {
+            message: format!(
+                "Configured to serve `{}` but the model weights are missing on disk \
+                 ({}). This peer will NOT advertise `{}` to the mesh. \
+                 Run `closedmesh models download {}` and restart the runtime to fix.",
+                missing, detail, missing, missing,
+            ),
+            context: Some(format!("model={missing}")),
+        });
+        tracing::error!(
+            "configured model `{}` is not servable: {}; dropping from serving_models",
+            missing,
+            detail,
+        );
+    }
+    if all_declared.is_empty() {
+        anyhow::bail!(
+            "no servable model files found on disk; refusing to start serving with an \
+             empty advertisement (would poison the mesh as a phantom host). \
+             Configured models: {:?}. Run `closedmesh models download <name>` for at \
+             least one of them, or remove them from your config.",
+            all_declared_raw
+        );
+    }
+    // The primary model is the one we'll launch llama-server against
+    // (`model` was set from `primary.resolved_path` ~100 lines above).
+    // If THAT specific file is missing we cannot proceed — llama-server
+    // would fail to start in a loop and the election's HostAttemptBackoff
+    // would step us aside forever. Bail with a clear message instead of
+    // silently degrading. Secondary models can be partially missing
+    // (their entries are simply dropped from `all_declared` above and
+    // the runtime serves whatever subset *is* present).
+    if !all_declared.iter().any(|m| m == &model_name) {
+        anyhow::bail!(
+            "primary model `{}` is not servable on disk (configured to serve, but the \
+             weights are missing). Run `closedmesh models download {}` and restart, \
+             or change the primary `[[models]]` entry in your config to a model whose \
+             weights are present. Other configured models that ARE present: {:?}.",
+            model_name,
+            model_name,
+            all_declared,
+        );
+    }
     node.set_serving_models(all_declared.clone()).await;
     node.set_hosted_models(Vec::new()).await;
     node.set_models(all_declared.clone()).await;
@@ -4083,6 +4159,72 @@ fn update_pi_models_json(model_id: &str, port: u16) {
     }
 }
 
+/// Minimum on-disk size for a model file to count as "actually downloaded"
+/// for the purposes of [`partition_servable_declared_models`].
+///
+/// The smallest catalog GGUF (Qwen3-0.6B Q4_K_M) is ~370 MiB, so any file
+/// under this threshold is either a HuggingFace metadata sidecar
+/// (`config.json` is 754 bytes) or an aborted partial download. We pick
+/// 16 MiB rather than something tighter because:
+///
+/// - it cleanly excludes every HF JSON/text sidecar without bumping into
+///   any real GGUF, and
+/// - it's small enough that the test fixtures don't need to fabricate
+///   half-gig files just to assert "this counts as a real model".
+pub(crate) const MIN_SERVABLE_MODEL_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Split a list of declared model stems into `(servable, missing)`.
+/// A model counts as servable when [`election::try_total_model_bytes`]
+/// returns `Some(bytes >= MIN_SERVABLE_MODEL_BYTES)` for either the
+/// HuggingFace-cache path ([`models::find_model_path`]) OR the
+/// caller-resolved path (for explicit `--model /abs/path.gguf` mode
+/// where the file lives outside the HF cache).
+///
+/// `missing` entries carry the larger of the two observed byte counts
+/// when at least one path existed but was too small to be a real model
+/// (helps diagnose "I have a config.json but no weights"); `None` means
+/// neither path was readable.
+///
+/// See the call site in `run_auto` for why this filter exists: without
+/// it, a configured-but-not-downloaded model gets gossiped as
+/// `serving_models` and poisons the host election.
+pub(crate) fn partition_servable_declared_models(
+    declared: &[String],
+    resolved_paths: &[PathBuf],
+) -> (Vec<String>, Vec<(String, Option<u64>)>) {
+    let resolved_by_stem: std::collections::HashMap<String, &Path> = resolved_paths
+        .iter()
+        .filter_map(|p| {
+            let stem = p.file_stem()?.to_str()?.to_string();
+            Some((router::strip_split_suffix_owned(&stem), p.as_path()))
+        })
+        .collect();
+
+    let mut servable = Vec::with_capacity(declared.len());
+    let mut missing = Vec::new();
+    for name in declared {
+        let candidates = [
+            models::find_model_path(name),
+            resolved_by_stem
+                .get(name)
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(PathBuf::new),
+        ];
+        let observed: Vec<Option<u64>> = candidates
+            .iter()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(|p| crate::inference::election::try_total_model_bytes(p))
+            .collect();
+
+        let best = observed.iter().filter_map(|o| *o).max();
+        match best {
+            Some(bytes) if bytes >= MIN_SERVABLE_MODEL_BYTES => servable.push(name.clone()),
+            other => missing.push((name.clone(), other)),
+        }
+    }
+    (servable, missing)
+}
+
 /// Resolve Nostr relay URLs from CLI or defaults.
 /// Build the list of models this node is serving for gossip announcement.
 /// `resolved_models` comes from explicit `--model` args (may be empty for `--auto`).
@@ -4451,6 +4593,220 @@ mod tests {
         let result = build_serving_list(&resolved, "MiniMax-M2.5-Q4_K_M-00001-of-00004");
         assert_eq!(result, vec!["MiniMax-M2.5-Q4_K_M"]);
         assert_eq!(result.len(), 1);
+    }
+
+    /// May 16 2026 incident — primary regression test for the "phantom
+    /// host" bug. Three Qwen3-32B peers each had only the 754-byte
+    /// `config.json` in `~/.cache/huggingface/hub/.../snapshots/.../`
+    /// pointing at a missing blob (the 19.76 GB GGUF download was
+    /// interrupted weeks earlier and never resumed). All three reported
+    /// `model_size_gb = 0.0`, all three passed `model_fits_locally =
+    /// (vram >= 0)`, the cohort elected an 8 GB GPU as host of a
+    /// 19.76 GB model, and the entry node routed every chat request
+    /// into a black hole.
+    ///
+    /// `partition_servable_declared_models` is the gate that catches
+    /// this *before* it reaches gossip. With these fixtures we assert
+    /// the four shapes that bit us:
+    ///   1. dangling HF symlink (file readable, but underlying blob
+    ///      missing) → marked missing.
+    ///   2. 754-byte HF metadata sidecar masquerading as the model
+    ///      (config.json was downloaded; GGUF wasn't) → marked missing.
+    ///   3. 0-byte file (in-progress download, lock file still held,
+    ///      no bytes flushed yet) → marked missing.
+    ///   4. real ≥16 MiB file → marked servable.
+    ///
+    /// If any of these regress to "servable", the runtime will once
+    /// again gossip `serving_models = [<unservable>]` and the cohort
+    /// election will pick a host that physically cannot serve the
+    /// model. The dashboard symptoms then look like "stuck loading"
+    /// across the mesh while one peer falsely reports `Serving` —
+    /// exactly the May 16 shape.
+    #[test]
+    #[serial]
+    fn partition_servable_declared_models_drops_phantom_models() {
+        let tmp = std::env::temp_dir().join(format!(
+            "closedmesh-partition-servable-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cache_root = tmp.join("hf_cache");
+        let prev_hub_cache = std::env::var_os("HF_HUB_CACHE");
+        let prev_hf_home = std::env::var_os("HF_HOME");
+        let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
+        std::fs::create_dir_all(&cache_root).unwrap();
+        std::env::set_var("HF_HUB_CACHE", &cache_root);
+        std::env::remove_var("HF_HOME");
+        std::env::remove_var("XDG_CACHE_HOME");
+
+        // Fixture 1 — dangling HF symlink. Write the real blob, point a
+        // symlink at it, then delete the blob. `find_model_path` will
+        // resolve to the symlink; `try_total_model_bytes` will fail.
+        let dangling_repo = "unsloth/Qwen3-32B-GGUF";
+        let dangling_dir = cache_root.join(huggingface_repo_folder_name(
+            dangling_repo,
+            RepoType::Model,
+        ));
+        std::fs::create_dir_all(dangling_dir.join("refs")).unwrap();
+        std::fs::write(dangling_dir.join("refs").join("main"), "dangling").unwrap();
+        std::fs::create_dir_all(dangling_dir.join("blobs")).unwrap();
+        let snapshot = huggingface_snapshot_path(dangling_repo, RepoType::Model, "dangling");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        let dangling_blob = dangling_dir
+            .join("blobs")
+            .join("8df67573b2c23484e02ec7af295e39bed7ee774f3771d5fda2978265b59370e7");
+        std::fs::write(&dangling_blob, vec![0u8; 1024]).unwrap();
+        let dangling_symlink = snapshot.join("Qwen3-32B-Q4_K_M.gguf");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&dangling_blob, &dangling_symlink).unwrap();
+        #[cfg(not(unix))]
+        std::fs::copy(&dangling_blob, &dangling_symlink).unwrap();
+        std::fs::remove_file(&dangling_blob).unwrap();
+
+        // Fixture 2 — only the 754-byte config.json. Write a small file
+        // at the canonical model path (simulating "config.json present,
+        // GGUF missing" the way some HF clients leave the cache).
+        let sidecar_repo = "unsloth/Qwen3-14B-GGUF";
+        let sidecar_dir =
+            cache_root.join(huggingface_repo_folder_name(sidecar_repo, RepoType::Model));
+        std::fs::create_dir_all(sidecar_dir.join("refs")).unwrap();
+        std::fs::write(sidecar_dir.join("refs").join("main"), "sidecar").unwrap();
+        let sidecar_snap =
+            huggingface_snapshot_path(sidecar_repo, RepoType::Model, "sidecar");
+        std::fs::create_dir_all(&sidecar_snap).unwrap();
+        let sidecar_path = sidecar_snap.join("Qwen3-14B-Q4_K_M.gguf");
+        std::fs::write(&sidecar_path, vec![0u8; 754]).unwrap();
+
+        // Fixture 3 — zero-byte file (download in progress, no bytes flushed).
+        let empty_repo = "unsloth/Qwen3-8B-GGUF";
+        let empty_dir =
+            cache_root.join(huggingface_repo_folder_name(empty_repo, RepoType::Model));
+        std::fs::create_dir_all(empty_dir.join("refs")).unwrap();
+        std::fs::write(empty_dir.join("refs").join("main"), "empty").unwrap();
+        let empty_snap = huggingface_snapshot_path(empty_repo, RepoType::Model, "empty");
+        std::fs::create_dir_all(&empty_snap).unwrap();
+        let empty_path = empty_snap.join("Qwen3-8B-Q4_K_M.gguf");
+        std::fs::write(&empty_path, b"").unwrap();
+
+        // Fixture 4 — real ≥16 MiB file at the canonical HF cache path.
+        let real_repo = "unsloth/Qwen3-0.6B-GGUF";
+        let real_dir = cache_root.join(huggingface_repo_folder_name(real_repo, RepoType::Model));
+        std::fs::create_dir_all(real_dir.join("refs")).unwrap();
+        std::fs::write(real_dir.join("refs").join("main"), "real").unwrap();
+        let real_snap = huggingface_snapshot_path(real_repo, RepoType::Model, "real");
+        std::fs::create_dir_all(&real_snap).unwrap();
+        let real_path = real_snap.join("Qwen3-0.6B-Q4_K_M.gguf");
+        let real_bytes: u64 = MIN_SERVABLE_MODEL_BYTES + 1;
+        std::fs::write(&real_path, vec![0u8; real_bytes as usize]).unwrap();
+
+        let declared = vec![
+            "Qwen3-32B-Q4_K_M".to_string(),  // dangling
+            "Qwen3-14B-Q4_K_M".to_string(),  // 754-byte sidecar
+            "Qwen3-8B-Q4_K_M".to_string(),   // 0-byte
+            "Qwen3-0.6B-Q4_K_M".to_string(), // real
+        ];
+        let resolved_paths: Vec<PathBuf> = vec![]; // pure-stem case (config-driven)
+        let (servable, missing) =
+            partition_servable_declared_models(&declared, &resolved_paths);
+
+        assert_eq!(
+            servable,
+            vec!["Qwen3-0.6B-Q4_K_M"],
+            "only the >=16 MiB file should pass; got servable={:?} missing={:?}",
+            servable,
+            missing,
+        );
+        let missing_names: Vec<&str> = missing.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(
+            missing_names,
+            vec!["Qwen3-32B-Q4_K_M", "Qwen3-14B-Q4_K_M", "Qwen3-8B-Q4_K_M"],
+            "all three phantom-shape models must be reported missing in declared order",
+        );
+        let observed_for = |name: &str| -> Option<u64> {
+            missing
+                .iter()
+                .find(|(n, _)| n == name)
+                .and_then(|(_, b)| *b)
+        };
+        assert_eq!(
+            observed_for("Qwen3-32B-Q4_K_M"),
+            None,
+            "dangling symlink must surface as `None` so the dashboard error \
+             distinguishes it from 'file present but tiny'"
+        );
+        assert_eq!(
+            observed_for("Qwen3-14B-Q4_K_M"),
+            Some(754),
+            "754-byte HF sidecar must surface its observed size so the operator \
+             can recognize 'I only downloaded config.json'"
+        );
+        assert_eq!(
+            observed_for("Qwen3-8B-Q4_K_M"),
+            Some(0),
+            "0-byte file must surface as Some(0) (distinct from missing) so the \
+             operator can recognize 'download still pending, no bytes yet'"
+        );
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
+        restore_env("HF_HUB_CACHE", prev_hub_cache);
+        restore_env("HF_HOME", prev_hf_home);
+        restore_env("XDG_CACHE_HOME", prev_xdg);
+    }
+
+    /// Explicit-path mode: `--model /abs/path.gguf` puts a file outside
+    /// the HF cache. `partition_servable_declared_models` must accept it
+    /// via the `resolved_paths` fallback, not just `find_model_path`.
+    #[test]
+    #[serial]
+    fn partition_servable_declared_models_accepts_explicit_path_outside_hf_cache() {
+        let tmp = std::env::temp_dir().join(format!(
+            "closedmesh-partition-explicit-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Point HF cache somewhere empty so find_model_path returns a
+        // nonexistent path for the stem.
+        let empty_hf = tmp.join("empty_hf");
+        let prev_hub_cache = std::env::var_os("HF_HUB_CACHE");
+        let prev_hf_home = std::env::var_os("HF_HOME");
+        let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
+        std::fs::create_dir_all(&empty_hf).unwrap();
+        std::env::set_var("HF_HUB_CACHE", &empty_hf);
+        std::env::remove_var("HF_HOME");
+        std::env::remove_var("XDG_CACHE_HOME");
+
+        let explicit_path = tmp.join("MyCustom-Q4_K_M.gguf");
+        std::fs::write(
+            &explicit_path,
+            vec![0u8; (MIN_SERVABLE_MODEL_BYTES + 1) as usize],
+        )
+        .unwrap();
+
+        let declared = vec!["MyCustom-Q4_K_M".to_string()];
+        let resolved_paths = vec![explicit_path.clone()];
+        let (servable, missing) =
+            partition_servable_declared_models(&declared, &resolved_paths);
+
+        assert_eq!(
+            servable,
+            vec!["MyCustom-Q4_K_M"],
+            "explicit --model path outside HF cache must be honored via the \
+             resolved_paths fallback; otherwise --model /abs/path.gguf is \
+             broken for every user who doesn't have the file in the HF cache"
+        );
+        assert!(missing.is_empty(), "expected no missing entries, got {:?}", missing);
+
+        let _ = std::fs::remove_dir_all(&tmp);
+        restore_env("HF_HUB_CACHE", prev_hub_cache);
+        restore_env("HF_HOME", prev_hf_home);
+        restore_env("XDG_CACHE_HOME", prev_xdg);
     }
 
     #[test]

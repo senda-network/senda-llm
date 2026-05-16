@@ -79,7 +79,35 @@ fn split_mode_for_local_launch(
 
 /// Calculate total model size, summing all split files if present.
 /// Split files follow the pattern: name-00001-of-00004.gguf
+///
+/// Returns `0` when the file is missing or unreadable. This is what most
+/// arithmetic callers want (`min_vram = model_bytes * 1.1`), but it is
+/// dangerously ambiguous for any code that asks "does this peer actually
+/// have the model?" — `0` then collapses to "yes, a zero-byte model that
+/// fits in any amount of VRAM", which is exactly how a peer without the
+/// weights on disk ends up advertising `serving_models = [<missing>]`
+/// and winning host elections it cannot honor. Any code that gates on
+/// "is the model present" MUST use `try_total_model_bytes` and treat
+/// `None` as "this peer does not have the model".
+///
+/// See the May 16 2026 incident: three Qwen3-32B peers, all with a
+/// dangling HuggingFace symlink (`config.json` downloaded, 19.76 GB
+/// weights blob never finished), all reported `model_size_gb = 0.0`,
+/// all passed `model_fits_locally = (vram >= 0)`, the cohort elected
+/// an 8 GB RTX 4070 as host of a 19.76 GB model, and the entry node
+/// happily routed chat into a black hole for two weeks.
 pub fn total_model_bytes(model: &Path) -> u64 {
+    try_total_model_bytes(model).unwrap_or(0)
+}
+
+/// Like [`total_model_bytes`] but returns `None` when the file (or any
+/// shard of a split GGUF) is missing or unreadable on disk. Use this
+/// in any code that asks "does this peer have the model on disk?".
+///
+/// `Some(0)` is reserved for the (impossible-in-practice) zero-byte
+/// file case so callers can distinguish "missing" from "present-but-
+/// empty". Both cases will trip the "is the model present" check.
+pub fn try_total_model_bytes(model: &Path) -> Option<u64> {
     let name = model.to_string_lossy();
     // Check for split pattern: *-00001-of-NNNNN.gguf
     if let Some(pos) = name.find("-00001-of-") {
@@ -91,13 +119,20 @@ pub fn total_model_bytes(model: &Path) -> u64 {
                 let mut total: u64 = 0;
                 for i in 1..=n_split {
                     let split_name = format!("{}{:05}-of-{:05}{}", prefix, i, n_split, suffix);
-                    total += std::fs::metadata(&split_name).map(|m| m.len()).unwrap_or(0);
+                    // Any shard missing → the whole model is incomplete.
+                    // Returning `None` here is what stops a half-downloaded
+                    // multi-part GGUF from poisoning the cohort: the runtime
+                    // will refuse to advertise it as servable, rather than
+                    // declaring a partial-sum size that looks fine to the
+                    // dense-launch planner.
+                    let bytes = std::fs::metadata(&split_name).ok()?.len();
+                    total += bytes;
                 }
-                return total;
+                return Some(total);
             }
         }
     }
-    std::fs::metadata(model).map(|m| m.len()).unwrap_or(0)
+    std::fs::metadata(model).ok().map(|m| m.len())
 }
 
 /// Determine if this node should be host for its model group.
@@ -3779,6 +3814,86 @@ mod tests {
         let mut bytes = [0u8; 32];
         bytes[0] = seed;
         SecretKey::from_bytes(&bytes).public()
+    }
+
+    /// `try_total_model_bytes` must distinguish "missing" (`None`) from
+    /// "present but zero bytes" (`Some(0)`). The legacy
+    /// `total_model_bytes` collapses both to `0`, which is the silent
+    /// failure mode that bit us in the May 16 2026 incident — see the
+    /// doc-comment on `total_model_bytes`.
+    #[test]
+    fn try_total_model_bytes_distinguishes_missing_from_zero() {
+        let tmp = std::env::temp_dir().join(format!(
+            "closedmesh-try-bytes-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let missing = tmp.join("does-not-exist.gguf");
+        assert_eq!(
+            try_total_model_bytes(&missing),
+            None,
+            "missing file must surface as None so the runtime can refuse to advertise"
+        );
+        assert_eq!(
+            total_model_bytes(&missing),
+            0,
+            "legacy total_model_bytes still returns 0 for back-compat with arithmetic callers"
+        );
+
+        let zero = tmp.join("zero.gguf");
+        std::fs::write(&zero, b"").unwrap();
+        assert_eq!(
+            try_total_model_bytes(&zero),
+            Some(0),
+            "0-byte file must surface as Some(0), distinct from missing"
+        );
+
+        let real = tmp.join("real.gguf");
+        std::fs::write(&real, b"hello").unwrap();
+        assert_eq!(try_total_model_bytes(&real), Some(5));
+        assert_eq!(total_model_bytes(&real), 5);
+
+        // Dangling symlink — repro of the exact M3 Pro state we saw on
+        // 2026-05-16: HF symlink at .../snapshots/.../Qwen3-32B-Q4_K_M.gguf
+        // pointing at .../blobs/8df67…370e7 which was never downloaded.
+        #[cfg(unix)]
+        {
+            let target = tmp.join("never-downloaded-blob");
+            let link = tmp.join("dangling.gguf");
+            std::fs::write(&target, vec![0u8; 8]).unwrap();
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            std::fs::remove_file(&target).unwrap();
+            assert_eq!(
+                try_total_model_bytes(&link),
+                None,
+                "dangling symlink must surface as None — this is the regression that \
+                 made the M3 Pro think a 19.76 GB model was 0 bytes and 'fit anywhere'"
+            );
+        }
+
+        // Multi-shard model with one shard missing must surface as None.
+        let shard1 = tmp.join("multi-Q4_K_M-00001-of-00003.gguf");
+        let shard2 = tmp.join("multi-Q4_K_M-00002-of-00003.gguf");
+        // Note: shard 3 is intentionally never written.
+        std::fs::write(&shard1, vec![0u8; 1024]).unwrap();
+        std::fs::write(&shard2, vec![0u8; 1024]).unwrap();
+        assert_eq!(
+            try_total_model_bytes(&shard1),
+            None,
+            "incomplete multi-shard model must surface as None rather than \
+             a misleading partial-sum that looks fine to the dense-launch planner"
+        );
+
+        // All shards present: returns the sum.
+        let shard3 = tmp.join("multi-Q4_K_M-00003-of-00003.gguf");
+        std::fs::write(&shard3, vec![0u8; 1024]).unwrap();
+        assert_eq!(try_total_model_bytes(&shard1), Some(3 * 1024));
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     fn make_dense_peer(
