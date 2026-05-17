@@ -518,6 +518,34 @@ fn replenish_worker_cohort_after_probe_failure(
     (worker_ids, rpc_ports, group_capacity)
 }
 
+async fn probe_rpc_ports(rpc_ports: &[u16]) -> (Vec<String>, HashSet<u16>) {
+    let mut probe_set = tokio::task::JoinSet::new();
+    for port in rpc_ports {
+        let port = *port;
+        probe_set.spawn(async move {
+            let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
+            let outcome = crate::network::rpc_probe::probe_hello(
+                addr,
+                crate::network::rpc_probe::DEFAULT_PROBE_TIMEOUT,
+            )
+            .await;
+            (port, outcome)
+        });
+    }
+
+    let mut bad = Vec::new();
+    let mut bad_ports = HashSet::new();
+    while let Some(joined) = probe_set.join_next().await {
+        if let Ok((port, outcome)) = joined {
+            if !outcome.is_healthy() {
+                bad.push(format!("127.0.0.1:{port} ({outcome:?})"));
+                bad_ports.insert(port);
+            }
+        }
+    }
+    (bad, bad_ports)
+}
+
 /// The current state of llama-server as managed by the election loop.
 /// The API proxy reads this to know where to forward requests.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -3697,83 +3725,77 @@ async fn start_llama(
     // because every host candidate tried to include it for capacity.
     // Dropping the silent peer keeps the model serving on the reachable
     // 3-of-4 cohort while the broken peer recovers on its own schedule.
-    if !rpc_ports.is_empty() {
-        let mut probe_set = tokio::task::JoinSet::new();
-        for port in &rpc_ports {
-            let port = *port;
-            probe_set.spawn(async move {
-                let addr: std::net::SocketAddr = ([127, 0, 0, 1], port).into();
-                let outcome = crate::network::rpc_probe::probe_hello(
-                    addr,
-                    crate::network::rpc_probe::DEFAULT_PROBE_TIMEOUT,
-                )
-                .await;
-                (port, outcome)
-            });
+    while !rpc_ports.is_empty() {
+        let (bad, bad_ports) = probe_rpc_ports(&rpc_ports).await;
+        if bad.is_empty() {
+            break;
         }
-        let mut bad: Vec<String> = Vec::new();
-        let mut bad_ports: std::collections::HashSet<u16> = std::collections::HashSet::new();
-        while let Some(joined) = probe_set.join_next().await {
-            if let Ok((port, outcome)) = joined {
-                if !outcome.is_healthy() {
-                    bad.push(format!("127.0.0.1:{port} ({outcome:?})"));
-                    bad_ports.insert(port);
-                }
-            }
-        }
-        if !bad.is_empty() {
-            // Filter cohort down to workers whose probe was healthy.
-            // worker_ids and rpc_ports stay aligned because both lists
-            // were built in the same order from the same launch_plan.
-            let original_count = rpc_ports.len();
-            let survivor_count = original_count.saturating_sub(bad.len());
-            let (new_worker_ids, new_rpc_ports, group_capacity) =
-                replenish_worker_cohort_after_probe_failure(
-                    model_name,
-                    model_peers,
-                    &worker_ids,
-                    &rpc_ports,
-                    &bad_ports,
-                    &all_ports,
-                    local_launch_vram,
-                    model_bytes,
-                );
-            let replacement_count = new_worker_ids.len().saturating_sub(survivor_count);
-            let min_vram = (model_bytes as f64 * 1.1) as u64;
 
-            if group_capacity >= min_vram && !new_worker_ids.is_empty() {
-                emit_warning(
-                    format!(
-                        "Replacing cohort after {}/{} worker HELLO failure(s) ({}); \
-                         kept {} survivor(s), added {} replacement(s), proceeding with \
-                         {} worker(s) at {:.1}GB capacity",
-                        bad.len(),
-                        original_count,
-                        bad.join(", "),
-                        survivor_count,
-                        replacement_count,
-                        new_worker_ids.len(),
-                        group_capacity as f64 / 1e9
-                    ),
-                    Some(format!("model={model_name}")),
-                );
-                worker_ids = new_worker_ids;
-                rpc_ports = new_rpc_ports;
-            } else {
+        // Filter cohort down to workers whose probe was healthy.
+        // worker_ids and rpc_ports stay aligned because both lists
+        // were built in the same order from the same launch_plan.
+        let original_count = rpc_ports.len();
+        let survivor_count = original_count.saturating_sub(bad.len());
+        let (new_worker_ids, new_rpc_ports, group_capacity) =
+            replenish_worker_cohort_after_probe_failure(
+                model_name,
+                model_peers,
+                &worker_ids,
+                &rpc_ports,
+                &bad_ports,
+                &all_ports,
+                local_launch_vram,
+                model_bytes,
+            );
+        let replacement_count = new_worker_ids.len().saturating_sub(survivor_count);
+        let min_vram = (model_bytes as f64 * 1.1) as u64;
+
+        if group_capacity >= min_vram && !new_worker_ids.is_empty() {
+            if new_worker_ids == worker_ids && new_rpc_ports == rpc_ports {
                 emit_warning(
                     format!(
                         "Aborting launch — {}/{} worker rpc tunnels failed HELLO probe: {} \
-                         (remaining capacity {:.1}GB < {:.1}GB required)",
+                             and no replacement cohort is available",
                         bad.len(),
                         original_count,
                         bad.join(", "),
-                        group_capacity as f64 / 1e9,
-                        min_vram as f64 / 1e9,
                     ),
                     Some(format!("model={model_name}")),
                 );
                 return None;
             }
+            emit_warning(
+                format!(
+                    "Replacing cohort after {}/{} worker HELLO failure(s) ({}); \
+                         kept {} survivor(s), added {} replacement(s), retrying probe with \
+                         {} worker(s) at {:.1}GB capacity",
+                    bad.len(),
+                    original_count,
+                    bad.join(", "),
+                    survivor_count,
+                    replacement_count,
+                    new_worker_ids.len(),
+                    group_capacity as f64 / 1e9
+                ),
+                Some(format!("model={model_name}")),
+            );
+            worker_ids = new_worker_ids;
+            rpc_ports = new_rpc_ports;
+            continue;
+        } else {
+            emit_warning(
+                format!(
+                    "Aborting launch — {}/{} worker rpc tunnels failed HELLO probe: {} \
+                         (remaining capacity {:.1}GB < {:.1}GB required)",
+                    bad.len(),
+                    original_count,
+                    bad.join(", "),
+                    group_capacity as f64 / 1e9,
+                    min_vram as f64 / 1e9,
+                ),
+                Some(format!("model={model_name}")),
+            );
+            return None;
         }
     }
 
