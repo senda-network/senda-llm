@@ -347,6 +347,50 @@ impl DenseLaunchPlan {
     }
 }
 
+/// Sticky-cohort check: is the cohort we already launched llama-server with
+/// still good enough to keep serving the model?
+///
+/// The election loop runs `build_dense_launch_plan` on every gossip change
+/// and gets back the *currently preferred* plan. Without this check, any
+/// RTT jitter or transient peer state flip that re-sorts worker selection
+/// causes the loop to consider the new plan "different" and tear down the
+/// running llama-server — even though the running cohort is still healthy.
+/// Pre-fix that produced the May 17 2026 churn loop where the model spent
+/// ~60 s serving for every ~6 min of relaunch warm-up.
+///
+/// "Still viable" means:
+///   - Solo: this node's fast memory can still hold the model.
+///   - Split: every running worker id is still in `model_peers` (so iroh
+///     tunnels still exist and the peer hasn't departed), AND the running
+///     cohort's combined fast-memory budget still covers `model_bytes *
+///     1.1` (the same 10 % cushion `build_dense_launch_plan` uses for
+///     fresh planning).
+///
+/// When the running cohort is still viable we keep serving and just let
+/// the inner sleep/select tick again, so chat traffic doesn't see a
+/// teardown window.
+fn current_cohort_still_viable(
+    running: &DenseRunningPlan,
+    model_peers: &[mesh::PeerInfo],
+    local_launch_vram: u64,
+    model_bytes: u64,
+) -> bool {
+    let min_vram = (model_bytes as f64 * 1.1) as u64;
+    match running {
+        DenseRunningPlan::Solo => local_launch_vram >= min_vram,
+        DenseRunningPlan::Split { worker_ids } => {
+            let mut total = local_launch_vram;
+            for id in worker_ids {
+                let Some(peer) = model_peers.iter().find(|p| &p.id == id) else {
+                    return false;
+                };
+                total = total.saturating_add(split_peer_vram_bytes(peer, local_launch_vram));
+            }
+            total >= min_vram
+        }
+    }
+}
+
 /// Bytes a peer can actually hold in fast memory for split planning.
 ///
 /// Must match what `peer.fast_memory_bytes()` returns elsewhere — see
@@ -2253,8 +2297,16 @@ pub async fn election_loop(
             should_dup
         };
 
-        // If we're already host and nothing changed, skip restart
-        if currently_host && i_am_host && desired_launch.running_plan() == last_running_plan {
+        // Sticky-cohort guard: skip restart if we're already host AND either
+        // the freshly-planned cohort is identical to what's running OR the
+        // running cohort is still viable on its own. The second clause is
+        // the May 17 2026 fix — see `current_cohort_still_viable`. Without
+        // it, RTT jitter that re-orders worker preference tears down a
+        // perfectly healthy llama-server every gossip tick.
+        let running_cohort_stays_viable = matches!(&last_running_plan, Some(running)
+            if current_cohort_still_viable(running, &model_peers, local_launch_vram, model_bytes));
+        let desired_matches_running = desired_launch.running_plan() == last_running_plan;
+        if currently_host && i_am_host && (desired_matches_running || running_cohort_stays_viable) {
             // Just update the target map (in case other models' hosts changed)
             if let Some(local_port) = current_local_port {
                 update_targets(
@@ -4814,6 +4866,77 @@ mod tests {
         );
         assert!(rpc_ports.is_empty());
         assert_eq!(group_capacity, 50);
+    }
+
+    #[test]
+    fn current_cohort_still_viable_keeps_running_when_workers_present_and_capacity_holds() {
+        let model = "dense";
+        let id_a = make_id(11);
+        let id_b = make_id(12);
+        let peers = vec![
+            make_dense_peer(id_a, 30, Some(8), model),
+            make_dense_peer(id_b, 30, Some(20), model),
+        ];
+
+        let running = DenseRunningPlan::Split {
+            worker_ids: vec![id_a],
+        };
+        assert!(
+            current_cohort_still_viable(&running, &peers, 50, 60),
+            "single-worker cohort whose worker is still in peers with sufficient capacity \
+             must stay viable so we don't tear it down on every RTT jitter"
+        );
+    }
+
+    #[test]
+    fn current_cohort_still_viable_drops_when_running_worker_departed() {
+        let model = "dense";
+        let id_a = make_id(13);
+        let id_b = make_id(14);
+        let peers = vec![make_dense_peer(id_b, 30, Some(8), model)];
+
+        let running = DenseRunningPlan::Split {
+            worker_ids: vec![id_a],
+        };
+        assert!(
+            !current_cohort_still_viable(&running, &peers, 50, 60),
+            "if the only running worker has departed gossip we must allow a relaunch"
+        );
+    }
+
+    #[test]
+    fn current_cohort_still_viable_drops_when_capacity_falls_under_min_vram() {
+        let model = "dense";
+        let id_a = make_id(15);
+        // `make_dense_peer` leaves `capability.vram_total_mb = 0`, so
+        // `fast_memory_bytes()` returns this `vram_bytes` directly via the
+        // `(cap=0, vram) => vram` branch in `mesh::PeerInfo` — see
+        // `split_peer_vram_bytes`. 5 byte worker + 50 byte local = 55, well
+        // below the 110 byte threshold (model 100 * 1.1).
+        let peers = vec![make_dense_peer(id_a, 5, Some(8), model)];
+
+        let running = DenseRunningPlan::Split {
+            worker_ids: vec![id_a],
+        };
+        assert!(
+            !current_cohort_still_viable(&running, &peers, 50, 100),
+            "if the running cohort's combined fast memory drops below min_vram (model * 1.1) \
+             we must relaunch with a bigger cohort"
+        );
+    }
+
+    #[test]
+    fn current_cohort_still_viable_solo_tracks_local_fast_memory() {
+        let running = DenseRunningPlan::Solo;
+        assert!(
+            current_cohort_still_viable(&running, &[], 120, 100),
+            "solo running plan stays viable as long as local fast memory still covers min_vram"
+        );
+        assert!(
+            !current_cohort_still_viable(&running, &[], 80, 100),
+            "solo running plan must relaunch (or step aside) once local fast memory falls below \
+             min_vram"
+        );
     }
 
     #[test]
