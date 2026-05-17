@@ -585,6 +585,33 @@ pub(crate) fn mmap_args(is_rpc_split: bool) -> Vec<String> {
     }
 }
 
+/// Hard ceiling on how long `start_llama` will wait for `llama-server`
+/// to become healthy.
+///
+/// Pre-v0.66.39 we scaled by 120 s per GB with no upper bound, which
+/// gave a 20 GB model up to **40 minutes**. The May 18 2026 incident
+/// showed why that's a disaster: the election loop awaits `start_llama`
+/// synchronously, so a multi-minute hang here disables every downstream
+/// safety check (fitter watchdog, role-change cleanup, peer-change
+/// re-evaluation). Caught a peer in the wrong cohort? Too bad — wait
+/// 40 min for it to either finish or time out before election can react.
+///
+/// The replacement formula is 15 s per GB with a 90 s floor and a 300 s
+/// ceiling. A 20 GB GGUF caps at 300 s, well over the ~60-90 s real
+/// load time on a NVMe + GPU/Metal host; an unrealistic 50 GB MoE also
+/// caps at 300 s on the theory that anything that doesn't load in 5
+/// minutes isn't going to load in 40 either, and we want the runner-up
+/// to get a turn.
+const HEALTH_TIMEOUT_FLOOR_SECS: u64 = 90;
+const HEALTH_TIMEOUT_CEIL_SECS: u64 = 300;
+
+/// See `HEALTH_TIMEOUT_CEIL_SECS` for full motivation. Factored out so
+/// the cap can be unit-tested without spinning up `llama-server`.
+pub(crate) fn health_timeout_secs(model_gb: u64) -> u64 {
+    let scaled = std::cmp::max(HEALTH_TIMEOUT_FLOOR_SECS, model_gb.saturating_mul(15));
+    std::cmp::min(scaled, HEALTH_TIMEOUT_CEIL_SECS)
+}
+
 impl KvCacheQuant {
     /// Thresholds in bytes for the tier boundaries below. Named constants so
     /// the tests can assert exact boundary behavior.
@@ -1758,12 +1785,12 @@ pub async fn start_llama_server(
         )
     })?;
 
-    // Wait for health check — scale timeout by model size so large MoE shards
-    // don't hit a fixed ceiling. 120s per GB gives plenty of headroom for slow
-    // I/O or GPU upload, with a 600s floor for small models.
     let model_gb = model_bytes / GB + 1; // ceiling
-    let max_wait_secs = std::cmp::max(600, model_gb * 120);
-    tracing::info!("Health timeout: {max_wait_secs}s (model ~{model_gb} GB)");
+    let max_wait_secs = health_timeout_secs(model_gb);
+    tracing::info!(
+        "Health timeout: {max_wait_secs}s (model ~{model_gb} GB, cap {}s)",
+        HEALTH_TIMEOUT_CEIL_SECS
+    );
     let url = format!("http://127.0.0.1:{http_port}/health");
     for i in 0..max_wait_secs {
         if i > 0 && i % 10 == 0 {
@@ -2047,9 +2074,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_context_size, flash_attention_args, is_safe_kill_target, mmap_args, model_label,
-        parse_available_devices, preferred_device, terminate_process, wait_for_exit, BinaryFlavor,
-        KvCacheQuant, KvCacheWarning, KvType, RpcServerHandle, SplitMode, GB,
+        compute_context_size, flash_attention_args, health_timeout_secs, is_safe_kill_target,
+        mmap_args, model_label, parse_available_devices, preferred_device, terminate_process,
+        wait_for_exit, BinaryFlavor, KvCacheQuant, KvCacheWarning, KvType, RpcServerHandle,
+        SplitMode, GB, HEALTH_TIMEOUT_CEIL_SECS, HEALTH_TIMEOUT_FLOOR_SECS,
     };
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -2069,6 +2097,34 @@ mod tests {
             vec!["--no-mmap".to_string()],
             "solo launches keep --no-mmap because the host owns the full model and --no-mmap \
              avoids macOS page-cache pressure on long-lived solo hosts"
+        );
+    }
+
+    #[test]
+    fn health_timeout_secs_caps_large_models() {
+        assert_eq!(
+            health_timeout_secs(20),
+            HEALTH_TIMEOUT_CEIL_SECS,
+            "Qwen3-32B-Q4_K_M (~20 GB) must cap at the 300 s ceiling, not the legacy 40-min \
+             (model_gb * 120) figure that orphaned a Mac llama-server for 19 min in the \
+             May 18 2026 incident"
+        );
+        assert_eq!(
+            health_timeout_secs(50),
+            HEALTH_TIMEOUT_CEIL_SECS,
+            "even a 50 GB MoE shard caps at 300 s — if a host can't load in 5 min, the \
+             HostAttemptBackoff path is faster than waiting another 35 min"
+        );
+        assert_eq!(
+            health_timeout_secs(1),
+            HEALTH_TIMEOUT_FLOOR_SECS,
+            "a 1 GB tiny model still gets the 90 s floor so CI / first-boot disk caches \
+             have time to warm without spurious failover"
+        );
+        assert_eq!(
+            health_timeout_secs(8),
+            120,
+            "an 8 GB model gets 8 * 15 = 120 s, between floor and ceiling"
         );
     }
 

@@ -395,6 +395,23 @@ pub const HOST_ATTEMPT_SLOW_BACKOFF: std::time::Duration = std::time::Duration::
 /// `HostAttemptBackoff`.
 pub const FITTER_WATCHDOG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Cooldown after the election loop starts during which a peer that
+/// hasn't yet observed any other peer must not self-elect as host.
+///
+/// Discovery on a fresh start typically takes 3-10 s on relay-mediated
+/// joins, longer on direct-dial. Without this grace, a peer that
+/// restarts in parallel with the rest of the cohort wins its own
+/// 1-peer election before the other peers' announcements arrive, then
+/// the v0.66.37 sticky-cohort logic prevents it from yielding even
+/// after a much-better candidate (e.g. a 64 GB RAM peer) joins. The
+/// May 18 2026 incident hit exactly this on four peers restarted in
+/// sequence: each one self-elected as its own host, the entry node saw
+/// only one of them as Host (LYU), and the other three left orphan
+/// `llama-server` processes hung on tensor load. 20 s is well past
+/// typical relay discovery and short enough that a genuinely-solo peer
+/// (e.g. running standalone for tests) still launches in <30 s.
+pub const ELECTION_DISCOVERY_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Tracks repeated `start_llama` failures so a single node can't pin the
 /// cohort by failing over and over. Records each failure with a timestamp,
 /// trims out anything older than `HOST_ATTEMPT_FAILURE_WINDOW`, and once
@@ -2240,6 +2257,17 @@ pub async fn election_loop(
     // after `FITTER_WATCHDOG_TIMEOUT`, the launch is presumed stuck inside
     // `common_params_fit_impl` and we tear it down. See the constant docs.
     let mut launched_at: Option<std::time::Instant> = None;
+    // v0.66.39 election cooldown: stamp when this loop starts so the
+    // i_am_host decision below can defer self-election for a short
+    // grace period until at least one other peer has been observed in
+    // the mesh. Without this, a peer that just (re)started self-elects
+    // in <1 s before any gossip arrives, fires up llama-server, and the
+    // v0.66.37 "keep cohort viable" stickiness then locks it into a
+    // split-brain even after the actual best host (e.g. LYU 17 GB on a
+    // mesh of LYU + 14.5 GB Mac + 12.9 GB Mac + 8.6 GB MSI) joins.
+    // Confirmed against the May 18 2026 incident logs where the Mac
+    // emitted `host_elected` 1.3 s after process spawn with `peers=0`.
+    let loop_started_at = std::time::Instant::now();
     let mut backend_proxy: Option<crate::network::openai::backend::BackendProxyHandle> = None;
     // Per-loop timestamp map for the host-claim grace check. Stamped on
     // first sighting of each peer, never updated. See `viable_host_candidates`
@@ -2462,7 +2490,25 @@ pub async fn election_loop(
         // here is the host's view of itself.
         let host_backoff_active = host_attempt_backoff.is_active(now);
 
-        let i_am_host = if host_backoff_active {
+        // v0.66.39: defer self-election while we haven't seen any other peer
+        // and the discovery grace hasn't elapsed. See ELECTION_DISCOVERY_GRACE
+        // doc and the May 18 2026 split-brain incident. We only suppress
+        // self-election; if peers already exist (good discovery) we proceed
+        // immediately, and once the grace expires we proceed unconditionally
+        // (so a genuinely-solo node still launches).
+        let in_discovery_grace = !currently_host
+            && peers.is_empty()
+            && loop_started_at.elapsed() < ELECTION_DISCOVERY_GRACE;
+        if in_discovery_grace {
+            tracing::debug!(
+                model = %model_name,
+                elapsed_ms = loop_started_at.elapsed().as_millis() as u64,
+                grace_ms = ELECTION_DISCOVERY_GRACE.as_millis() as u64,
+                "deferring self-election: no peers visible yet, discovery grace active"
+            );
+        }
+
+        let i_am_host = if host_backoff_active || in_discovery_grace {
             false
         } else if requires_split {
             // Distributed mode: elect one host from the model group using the
@@ -5915,6 +5961,23 @@ mod tests {
     /// election falls back to `fast_memory_bytes DESC`. LYU wins.
     /// MSI must NOT self-elect even though its system_ram is huge —
     /// fast_memory_bytes ranks above system_ram in the score tuple.
+    #[test]
+    fn election_discovery_grace_is_long_enough_for_relay_join_but_short_for_solo() {
+        let grace = super::ELECTION_DISCOVERY_GRACE;
+        assert!(
+            grace >= std::time::Duration::from_secs(10),
+            "discovery grace must outlast typical relay-mediated peer discovery (3-10 s) so \
+             that a peer restarting in parallel with the cohort actually waits for the \
+             other peers' gossip; got {grace:?}"
+        );
+        assert!(
+            grace <= std::time::Duration::from_secs(60),
+            "discovery grace must stay short enough that a genuinely-solo node (no peers \
+             at all on the mesh) still launches its model within human-tolerable startup \
+             time; got {grace:?}"
+        );
+    }
+
     #[test]
     fn solo_bias_picks_lyu_in_4_peer_qwen3_32b_cohort() {
         let model_bytes = 20 * 1024 * 1024 * 1024;
