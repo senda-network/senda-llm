@@ -166,6 +166,59 @@ pub fn should_be_host_for_model(
     true
 }
 
+/// Almost-solo-biased election (v0.66.38).
+///
+/// Identical to [`should_be_host_for_model`] but inserts a new highest-
+/// priority criterion: a peer that can hold the entire model solo
+/// (fast memory ≥ model bytes) is always preferred over a peer that
+/// cannot, regardless of who has more raw VRAM. The motivation is the
+/// May 17 2026 4-peer Qwen3-32B-Q4_K_M cohort:
+///
+///   * MacBook (12 GB) + manonas (10 GB) + MSI (8 GB) + LYU (16 GB)
+///
+/// LYU is the ONLY peer that can hold the 20 GB Q4 model with mmap
+/// streaming local-share weights from disk while keeping the bulk of
+/// the layers on the host's GPU — every other host has to RPC-split
+/// onto WAN-latency tunnels for the bulk of layers. The legacy
+/// `should_be_host_for_model` picked the maximum `fast_memory_bytes()`,
+/// which is LYU only because LYU happens to also have the most VRAM.
+/// In a mesh where Mac happens to also have 16 GB compound memory but
+/// no peer can solo, the legacy code would still pick by raw memory and
+/// then split — which is exactly what we want to AVOID.
+///
+/// Score tuple, compared lexicographically (largest wins):
+///   `(can_hold_solo, fast_memory_bytes, system_ram_bytes, endpoint_id)`
+///
+/// The `endpoint_id` tiebreak preserves the legacy "higher id wins"
+/// behavior so deterministic cohorts elect the same peer pre/post-
+/// rollout (avoids the half-rolled-out mesh from oscillating between
+/// the new winner and the old winner during the upgrade window).
+pub fn should_be_host_for_model_with_solo_bias(
+    my_id: iroh::EndpointId,
+    my_vram: u64,
+    my_system_ram_bytes: u64,
+    model_bytes: u64,
+    model_peers: &[mesh::PeerInfo],
+) -> bool {
+    let my_score = (my_vram >= model_bytes, my_vram, my_system_ram_bytes, my_id);
+    for peer in model_peers {
+        if matches!(peer.role, NodeRole::Client) {
+            continue;
+        }
+        let peer_fast = peer.fast_memory_bytes();
+        let peer_score = (
+            peer_fast >= model_bytes,
+            peer_fast,
+            peer.system_ram_bytes,
+            peer.id,
+        );
+        if peer_score > my_score {
+            return false;
+        }
+    }
+    true
+}
+
 /// Maximum time a peer may sit "elected but not actually serving" before the
 /// rest of the cohort gives up on it and excludes it from host candidacy.
 ///
@@ -225,6 +278,70 @@ pub fn viable_host_candidates(
         .collect()
 }
 
+/// Conservative estimate of how much system RAM a peer will commit while
+/// hosting `model_bytes` in a cohort of `cohort_size` peers (host
+/// included).
+///
+/// Math: with mmap on (v0.66.38 task A), llama-server pages local-share
+/// weights through the OS page cache and only commits activations,
+/// KV cache, and RPC0 staging. Empirically on Qwen3-32B-Q4_K_M across
+/// 4 peers, that's ~3 GB constant + ~half of the local share within
+/// the first 30 s of inference (the OS pre-faults aggressively). We
+/// bound by `3 GB + local_share / 2` so a 16 GB Mac in a 4-peer
+/// cohort hosting a 20 GB model predicts 5.5 GB commit — well under
+/// 75% of 16 GB and matches the post-fix observed RSS on the May 17
+/// regression.
+pub fn predicted_host_ram_bytes(model_bytes: u64, cohort_size: usize) -> u64 {
+    const ACTIVATION_FLOOR: u64 = 3 * 1024 * 1024 * 1024;
+    let local_share = if cohort_size == 0 {
+        model_bytes
+    } else {
+        model_bytes / cohort_size as u64
+    };
+    ACTIVATION_FLOOR + local_share / 2
+}
+
+/// Does `peer` have enough total system RAM to host `model_bytes` in a
+/// cohort of `cohort_size` peers without swapping?
+///
+/// Legacy peers that don't gossip `system_ram_bytes` (= 0) are
+/// optimistically accepted so that one slow upgrade rollout doesn't
+/// silently exclude an entire cohort.
+///
+/// The 0.75 budget headroom accounts for the OS, the desktop app,
+/// browser/IDE, and other userland processes — picked because every
+/// host we've seen OOM in the May 17 incident was running with <25%
+/// free RAM. Drop the multiplier later once we have a tighter
+/// activation model.
+pub fn ram_can_host_model(peer: &mesh::PeerInfo, model_bytes: u64, cohort_size: usize) -> bool {
+    if peer.system_ram_bytes == 0 {
+        return true;
+    }
+    let predicted = predicted_host_ram_bytes(model_bytes, cohort_size);
+    let budget = (peer.system_ram_bytes as f64 * 0.75) as u64;
+    predicted <= budget
+}
+
+/// Apply the RAM-aware filter to an existing candidate set. Current
+/// `NodeRole::Host` peers always pass — pulling the rug out from under
+/// a peer that's already successfully serving the model creates more
+/// churn than it solves. The filter is meant to keep new candidates
+/// from getting elected and OOMing on first launch (the May 17 2026
+/// MacBook crash).
+pub fn ram_filtered_host_candidates(
+    candidates: Vec<mesh::PeerInfo>,
+    model_bytes: u64,
+) -> Vec<mesh::PeerInfo> {
+    let cohort_size = candidates.len();
+    candidates
+        .into_iter()
+        .filter(|p| {
+            matches!(p.role, NodeRole::Host { .. })
+                || ram_can_host_model(p, model_bytes, cohort_size)
+        })
+        .collect()
+}
+
 /// Sliding-window cap on how many failed `start_llama` attempts a single
 /// node will burn before stepping aside. Picked at 2 (with the window
 /// below) so a transient hiccup doesn't bench us, but a genuinely stuck
@@ -241,6 +358,42 @@ pub const HOST_ATTEMPT_FAILURE_WINDOW: std::time::Duration = std::time::Duration
 /// `HOST_CLAIM_GRACE` (30 s) to expire on the runner-up's view of us, plus
 /// some padding so we don't ping-pong between candidates each cycle.
 pub const HOST_ATTEMPT_BACKOFF: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// v0.66.38 "slow churn" window: covers the case where a host wins
+/// re-election repeatedly over the span of several minutes (e.g. a
+/// flaky worker keeps dropping out and back in, triggering teardown +
+/// re-launch on the host's side). The fast 90 s window above only
+/// catches back-to-back failures; this longer window catches the
+/// "drips that add up to a flood" pattern from the May 18 2026 LYU
+/// flapping incident.
+pub const HOST_ATTEMPT_SLOW_WINDOW: std::time::Duration = std::time::Duration::from_secs(600);
+
+/// Slow-window failure threshold: 3 failures across `HOST_ATTEMPT_SLOW_WINDOW`
+/// arms the slow backoff. Picked one higher than the fast-window threshold
+/// so genuinely transient hiccups don't trip both paths at once.
+pub const HOST_ATTEMPT_SLOW_MAX: usize = 3;
+
+/// Backoff applied when the slow window trips. Longer than the fast
+/// backoff because the failure pattern is persistent (the cohort needs
+/// real time to stabilize, not just a re-probe).
+pub const HOST_ATTEMPT_SLOW_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// How long we let a freshly-launched `llama-server` sit "loading but
+/// not yet routable" before assuming the fitter loop
+/// (`common_params_fit_impl`) has hung and tearing the process down.
+///
+/// v0.66.38 May 18 2026 incident: a 16 GB Mac hosting Qwen3-32B-Q4_K_M
+/// split across a 13.8 GB Mac + 8 GB MSI cohort spent >40 minutes inside
+/// `common_params_fit_impl` trying every layer distribution. The server
+/// never returned 200 to /health, the desktop app showed "loading…"
+/// forever, and the human had to manually kill the process.
+///
+/// 5 minutes is well past any healthy launch on the hardware we ship to
+/// (the slowest cold-cache 25 GB GGUF load we measured lands at ≤90 s)
+/// while still being short enough that the user notices something is
+/// wrong and the cohort can fail over to the runner-up via
+/// `HostAttemptBackoff`.
+pub const FITTER_WATCHDOG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
 /// Tracks repeated `start_llama` failures so a single node can't pin the
 /// cohort by failing over and over. Records each failure with a timestamp,
@@ -290,14 +443,35 @@ impl HostAttemptBackoff {
             return None;
         }
         self.failures.push_back(now);
+        // Trim only to the LONGEST window we still care about (slow), so
+        // both fast-window and slow-window counts can read from the same
+        // deque without losing data.
         while let Some(&earliest) = self.failures.front() {
-            if now.saturating_duration_since(earliest) > HOST_ATTEMPT_FAILURE_WINDOW {
+            if now.saturating_duration_since(earliest) > HOST_ATTEMPT_SLOW_WINDOW {
                 self.failures.pop_front();
             } else {
                 break;
             }
         }
-        if self.failures.len() >= HOST_ATTEMPT_MAX_FAILURES {
+        // Slow window first: a stretched-out pattern earns the longer
+        // backoff so the cohort actually has time to stabilize.
+        let slow_count = self
+            .failures
+            .iter()
+            .filter(|t| now.saturating_duration_since(**t) <= HOST_ATTEMPT_SLOW_WINDOW)
+            .count();
+        if slow_count >= HOST_ATTEMPT_SLOW_MAX {
+            let until = now + HOST_ATTEMPT_SLOW_BACKOFF;
+            self.backoff_until = Some(until);
+            self.failures.clear();
+            return Some(until);
+        }
+        let fast_count = self
+            .failures
+            .iter()
+            .filter(|t| now.saturating_duration_since(**t) <= HOST_ATTEMPT_FAILURE_WINDOW)
+            .count();
+        if fast_count >= HOST_ATTEMPT_MAX_FAILURES {
             let until = now + HOST_ATTEMPT_BACKOFF;
             self.backoff_until = Some(until);
             self.failures.clear();
@@ -2061,6 +2235,11 @@ pub async fn election_loop(
     let mut currently_host = false;
     let mut current_local_port: Option<u16> = None;
     let mut llama_process: Option<launch::InferenceServerProcess> = None;
+    // v0.66.38 fitter watchdog: stamped on every successful launch, cleared
+    // when the model first appears in `node.hosted_models()`. If still set
+    // after `FITTER_WATCHDOG_TIMEOUT`, the launch is presumed stuck inside
+    // `common_params_fit_impl` and we tear it down. See the constant docs.
+    let mut launched_at: Option<std::time::Instant> = None;
     let mut backend_proxy: Option<crate::network::openai::backend::BackendProxyHandle> = None;
     // Per-loop timestamp map for the host-claim grace check. Stamped on
     // first sighting of each peer, never updated. See `viable_host_candidates`
@@ -2195,6 +2374,47 @@ pub async fn election_loop(
         if stop_requested(&stop_rx) {
             break;
         }
+
+        // v0.66.38 fitter watchdog: tear down a llama-server that has been
+        // "loading but not yet routable" for longer than
+        // `FITTER_WATCHDOG_TIMEOUT`. Catches the May 18 2026 incident
+        // where `common_params_fit_impl` looped for 40+ minutes trying to
+        // find a layer distribution that fit the tight Mac+MSI cohort.
+        if currently_host && launched_at.is_some() {
+            let hosted = node.hosted_models().await;
+            if hosted.iter().any(|m| m == &model_name) {
+                launched_at = None;
+            } else if launched_at
+                .map(|t| t.elapsed() > FITTER_WATCHDOG_TIMEOUT)
+                .unwrap_or(false)
+            {
+                emit_warning(
+                    "llama-server stuck loading past fitter watchdog — killing and stepping aside",
+                    Some(format!(
+                        "model={model_name} grace={}s",
+                        FITTER_WATCHDOG_TIMEOUT.as_secs()
+                    )),
+                );
+                if let Some(process) = llama_process.take() {
+                    process.handle.shutdown().await;
+                }
+                if let Some(proxy) = backend_proxy.take() {
+                    proxy.shutdown().await;
+                }
+                tunnel_mgr.set_http_port(0);
+                node.set_role(NodeRole::Worker).await;
+                currently_host = false;
+                current_local_port = None;
+                last_running_plan = None;
+                launched_at = None;
+                let _ = host_attempt_backoff.record_failure(std::time::Instant::now());
+                on_process(None);
+                on_change(false, false);
+                // Fall through to re-elect — backoff will force us to defer
+                // to the runner-up.
+            }
+        }
+
         // Collect our model group (peers also serving this model)
         let peers = node.peers().await;
         let model_peers: Vec<mesh::PeerInfo> = peers
@@ -2216,8 +2436,10 @@ pub async fn election_loop(
         // a peer that drops and rejoins later gets a fresh grace window.
         first_observed.retain(|id, _| model_peers.iter().any(|p| &p.id == id));
 
-        let host_candidates =
+        let grace_host_candidates =
             viable_host_candidates(&model_peers, &first_observed, now, HOST_CLAIM_GRACE);
+        let host_candidates =
+            ram_filtered_host_candidates(grace_host_candidates.clone(), model_bytes);
         let desired_launch = build_dense_launch_plan(
             local_launch_vram,
             model_bytes,
@@ -2255,7 +2477,13 @@ pub async fn election_loop(
             // selection (the `else` branch below) DO NOT use this filter —
             // a peer that is unviable as host can still be a perfectly good
             // pipeline worker.
-            should_be_host_for_model(node.id(), my_vram, &host_candidates)
+            should_be_host_for_model_with_solo_bias(
+                node.id(),
+                my_vram,
+                node.system_ram_bytes,
+                model_bytes,
+                &host_candidates,
+            )
         } else if model_peers.is_empty() {
             // No other node serving this model — we must host
             true
@@ -2543,6 +2771,7 @@ pub async fn election_loop(
             currently_host = true;
             current_local_port = Some(local_proxy_port);
             last_running_plan = desired_launch.running_plan();
+            launched_at = Some(std::time::Instant::now());
             // Successful launch — clear any in-progress failure counter
             // so the next launch starts from a clean slate.
             host_attempt_backoff.record_success();
@@ -4106,6 +4335,7 @@ mod tests {
             owner_attestation: None,
             owner_summary: crate::crypto::OwnershipSummary::default(),
             inflight_requests: 0,
+            system_ram_bytes: 0,
             capability: crate::mesh::NodeCapability::default(),
         }
     }
@@ -4551,6 +4781,48 @@ mod tests {
             .record_failure(t0 + std::time::Duration::from_secs(5))
             .is_none());
         assert!(!backoff.is_active(t0 + std::time::Duration::from_secs(5)));
+    }
+
+    /// Slow window (v0.66.38): three failures spaced ~3 minutes apart
+    /// each — well outside the 90 s fast window so the fast-window
+    /// arm never fires — must trip the slow-window backoff. Pins the
+    /// May 18 2026 LYU flapping pattern: each worker disconnect
+    /// triggered a teardown + re-launch cycle, no single 90 s span
+    /// had two failures, yet the host was unstable for half an hour.
+    #[test]
+    fn host_attempt_backoff_slow_window_arms_after_three_failures_in_ten_minutes() {
+        let mut backoff = HostAttemptBackoff::new();
+        let t0 = std::time::Instant::now();
+        assert!(backoff.record_failure(t0).is_none());
+        // 3 min later — outside the 90 s fast window so fast arm cannot fire.
+        let t1 = t0 + std::time::Duration::from_secs(180);
+        assert!(
+            backoff.record_failure(t1).is_none(),
+            "two slow-spaced failures must not arm any backoff yet"
+        );
+        let t2 = t0 + std::time::Duration::from_secs(360);
+        let until = backoff
+            .record_failure(t2)
+            .expect("third slow-spaced failure inside slow window must arm slow backoff");
+        assert_eq!(until - t2, HOST_ATTEMPT_SLOW_BACKOFF);
+        assert!(backoff.is_active(t2));
+    }
+
+    /// Slow-window failures that fall outside the 10 min slow window
+    /// must NOT accumulate — even the fast window aged them out at 90 s.
+    #[test]
+    fn host_attempt_backoff_slow_window_failures_age_out() {
+        let mut backoff = HostAttemptBackoff::new();
+        let t0 = std::time::Instant::now();
+        backoff.record_failure(t0);
+        backoff.record_failure(t0 + std::time::Duration::from_secs(180));
+        // 11 min later — both prior failures aged out of the slow window.
+        let t_late = t0 + HOST_ATTEMPT_SLOW_WINDOW + std::time::Duration::from_secs(60);
+        assert!(
+            backoff.record_failure(t_late).is_none(),
+            "failures aged out of slow window must not arm backoff"
+        );
+        assert!(!backoff.is_active(t_late));
     }
 
     /// While backoff is active any further failure recordings are
@@ -5587,6 +5859,208 @@ mod tests {
         assert!(!should_use_row_split(Some(BinaryFlavor::Metal), 8));
         assert!(!should_use_row_split(Some(BinaryFlavor::Vulkan), 4));
         assert!(!should_use_row_split(Some(BinaryFlavor::Cpu), 4));
+    }
+
+    /// 20 GB model split across 4 peers ⇒ 5 GB local share ⇒ predicted
+    /// commit `3 GB + 5/2 GB = 5.5 GB`. Anchor the formula so future
+    /// refactors don't silently raise/lower the bound that the v0.66.38
+    /// RAM filter depends on.
+    #[test]
+    fn predicted_host_ram_bytes_qwen3_32b_split_across_four_peers() {
+        let model_bytes = 20 * 1024 * 1024 * 1024;
+        let got = predicted_host_ram_bytes(model_bytes, 4);
+        let expected = 3 * 1024 * 1024 * 1024 + (model_bytes / 4) / 2;
+        assert_eq!(got, expected);
+    }
+
+    /// A 16 GB MacBook Air must pass the RAM filter for a 20 GB
+    /// Qwen3-32B-Q4_K_M split across 4 peers. This is the EXACT shape
+    /// of the May 17 2026 cohort that OOMed pre-v0.66.38; the test
+    /// pins that the post-fix RAM math admits it as a host candidate.
+    #[test]
+    fn ram_can_host_admits_16gb_mac_into_qwen3_32b_4_peer_split() {
+        let id = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[42; 32]).public());
+        let mut peer = make_dense_peer(id, 12 * 1024 * 1024 * 1024, None, "Qwen3-32B-Q4_K_M");
+        peer.system_ram_bytes = 16 * 1024 * 1024 * 1024;
+        assert!(ram_can_host_model(&peer, 20 * 1024 * 1024 * 1024, 4));
+    }
+
+    /// A 4 GB Raspberry-Pi-sized peer must NOT pass the RAM filter for a
+    /// 20 GB model split across 4 peers (predicted commit 5.5 GB > 3 GB
+    /// budget). Pins the floor — without this filter, election would
+    /// pick the Pi as host and OOM on first inference.
+    #[test]
+    fn ram_can_host_rejects_4gb_peer_for_qwen3_32b_4_peer_split() {
+        let id = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[43; 32]).public());
+        let mut peer = make_dense_peer(id, 2 * 1024 * 1024 * 1024, None, "Qwen3-32B-Q4_K_M");
+        peer.system_ram_bytes = 4 * 1024 * 1024 * 1024;
+        assert!(!ram_can_host_model(&peer, 20 * 1024 * 1024 * 1024, 4));
+    }
+
+    /// Legacy peers that don't gossip `system_ram_bytes` (= 0) must
+    /// always pass the RAM filter so a half-rolled-out upgrade doesn't
+    /// silently exclude every old peer from host election.
+    #[test]
+    fn ram_can_host_admits_legacy_peer_with_unknown_ram() {
+        let id = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[44; 32]).public());
+        let peer = make_dense_peer(id, 8 * 1024 * 1024 * 1024, None, "Qwen3-32B-Q4_K_M");
+        assert_eq!(peer.system_ram_bytes, 0);
+        assert!(ram_can_host_model(&peer, 20 * 1024 * 1024 * 1024, 4));
+    }
+
+    /// The May 17 2026 4-peer cohort: Mac (12 GB VRAM/16 GB RAM),
+    /// manonas (10 GB/16 GB), MSI (8 GB/32 GB), LYU (16 GB/64 GB).
+    /// Qwen3-32B-Q4_K_M ≈ 20 GB. No peer can hold solo, so the
+    /// `can_hold_solo` dimension is false for everyone and the
+    /// election falls back to `fast_memory_bytes DESC`. LYU wins.
+    /// MSI must NOT self-elect even though its system_ram is huge —
+    /// fast_memory_bytes ranks above system_ram in the score tuple.
+    #[test]
+    fn solo_bias_picks_lyu_in_4_peer_qwen3_32b_cohort() {
+        let model_bytes = 20 * 1024 * 1024 * 1024;
+        let id_mac = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[10; 32]).public());
+        let id_man = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[20; 32]).public());
+        let id_msi = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[30; 32]).public());
+        let id_lyu = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[40; 32]).public());
+
+        let mut mac = make_dense_peer(id_mac, 12 * 1024 * 1024 * 1024, None, "Qwen3-32B-Q4_K_M");
+        mac.system_ram_bytes = 16 * 1024 * 1024 * 1024;
+        let mut manonas =
+            make_dense_peer(id_man, 10 * 1024 * 1024 * 1024, None, "Qwen3-32B-Q4_K_M");
+        manonas.system_ram_bytes = 16 * 1024 * 1024 * 1024;
+        let mut msi = make_dense_peer(id_msi, 8 * 1024 * 1024 * 1024, None, "Qwen3-32B-Q4_K_M");
+        msi.system_ram_bytes = 32 * 1024 * 1024 * 1024;
+        let mut lyu = make_dense_peer(id_lyu, 16 * 1024 * 1024 * 1024, None, "Qwen3-32B-Q4_K_M");
+        lyu.system_ram_bytes = 64 * 1024 * 1024 * 1024;
+
+        let peers_seen_by_lyu = vec![mac.clone(), manonas.clone(), msi.clone()];
+        let peers_seen_by_mac = vec![manonas.clone(), msi.clone(), lyu.clone()];
+        let peers_seen_by_msi = vec![mac.clone(), manonas.clone(), lyu.clone()];
+
+        assert!(
+            should_be_host_for_model_with_solo_bias(
+                id_lyu,
+                16 * 1024 * 1024 * 1024,
+                64 * 1024 * 1024 * 1024,
+                model_bytes,
+                &peers_seen_by_lyu,
+            ),
+            "LYU has the most fast memory (16 GB) and must self-elect as host \
+             in the May 17 2026 4-peer Qwen3-32B-Q4_K_M cohort"
+        );
+        assert!(
+            !should_be_host_for_model_with_solo_bias(
+                id_mac,
+                12 * 1024 * 1024 * 1024,
+                16 * 1024 * 1024 * 1024,
+                model_bytes,
+                &peers_seen_by_mac,
+            ),
+            "Mac (12 GB fast) must defer to LYU (16 GB fast)"
+        );
+        assert!(
+            !should_be_host_for_model_with_solo_bias(
+                id_msi,
+                8 * 1024 * 1024 * 1024,
+                32 * 1024 * 1024 * 1024,
+                model_bytes,
+                &peers_seen_by_msi,
+            ),
+            "MSI (8 GB fast, but 32 GB RAM) must NOT self-elect over LYU — \
+             system_ram_bytes is the 3rd tiebreaker only, fast_memory_bytes wins first"
+        );
+    }
+
+    /// When a peer can solo a smaller model, it must be elected over a
+    /// peer with more raw VRAM but that also can solo (both can_solo
+    /// = true, then fast_memory_bytes tiebreaks). Pin the "solo wins
+    /// over not-solo" priority directly.
+    #[test]
+    fn solo_bias_prefers_can_solo_over_higher_fast_mem_but_cannot_solo() {
+        let model_bytes = 10 * 1024 * 1024 * 1024;
+        let id_a = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[1; 32]).public());
+        let id_b = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[2; 32]).public());
+        // A: 8 GB fast — cannot hold 10 GB solo.
+        let mut a = make_dense_peer(id_a, 8 * 1024 * 1024 * 1024, None, "M");
+        a.system_ram_bytes = 64 * 1024 * 1024 * 1024;
+        // B: 12 GB fast — CAN hold 10 GB solo.
+        let mut b = make_dense_peer(id_b, 12 * 1024 * 1024 * 1024, None, "M");
+        b.system_ram_bytes = 16 * 1024 * 1024 * 1024;
+
+        assert!(
+            should_be_host_for_model_with_solo_bias(
+                id_b,
+                12 * 1024 * 1024 * 1024,
+                16 * 1024 * 1024 * 1024,
+                model_bytes,
+                std::slice::from_ref(&a),
+            ),
+            "B can hold solo, A cannot — B must self-elect even though A has more RAM"
+        );
+        assert!(
+            !should_be_host_for_model_with_solo_bias(
+                id_a,
+                8 * 1024 * 1024 * 1024,
+                64 * 1024 * 1024 * 1024,
+                model_bytes,
+                std::slice::from_ref(&b),
+            ),
+            "A cannot solo, B can — A must defer (no RPC tunnel needed when B hosts)"
+        );
+    }
+
+    /// When two peers have identical fast_memory_bytes and neither can
+    /// solo, system_ram_bytes is the 3rd-level tiebreaker (favoring
+    /// the peer with more RAM headroom for KV cache + activations).
+    #[test]
+    fn solo_bias_uses_system_ram_to_tiebreak_equal_fast_memory() {
+        let model_bytes = 30 * 1024 * 1024 * 1024;
+        let id_a = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[5; 32]).public());
+        let id_b = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[6; 32]).public());
+        let mut a = make_dense_peer(id_a, 16 * 1024 * 1024 * 1024, None, "M");
+        a.system_ram_bytes = 16 * 1024 * 1024 * 1024;
+        let mut b = make_dense_peer(id_b, 16 * 1024 * 1024 * 1024, None, "M");
+        b.system_ram_bytes = 64 * 1024 * 1024 * 1024;
+
+        assert!(
+            should_be_host_for_model_with_solo_bias(
+                id_b,
+                16 * 1024 * 1024 * 1024,
+                64 * 1024 * 1024 * 1024,
+                model_bytes,
+                std::slice::from_ref(&a),
+            ),
+            "with equal fast memory, the peer with more system RAM wins"
+        );
+        assert!(
+            !should_be_host_for_model_with_solo_bias(
+                id_a,
+                16 * 1024 * 1024 * 1024,
+                16 * 1024 * 1024 * 1024,
+                model_bytes,
+                std::slice::from_ref(&b),
+            ),
+            "A defers to B because B has 64 GB RAM vs A's 16 GB"
+        );
+    }
+
+    /// A currently-serving Host with insufficient RAM must NOT be torn
+    /// down by the RAM filter — if it's already serving, the budget
+    /// math is empirically wrong for this peer/model and we shouldn't
+    /// re-elect just to OOM on the next host's first launch.
+    #[test]
+    fn ram_filtered_host_candidates_preserves_active_host_even_when_ram_short() {
+        let id_host = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[1; 32]).public());
+        let id_other = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[2; 32]).public());
+        let mut host_peer = make_dense_peer(id_host, 4 * 1024 * 1024 * 1024, None, "BigModel");
+        host_peer.role = NodeRole::Host { http_port: 4000 };
+        host_peer.system_ram_bytes = 4 * 1024 * 1024 * 1024;
+        let mut other = make_dense_peer(id_other, 4 * 1024 * 1024 * 1024, None, "BigModel");
+        other.system_ram_bytes = 4 * 1024 * 1024 * 1024;
+        let filtered =
+            ram_filtered_host_candidates(vec![host_peer.clone(), other], 50 * 1024 * 1024 * 1024);
+        assert_eq!(filtered.len(), 1, "active Host must survive RAM filter");
+        assert_eq!(filtered[0].id, id_host);
     }
 }
 

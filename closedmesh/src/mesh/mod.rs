@@ -710,6 +710,14 @@ pub(crate) struct PeerAnnouncement {
     pub(crate) served_model_runtime: Vec<ModelRuntimeDescriptor>,
     pub(crate) owner_attestation: Option<SignedNodeOwnership>,
     pub(crate) inflight_requests: u64,
+    /// Total system RAM in bytes (sysinfo::System::total_memory).
+    ///
+    /// Used by RAM-aware host election (v0.66.38+) to filter out peers whose
+    /// total RAM cannot hold the model's host-side share without swapping.
+    /// `0` means "unknown / legacy peer"; election back-fills with the peer's
+    /// `fast_memory_bytes()` (matches the v0.66.37 behavior so older peers
+    /// are not silently filtered out).
+    pub(crate) system_ram_bytes: u64,
     /// Normalized capability advertisement used for capability-aware routing.
     /// Older peers that don't set this get back-filled from `gpu_*` / `hardware`
     /// when they're upgraded to a `PeerInfo`.
@@ -773,6 +781,11 @@ pub struct PeerInfo {
     /// signal used only to order otherwise-equivalent hosts; zero for legacy
     /// peers that do not advertise it.
     pub inflight_requests: u64,
+    /// Total system RAM (sysinfo::System::total_memory) reported by this peer.
+    /// `0` means the peer is on a legacy build (pre-v0.66.38) that did not
+    /// gossip this field; RAM-aware election back-fills with `fast_memory_bytes()`
+    /// so older peers are not silently filtered out.
+    pub system_ram_bytes: u64,
     /// Normalized capability for routing. Always populated — back-filled from
     /// the legacy GPU fields when the announcement didn't include it.
     pub capability: NodeCapability,
@@ -893,6 +906,7 @@ impl PeerInfo {
             owner_attestation: ann.owner_attestation.clone(),
             owner_summary,
             inflight_requests: ann.inflight_requests,
+            system_ram_bytes: ann.system_ram_bytes,
             capability: ann.capability.clone().unwrap_or_else(|| {
                 capability::backfill_from_legacy(
                     ann.gpu_name.as_deref(),
@@ -1125,6 +1139,12 @@ pub struct Node {
     /// `fast_memory_bytes()` for split-vs-solo planning. See that method's
     /// docstring for the regression motivation.
     gpu_vram_total_bytes: u64,
+    /// Total system RAM detected at startup, gossiped to peers so
+    /// RAM-aware election (v0.66.38+) can filter hosts whose RAM cannot
+    /// hold the host-side share of a split model without swapping. `0`
+    /// means detection failed on this platform; election back-fills
+    /// with `fast_memory_bytes()` for safety.
+    pub system_ram_bytes: u64,
     peer_change_tx: watch::Sender<usize>,
     pub peer_change_rx: watch::Receiver<usize>,
     inflight_requests: Arc<std::sync::atomic::AtomicUsize>,
@@ -1263,7 +1283,28 @@ struct MeshState {
     /// Last policy-rejection status per peer — used to suppress duplicate log lines.
     /// Only logs when the status transitions (first rejection or status change).
     policy_rejected_peers: HashMap<EndpointId, OwnershipStatus>,
+    /// Per-peer sliding window of routing-layer failure timestamps. Drives
+    /// `Node::record_target_failure` — only the third failure within
+    /// `TARGET_FAILURE_WINDOW` triggers `handle_peer_death`, so a transient
+    /// 120 s timeout to the SOLE remote host (May 18 2026 incident) no
+    /// longer permanently evicts the cohort's only target. Cleared on
+    /// successful Delivered.
+    target_failures: HashMap<EndpointId, VecDeque<std::time::Instant>>,
 }
+
+/// Sliding window over which routing-layer failures to a single remote
+/// peer are counted toward eviction. v0.66.38: 120 s — long enough to
+/// catch a peer that's actually broken (every retry from a retry-loop
+/// client fits comfortably) and short enough that yesterday's blip
+/// doesn't pile up with today's.
+pub const TARGET_FAILURE_WINDOW: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Number of routing-layer failures inside [`TARGET_FAILURE_WINDOW`] that
+/// must accumulate before `record_target_failure` returns `true`
+/// (authorizing `handle_peer_death`). 3 is intentionally aggressive
+/// because the sole-target safety net (clause 2 of
+/// `Node::record_target_failure`) makes it safe.
+pub const TARGET_FAILURE_EVICT_THRESHOLD: usize = 3;
 
 /// Returns `true` if the given peer has completed gossip validation and is
 /// a full mesh member. Unadmitted peers are in `state.connections` but not
@@ -1416,6 +1457,82 @@ impl Node {
             .await
             .map(|c| c.backend)
             .unwrap_or(Backend::Cpu)
+    }
+
+    /// Record a routing-layer failure to a remote peer and decide whether
+    /// the peer should be evicted (i.e. `handle_peer_death` should run).
+    ///
+    /// Returns `true` ONLY when:
+    ///   1. The peer has accumulated `TARGET_FAILURE_EVICT_THRESHOLD`
+    ///      failures inside `TARGET_FAILURE_WINDOW`, AND
+    ///   2. Evicting this peer would NOT empty the cohort serving `model`
+    ///      (when `model` is provided).
+    ///
+    /// The second clause is the v0.66.38 fix for the "sole-target
+    /// blacklist" symptom: pre-fix, any single timeout to manonas (the
+    /// only remote serving Qwen3-32B-Q4_K_M) tripped `handle_peer_death`
+    /// → next request found 0 candidates → 503 with `all 1 target(s)
+    /// failed`. Post-fix, the sole target is never permanently evicted
+    /// by the routing layer; recovery falls through to gossip
+    /// freshness / peer heartbeat.
+    pub async fn record_target_failure(&self, peer_id: EndpointId, model: Option<&str>) -> bool {
+        let now = std::time::Instant::now();
+        let mut state = self.state.lock().await;
+        let entries = state.target_failures.entry(peer_id).or_default();
+        while let Some(front) = entries.front().copied() {
+            if now.saturating_duration_since(front) > TARGET_FAILURE_WINDOW {
+                entries.pop_front();
+            } else {
+                break;
+            }
+        }
+        entries.push_back(now);
+        let count = entries.len();
+        if count < TARGET_FAILURE_EVICT_THRESHOLD {
+            return false;
+        }
+        if let Some(model) = model {
+            let any_other = state.peers.values().any(|p| {
+                p.id != peer_id
+                    && p.tunnel_port.is_some()
+                    && (p
+                        .served_model_runtime
+                        .iter()
+                        .any(|r| r.ready && r.model_name == model)
+                        || p.hosted_models.iter().any(|m| m == model)
+                        || (!p.hosted_models_known && p.serving_models.iter().any(|m| m == model)))
+            });
+            if !any_other {
+                tracing::warn!(
+                    peer = %peer_id.fmt_short(),
+                    model = model,
+                    count = count,
+                    "skipping eviction of sole remaining target for model — will retry after backoff"
+                );
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Wipe the per-peer routing-failure window on successful delivery.
+    /// Called from the Delivered branch of `route_model_request` so a
+    /// peer that recovers after one or two transient timeouts gets a
+    /// clean slate (otherwise three failures spread across 90 minutes
+    /// would slowly accumulate and eventually evict a healthy peer).
+    pub async fn clear_target_failures(&self, peer_id: EndpointId) {
+        let mut state = self.state.lock().await;
+        state.target_failures.remove(&peer_id);
+    }
+
+    #[cfg(test)]
+    pub async fn target_failure_count(&self, peer_id: EndpointId) -> usize {
+        let state = self.state.lock().await;
+        state
+            .target_failures
+            .get(&peer_id)
+            .map(|q| q.len())
+            .unwrap_or(0)
     }
 
     pub fn begin_inflight_request(&self) -> InflightRequestGuard {
@@ -1728,6 +1845,7 @@ impl Node {
                 seen_plugin_messages: HashMap::new(),
                 seen_plugin_message_order: VecDeque::new(),
                 policy_rejected_peers: HashMap::new(),
+                target_failures: HashMap::new(),
             })),
             role: Arc::new(Mutex::new(role)),
             models: Arc::new(Mutex::new(Vec::new())),
@@ -1752,6 +1870,7 @@ impl Node {
             // expressing intent about how much memory to advertise *and* use
             // on the local GPU, not just the RAM-offload total.
             gpu_vram_total_bytes: gpu_vram_total_bytes.min(vram),
+            system_ram_bytes: crate::system::hardware::detect_system_ram_bytes(),
             peer_change_tx,
             peer_change_rx,
             inflight_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -1834,6 +1953,7 @@ impl Node {
                 seen_plugin_messages: HashMap::new(),
                 seen_plugin_message_order: VecDeque::new(),
                 policy_rejected_peers: HashMap::new(),
+                target_failures: HashMap::new(),
             })),
             role: Arc::new(Mutex::new(role)),
             models: Arc::new(Mutex::new(Vec::new())),
@@ -1854,6 +1974,7 @@ impl Node {
             )),
             vram_bytes: 0,
             gpu_vram_total_bytes: 0,
+            system_ram_bytes: 0,
             peer_change_tx,
             peer_change_rx,
             inflight_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),

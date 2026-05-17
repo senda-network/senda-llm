@@ -558,6 +558,33 @@ pub(crate) fn flash_attention_args(is_rpc_split: bool) -> [String; 2] {
     ["-fa".to_string(), mode.to_string()]
 }
 
+/// Choose mmap mode for the host's llama-server.
+///
+/// Solo launches keep `--no-mmap` because the host owns the entire model
+/// and `--no-mmap` avoids macOS page-cache pressure on long-lived solo
+/// hosts (the original reason that flag was added).
+///
+/// RPC split launches MUST drop `--no-mmap`. With `--no-mmap`, the host
+/// process committs the full `model_local_share + RPC0 staging buffer`
+/// into anonymous RAM before chunking weights over the iroh tunnels to
+/// remote workers. On a 16 GB MacBook Air hosting a 19.7 GB model with
+/// a 9.4 GB RPC partition, that's ~18 GB of committed RAM on a 16 GB
+/// box. The OS swaps, then OOM-kills the desktop app (this is exactly
+/// the May 17 2026 crash). With mmap on, the host pages local-layer
+/// weights from the GGUF on disk lazily through the OS page cache and
+/// only committed RAM is KV cache + activations + transient RPC
+/// staging — easily under the Mac's budget.
+///
+/// Returns either `["--no-mmap"]` or `[]` (empty = mmap on, llama.cpp's
+/// default).
+pub(crate) fn mmap_args(is_rpc_split: bool) -> Vec<String> {
+    if is_rpc_split {
+        Vec::new()
+    } else {
+        vec!["--no-mmap".to_string()]
+    }
+}
+
 impl KvCacheQuant {
     /// Thresholds in bytes for the tier boundaries below. Named constants so
     /// the tests can assert exact boundary behavior.
@@ -1532,10 +1559,9 @@ pub async fn start_llama_server(
              because rpc-server Metal workers can abort on FLASH_ATTN_EXT"
         );
     }
+    args.extend_from_slice(&["-fit".to_string(), "on".to_string()]);
+    args.extend(mmap_args(is_rpc_split));
     args.extend_from_slice(&[
-        "-fit".to_string(),
-        "on".to_string(),
-        "--no-mmap".to_string(),
         "--parallel".to_string(),
         slots.to_string(),
         "--host".to_string(),
@@ -2021,13 +2047,30 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(test)]
 mod tests {
     use super::{
-        compute_context_size, flash_attention_args, is_safe_kill_target, model_label,
+        compute_context_size, flash_attention_args, is_safe_kill_target, mmap_args, model_label,
         parse_available_devices, preferred_device, terminate_process, wait_for_exit, BinaryFlavor,
         KvCacheQuant, KvCacheWarning, KvType, RpcServerHandle, SplitMode, GB,
     };
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn mmap_enabled_for_rpc_split_launches() {
+        assert_eq!(
+            mmap_args(true),
+            Vec::<String>::new(),
+            "RPC split launches must drop --no-mmap so the host pages local-layer weights from \
+             the GGUF lazily via OS page cache; otherwise host RAM commits model_local_share + \
+             RPC0 staging and OOM-kills 16 GB Macs hosting 19.7 GB models (May 17 2026 crash)"
+        );
+        assert_eq!(
+            mmap_args(false),
+            vec!["--no-mmap".to_string()],
+            "solo launches keep --no-mmap because the host owns the full model and --no-mmap \
+             avoids macOS page-cache pressure on long-lived solo hosts"
+        );
+    }
 
     #[test]
     fn flash_attention_args_force_off_for_rpc_split_launches() {

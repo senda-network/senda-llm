@@ -1519,6 +1519,7 @@ impl MeshApi {
                     version: p.version.clone(),
                     rtt_ms: p.rtt_ms,
                     inflight_requests: p.inflight_requests,
+                    system_ram_bytes: p.system_ram_bytes,
                     hostname: p.hostname.clone(),
                     is_soc: p.is_soc,
                     gpus: build_gpus(
@@ -1625,6 +1626,7 @@ impl MeshApi {
             launch_pi,
             launch_goose,
             inflight_requests,
+            system_ram_bytes: node.system_ram_bytes,
             mesh_id,
             mesh_name,
             nostr_discovery,
@@ -2768,6 +2770,7 @@ mod tests {
             owner_summary: crate::crypto::OwnershipSummary::default(),
             first_joined_mesh_ts: None,
             inflight_requests: 0,
+            system_ram_bytes: 0,
             capability: crate::mesh::NodeCapability::default(),
         }
     }
@@ -3048,6 +3051,7 @@ mod tests {
             owner_attestation: None,
             owner_summary: crate::crypto::OwnershipSummary::default(),
             inflight_requests: 0,
+            system_ram_bytes: 0,
             capability: crate::mesh::NodeCapability::default(),
         }
     }

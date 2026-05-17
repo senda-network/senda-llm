@@ -160,6 +160,9 @@ pub(super) struct StatusPayload {
     pub(super) launch_pi: Option<String>,
     pub(super) launch_goose: Option<String>,
     pub(super) inflight_requests: u64,
+    /// Total system RAM on the local node (v0.66.38+). `0` when detection
+    /// fails on the platform; UI should render as "—" rather than "0 GB".
+    pub(super) system_ram_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) mesh_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -230,6 +233,10 @@ pub(super) struct PeerPayload {
     pub(super) version: Option<String>,
     pub(super) rtt_ms: Option<u32>,
     pub(super) inflight_requests: u64,
+    /// Total system RAM in bytes (v0.66.38+). `0` means the peer is on a
+    /// legacy build that doesn't gossip this field; the desktop / website
+    /// should render it as "—" rather than "0 GB".
+    pub(super) system_ram_bytes: u64,
     pub(super) hostname: Option<String>,
     pub(super) is_soc: Option<bool>,
     pub(super) gpus: Vec<GpuEntry>,
@@ -634,6 +641,7 @@ mod tests {
             version: Some("0.56.0".to_string()),
             rtt_ms: None,
             inflight_requests: 0,
+            system_ram_bytes: 0,
             hostname: None,
             is_soc: None,
             gpus: vec![],
@@ -665,6 +673,7 @@ mod tests {
             version: None,
             rtt_ms: None,
             inflight_requests: 0,
+            system_ram_bytes: 0,
             hostname: None,
             is_soc: None,
             gpus: vec![],
@@ -715,6 +724,7 @@ mod tests {
             launch_pi: None,
             launch_goose: None,
             inflight_requests: 0,
+            system_ram_bytes: 0,
             mesh_id: None,
             mesh_name: None,
             nostr_discovery: false,
@@ -766,6 +776,7 @@ mod tests {
             launch_pi: None,
             launch_goose: None,
             inflight_requests: 0,
+            system_ram_bytes: 0,
             mesh_id: None,
             mesh_name: None,
             nostr_discovery: false,
@@ -824,6 +835,7 @@ mod tests {
             launch_pi: None,
             launch_goose: None,
             inflight_requests: 0,
+            system_ram_bytes: 0,
             mesh_id: None,
             mesh_name: None,
             nostr_discovery: false,
@@ -877,6 +889,7 @@ mod tests {
             launch_pi: None,
             launch_goose: None,
             inflight_requests: 0,
+            system_ram_bytes: 0,
             mesh_id: None,
             mesh_name: None,
             nostr_discovery: false,
@@ -916,6 +929,7 @@ mod tests {
             version: Some("0.60.2".to_string()),
             rtt_ms: Some(12),
             inflight_requests: 0,
+            system_ram_bytes: 0,
             hostname: Some("peer.local".to_string()),
             is_soc: Some(false),
             gpus: vec![],

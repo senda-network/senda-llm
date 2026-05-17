@@ -642,6 +642,7 @@ async fn test_moe_remote_failure_removes_peer_for_faildown() {
         owner_attestation: None,
         owner_summary: crate::crypto::OwnershipSummary::default(),
         inflight_requests: 0,
+        system_ram_bytes: 0,
         capability: crate::mesh::NodeCapability::default(),
     })
     .await;

@@ -17,6 +17,15 @@ pub(crate) enum StuckReason {
         model_bytes: Option<u64>,
         total_peer_fast_bytes: u64,
     },
+    /// Every otherwise-viable host candidate failed the RAM-aware filter
+    /// (predicted host-peak RAM > 0.75 * system_ram_bytes). Surfaced so
+    /// operators can see "your peers have GPUs but not enough RAM to
+    /// hold even the local-share weights" instead of a generic
+    /// `NoHostElected`. Added in v0.66.38 alongside `ram_can_host_model`.
+    NoHostCandidateFitsInRam {
+        model_bytes: u64,
+        peer_count: usize,
+    },
     NoHostElected,
     LlamaServerStartFailed {
         detail: String,
@@ -46,6 +55,13 @@ impl StuckReason {
                     .unwrap_or_else(|| "unknown".to_string()),
                 *total_peer_fast_bytes as f64 / 1e9,
             ),
+            Self::NoHostCandidateFitsInRam {
+                model_bytes,
+                peer_count,
+            } => format!(
+                "`{model}` has been loading too long: none of the {peer_count} candidate peers has enough system RAM to host this model ({:.1} GB). Free RAM on at least one peer or split across more machines.",
+                *model_bytes as f64 / 1e9,
+            ),
             Self::NoHostElected => format!(
                 "`{model}` has been loading too long: no peer has claimed host. Check peer connectivity and host election logs."
             ),
@@ -60,6 +76,7 @@ impl StuckReason {
 pub(crate) struct LoadingPeerSnapshot {
     pub role: NodeRole,
     pub fast_memory_bytes: u64,
+    pub system_ram_bytes: u64,
     pub serving_models: Vec<String>,
     pub hosted_models: Vec<String>,
 }
@@ -69,6 +86,7 @@ impl From<&PeerInfo> for LoadingPeerSnapshot {
         Self {
             role: peer.role.clone(),
             fast_memory_bytes: peer.fast_memory_bytes(),
+            system_ram_bytes: peer.system_ram_bytes,
             serving_models: peer.serving_models.clone(),
             hosted_models: peer.hosted_models.clone(),
         }
@@ -79,6 +97,7 @@ pub(crate) fn diagnose_stuck_loading(
     model: &str,
     model_bytes: Option<u64>,
     local_fast_bytes: u64,
+    local_system_ram_bytes: u64,
     peers: &[LoadingPeerSnapshot],
     llama_start_failure: Option<String>,
 ) -> StuckReason {
@@ -96,11 +115,11 @@ pub(crate) fn diagnose_stuck_loading(
         };
     }
 
-    let total_peer_fast_bytes: u64 = peers
+    let cohort_peers: Vec<&LoadingPeerSnapshot> = peers
         .iter()
         .filter(|p| p.serving_models.iter().any(|m| m == model))
-        .map(|p| p.fast_memory_bytes)
-        .sum();
+        .collect();
+    let total_peer_fast_bytes: u64 = cohort_peers.iter().map(|p| p.fast_memory_bytes).sum();
 
     if let Some(bytes) = model_bytes {
         let needed = (bytes as f64 * 1.1) as u64;
@@ -111,6 +130,34 @@ pub(crate) fn diagnose_stuck_loading(
                 model_bytes: bytes,
                 local_fast_bytes,
                 total_peer_fast_bytes,
+            };
+        }
+        // RAM-aware diagnostic: if every cohort peer (including self) has
+        // VRAM but not enough system RAM to host its predicted share, the
+        // split will OOM the host. Surface that explicitly rather than
+        // falling through to the generic NoHostElected / WaitingForSplit.
+        // Self only contributes if its system_ram is known and gpu vram
+        // is enough to participate.
+        let cohort_size = cohort_peers.len() + 1;
+        let any_peer_fits_ram = cohort_peers
+            .iter()
+            .filter(|p| p.system_ram_bytes > 0)
+            .any(|p| {
+                let predicted =
+                    crate::inference::election::predicted_host_ram_bytes(bytes, cohort_size);
+                predicted <= (p.system_ram_bytes as f64 * 0.75) as u64
+            });
+        let local_fits_ram = local_system_ram_bytes > 0 && {
+            let predicted =
+                crate::inference::election::predicted_host_ram_bytes(bytes, cohort_size);
+            predicted <= (local_system_ram_bytes as f64 * 0.75) as u64
+        };
+        let any_known_ram =
+            local_system_ram_bytes > 0 || cohort_peers.iter().any(|p| p.system_ram_bytes > 0);
+        if any_known_ram && !any_peer_fits_ram && !local_fits_ram {
+            return StuckReason::NoHostCandidateFitsInRam {
+                model_bytes: bytes,
+                peer_count: cohort_peers.len(),
             };
         }
         if needed > local_fast_bytes {
@@ -153,6 +200,7 @@ pub(crate) fn spawn_loading_watchdog(
                 &model_name,
                 crate::inference::election::try_total_model_bytes(&model_path),
                 node.fast_memory_bytes(),
+                node.system_ram_bytes,
                 &peers,
                 None,
             );
@@ -193,9 +241,22 @@ mod tests {
         LoadingPeerSnapshot {
             role,
             fast_memory_bytes: fast_gb * 1024 * 1024 * 1024,
+            system_ram_bytes: 0,
             serving_models: serving.iter().map(|s| s.to_string()).collect(),
             hosted_models: hosted.iter().map(|s| s.to_string()).collect(),
         }
+    }
+
+    fn peer_with_ram(
+        role: NodeRole,
+        fast_gb: u64,
+        ram_gb: u64,
+        serving: &[&str],
+        hosted: &[&str],
+    ) -> LoadingPeerSnapshot {
+        let mut p = peer(role, fast_gb, serving, hosted);
+        p.system_ram_bytes = ram_gb * 1024 * 1024 * 1024;
+        p
     }
 
     #[test]
@@ -204,6 +265,7 @@ mod tests {
             "Qwen3-32B-Q4_K_M",
             Some(20 * 1024 * 1024 * 1024),
             8 * 1024 * 1024 * 1024,
+            0,
             &[],
             None,
         );
@@ -220,6 +282,7 @@ mod tests {
             model,
             Some(20 * 1024 * 1024 * 1024),
             8 * 1024 * 1024 * 1024,
+            0,
             &[peer(NodeRole::Worker, 24, &[model], &[])],
             None,
         );
@@ -232,6 +295,7 @@ mod tests {
             "Qwen3-8B-Q4_K_M",
             Some(5 * 1024 * 1024 * 1024),
             16 * 1024 * 1024 * 1024,
+            0,
             &[],
             None,
         );
@@ -244,6 +308,7 @@ mod tests {
             "Qwen3-8B-Q4_K_M",
             Some(5 * 1024 * 1024 * 1024),
             16 * 1024 * 1024 * 1024,
+            0,
             &[],
             Some("last child exited with code 1".to_string()),
         );
@@ -252,6 +317,60 @@ mod tests {
             StuckReason::LlamaServerStartFailed {
                 detail: "last child exited with code 1".to_string()
             }
+        );
+    }
+
+    /// 20 GB model split across 4 peers ⇒ each peer's local share is 5 GB,
+    /// predicted host RAM commit is `3 GB + 5/2 = 5.5 GB`. With 16 GB Macs
+    /// (12 GB budget) every peer fits — should NOT trip the RAM filter.
+    #[test]
+    fn ram_filter_does_not_trip_when_cohort_can_split_thinly() {
+        let model = "Qwen3-32B-Q4_K_M";
+        let reason = diagnose_stuck_loading(
+            model,
+            Some(20 * 1024 * 1024 * 1024),
+            8 * 1024 * 1024 * 1024,
+            16 * 1024 * 1024 * 1024,
+            &[
+                peer_with_ram(NodeRole::Worker, 8, 16, &[model], &[]),
+                peer_with_ram(NodeRole::Worker, 8, 16, &[model], &[]),
+                peer_with_ram(NodeRole::Worker, 8, 16, &[model], &[]),
+            ],
+            None,
+        );
+        assert!(
+            !matches!(reason, StuckReason::NoHostCandidateFitsInRam { .. }),
+            "20 GB model in a 4-peer cohort with 16 GB Macs should not trip the RAM filter; got {:?}",
+            reason
+        );
+    }
+
+    /// 20 GB model split across 2 peers each with 4 GB RAM ⇒ predicted
+    /// commit `3 GB + 5 GB = 8 GB` per host, budget `4 * 0.75 = 3 GB`. The
+    /// cohort has plenty of VRAM (8 + 24 = 32 GB > 22 GB needed) so the
+    /// "model too large" guard passes — but both peers fail the RAM
+    /// budget and we surface NoHostCandidateFitsInRam.
+    #[test]
+    fn diagnoses_no_host_candidate_fits_in_ram_for_huge_model_on_tiny_ram_peers() {
+        let model = "Qwen3-32B-Q4_K_M";
+        let reason = diagnose_stuck_loading(
+            model,
+            Some(20 * 1024 * 1024 * 1024),
+            8 * 1024 * 1024 * 1024,
+            4 * 1024 * 1024 * 1024,
+            &[peer_with_ram(NodeRole::Worker, 24, 4, &[model], &[])],
+            None,
+        );
+        assert!(
+            matches!(
+                reason,
+                StuckReason::NoHostCandidateFitsInRam {
+                    model_bytes,
+                    peer_count: 1,
+                } if model_bytes == 20 * 1024 * 1024 * 1024
+            ),
+            "got {:?}",
+            reason
         );
     }
 }

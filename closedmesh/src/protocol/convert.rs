@@ -486,6 +486,7 @@ pub(crate) fn local_ann_to_proto_ann(
         first_joined_mesh_ts: ann.first_joined_mesh_ts,
         capability: ann.capability.as_ref().map(|c| c.to_proto()),
         inflight_requests: ann.inflight_requests,
+        system_ram_bytes: ann.system_ram_bytes,
     }
 }
 
@@ -647,6 +648,7 @@ pub(crate) fn proto_ann_to_local(
             .as_ref()
             .map(proto_owner_attestation_to_local),
         inflight_requests: pa.inflight_requests,
+        system_ram_bytes: pa.system_ram_bytes,
         capability: pa
             .capability
             .as_ref()

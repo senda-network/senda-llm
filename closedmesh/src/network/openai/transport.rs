@@ -2564,6 +2564,13 @@ pub async fn route_model_request(
                     attempts,
                     request_outcome_for_status(status_code, service),
                 );
+                // v0.66.38: successful delivery wipes the per-target failure
+                // window so a peer that recovers after one or two transient
+                // timeouts gets a clean slate and is not gradually evicted by
+                // failures spread across hours.
+                if let election::InferenceTarget::Remote(peer_id) = &target {
+                    node.clear_target_failures(*peer_id).await;
+                }
                 tracing::info!(
                     model = model,
                     attempts = attempts,
@@ -2593,12 +2600,16 @@ pub async fn route_model_request(
                         affinity.forget_target(model, prefix_hash, &target);
                     }
                 }
-                // Dense remote host that timed out at request-level is almost
-                // certainly dead. Mirror the MoE path: evict it so election
-                // re-runs against live peers immediately, instead of waiting
-                // for the 60s heartbeat / 180s stale prune to notice.
+                // v0.66.38: instead of unconditionally calling handle_peer_death
+                // (which permanently evicts the peer until gossip rediscovery),
+                // use the per-peer failure window. The peer is only evicted when
+                // it has accumulated TARGET_FAILURE_EVICT_THRESHOLD failures in
+                // TARGET_FAILURE_WINDOW AND removing it wouldn't empty the
+                // cohort. See `Node::record_target_failure`.
                 if let election::InferenceTarget::Remote(peer_id) = &target {
-                    node.handle_peer_death(*peer_id).await;
+                    if node.record_target_failure(*peer_id, Some(model)).await {
+                        node.handle_peer_death(*peer_id).await;
+                    }
                 }
                 if !refreshed {
                     let refresh_node = node.clone();
@@ -2618,12 +2629,11 @@ pub async fn route_model_request(
                         affinity.forget_target(model, prefix_hash, &target);
                     }
                 }
-                // Same rationale as RetryableTimeout above: a dense Remote
-                // returning unavailable means the host claims it can't serve
-                // — boot it from our peer table so election picks someone
-                // live, otherwise we keep proxying to a ghost for minutes.
+                // v0.66.38: same backoff treatment as RetryableTimeout above.
                 if let election::InferenceTarget::Remote(peer_id) = &target {
-                    node.handle_peer_death(*peer_id).await;
+                    if node.record_target_failure(*peer_id, Some(model)).await {
+                        node.handle_peer_death(*peer_id).await;
+                    }
                 }
                 if !refreshed {
                     let refresh_node = node.clone();
@@ -2949,13 +2959,22 @@ pub async fn route_to_target(
                 election::InferenceTarget::None => crate::network::metrics::RequestService::Remote,
             };
             node.record_routed_request(model, 1, request_outcome_for_status(status_code, service));
+            // v0.66.38: wipe per-target failure window on successful delivery.
+            if let Some(moe_host_id) = moe_remote_id {
+                node.clear_target_failures(moe_host_id).await;
+            }
             true
         }
         RouteAttemptResult::RetryableTimeout
         | RouteAttemptResult::RetryableContextOverflow
         | RouteAttemptResult::RetryableUnavailable => {
             if let Some(moe_host_id) = moe_remote_id {
-                node.handle_peer_death(moe_host_id).await;
+                // v0.66.38: gate eviction on per-peer failure window so a
+                // single timeout never permanently blacklists the sole
+                // candidate. See `Node::record_target_failure`.
+                if node.record_target_failure(moe_host_id, model).await {
+                    node.handle_peer_death(moe_host_id).await;
+                }
             }
             node.record_routed_request(
                 model,

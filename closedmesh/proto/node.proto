@@ -45,6 +45,7 @@ message PeerAnnouncement {
   optional uint64 first_joined_mesh_ts = 34;
   optional NodeCapability capability = 35;          // Introduced for capability-aware routing; back-fillable from `hardware` for older peers
   uint64 inflight_requests = 36;                    // Current local API/tunnel requests; used for load-aware host ordering
+  uint64 system_ram_bytes = 37;                     // Total system RAM (sysinfo::System::total_memory). 0 = legacy peer; election treats as unknown.
 }
 
 // NodeCapability is the canonical, normalized advertisement used by the mesh

@@ -508,6 +508,41 @@ fn detect_hostname() -> Option<String> {
     parse_hostname(&String::from_utf8(out.stdout).ok()?)
 }
 
+/// Cross-platform total system RAM (bytes), best-effort.
+///
+/// Returns 0 on platforms we don't recognize or when detection fails. Used
+/// by gossip so peers can advertise `system_ram_bytes` for RAM-aware host
+/// election (v0.66.38+); callers must treat 0 as "unknown" and back-fill
+/// from `fast_memory_bytes()` for legacy peers.
+pub fn detect_system_ram_bytes() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        return read_system_ram_bytes();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let out = std::process::Command::new("sysctl")
+            .args(["-n", "hw.memsize"])
+            .output()
+            .ok();
+        let Some(out) = out else {
+            return 0;
+        };
+        let Ok(s) = String::from_utf8(out.stdout) else {
+            return 0;
+        };
+        return s.trim().parse::<u64>().unwrap_or(0);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        return read_windows_total_ram_bytes().unwrap_or(0);
+    }
+    #[allow(unreachable_code)]
+    {
+        0
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn read_system_ram_bytes() -> u64 {
     (|| -> Option<u64> {

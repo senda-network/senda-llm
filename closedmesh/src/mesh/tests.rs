@@ -38,6 +38,7 @@ async fn make_test_node(role: super::NodeRole) -> Result<Node> {
             seen_plugin_messages: HashMap::new(),
             seen_plugin_message_order: VecDeque::new(),
             policy_rejected_peers: HashMap::new(),
+            target_failures: HashMap::new(),
         })),
         role: Arc::new(Mutex::new(role)),
         models: Arc::new(Mutex::new(Vec::new())),
@@ -58,6 +59,7 @@ async fn make_test_node(role: super::NodeRole) -> Result<Node> {
         )),
         vram_bytes: 64 * 1024 * 1024 * 1024,
         gpu_vram_total_bytes: 64 * 1024 * 1024 * 1024,
+        system_ram_bytes: 64 * 1024 * 1024 * 1024,
         peer_change_tx,
         peer_change_rx,
         inflight_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -720,6 +722,7 @@ fn make_test_peer_info(peer_id: EndpointId) -> PeerInfo {
         owner_attestation: None,
         owner_summary: OwnershipSummary::default(),
         inflight_requests: 0,
+        system_ram_bytes: 0,
         capability: super::NodeCapability::default(),
     }
 }
@@ -1385,6 +1388,7 @@ fn gossip_frame_roundtrip_preserves_scanned_model_metadata() {
         }],
         owner_attestation: None,
         inflight_requests: 0,
+        system_ram_bytes: 0,
         capability: None,
     };
 
@@ -1608,6 +1612,7 @@ fn transitive_peer_update_refreshes_metadata_fields() {
         served_model_runtime: vec![],
         owner_attestation: None,
         inflight_requests: 0,
+        system_ram_bytes: 0,
         capability: None,
     };
 
@@ -1682,6 +1687,7 @@ fn transitive_peer_merge_preserves_richer_direct_address() {
         served_model_runtime: vec![],
         owner_attestation: None,
         inflight_requests: 0,
+        system_ram_bytes: 0,
         capability: None,
     };
 
@@ -1735,6 +1741,7 @@ fn transitive_peer_merge_preserves_richer_direct_address() {
         served_model_runtime: vec![],
         owner_attestation: None,
         inflight_requests: 0,
+        system_ram_bytes: 0,
         capability: None,
     };
     apply_transitive_ann(&mut existing, &richer_addr, &ann2);
@@ -2282,6 +2289,7 @@ fn transitive_peer_update_refreshes_last_mentioned() {
         served_model_runtime: vec![],
         owner_attestation: None,
         inflight_requests: 0,
+        system_ram_bytes: 0,
         capability: None,
     };
 
@@ -2832,6 +2840,111 @@ async fn inflight_guard_decrements_on_drop() -> Result<()> {
     Ok(())
 }
 
+/// First two failures within the window must NOT authorize eviction
+/// (returns `false`); the third one does (returns `true`). Pins the
+/// 3-strikes threshold so a transient timeout cannot single-handedly
+/// blacklist a peer for a 90 s heartbeat round.
+#[tokio::test]
+async fn record_target_failure_only_evicts_after_threshold() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Worker).await?;
+    let model = "Qwen3-32B-Q4_K_M";
+    let target_key = SecretKey::generate();
+    let target_id = EndpointId::from(target_key.public());
+    let other_key = SecretKey::generate();
+    let other_id = EndpointId::from(other_key.public());
+    {
+        let mut target_peer = make_test_peer(target_id, Some(20), 16);
+        target_peer.serving_models = vec![model.to_string()];
+        target_peer.hosted_models = vec![model.to_string()];
+        target_peer.hosted_models_known = true;
+        target_peer.tunnel_port = Some(40000);
+        let mut other_peer = make_test_peer(other_id, Some(21), 16);
+        other_peer.serving_models = vec![model.to_string()];
+        other_peer.hosted_models = vec![model.to_string()];
+        other_peer.hosted_models_known = true;
+        other_peer.tunnel_port = Some(40001);
+        node.insert_test_peer(target_peer).await;
+        node.insert_test_peer(other_peer).await;
+    }
+
+    assert_eq!(
+        node.record_target_failure(target_id, Some(model)).await,
+        false
+    );
+    assert_eq!(
+        node.record_target_failure(target_id, Some(model)).await,
+        false
+    );
+    assert_eq!(
+        node.record_target_failure(target_id, Some(model)).await,
+        true,
+        "third failure within window must authorize eviction"
+    );
+    Ok(())
+}
+
+/// When the failing peer is the SOLE remaining target for a model, even
+/// the third failure must NOT authorize eviction — eviction would empty
+/// the cohort and surface as `503 all 1 target(s) failed` on the next
+/// request. Pins the v0.66.38 sole-target safety net.
+#[tokio::test]
+async fn record_target_failure_never_evicts_sole_target() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Worker).await?;
+    let model = "Qwen3-32B-Q4_K_M";
+    let target_key = SecretKey::generate();
+    let target_id = EndpointId::from(target_key.public());
+    {
+        let mut target_peer = make_test_peer(target_id, Some(20), 16);
+        target_peer.serving_models = vec![model.to_string()];
+        target_peer.hosted_models = vec![model.to_string()];
+        target_peer.hosted_models_known = true;
+        target_peer.tunnel_port = Some(40000);
+        node.insert_test_peer(target_peer).await;
+    }
+    for _ in 0..10 {
+        assert_eq!(
+            node.record_target_failure(target_id, Some(model)).await,
+            false,
+            "sole target must never be evicted even after many failures"
+        );
+    }
+    Ok(())
+}
+
+/// Successful delivery wipes the failure counter so two transient
+/// timeouts followed by a recovery do NOT later combine with another
+/// failure to trip eviction.
+#[tokio::test]
+async fn clear_target_failures_resets_counter() -> Result<()> {
+    let node = make_test_node(super::NodeRole::Worker).await?;
+    let model = "Qwen3-32B-Q4_K_M";
+    let target_key = SecretKey::generate();
+    let target_id = EndpointId::from(target_key.public());
+    let other_key = SecretKey::generate();
+    let other_id = EndpointId::from(other_key.public());
+    {
+        let mut target_peer = make_test_peer(target_id, Some(20), 16);
+        target_peer.serving_models = vec![model.to_string()];
+        target_peer.hosted_models = vec![model.to_string()];
+        target_peer.hosted_models_known = true;
+        target_peer.tunnel_port = Some(40000);
+        let mut other_peer = make_test_peer(other_id, Some(21), 16);
+        other_peer.serving_models = vec![model.to_string()];
+        other_peer.hosted_models = vec![model.to_string()];
+        other_peer.hosted_models_known = true;
+        other_peer.tunnel_port = Some(40001);
+        node.insert_test_peer(target_peer).await;
+        node.insert_test_peer(other_peer).await;
+    }
+
+    node.record_target_failure(target_id, Some(model)).await;
+    node.record_target_failure(target_id, Some(model)).await;
+    assert_eq!(node.target_failure_count(target_id).await, 2);
+    node.clear_target_failures(target_id).await;
+    assert_eq!(node.target_failure_count(target_id).await, 0);
+    Ok(())
+}
+
 /// Verifies that dead-peer cleanup prevents re-admission: after a peer is cleaned
 /// up and added to dead_peers, the HashSet blocks any further connection attempts,
 /// and a subsequent PeerLeaving from the same peer is rejected as forged (peer_id
@@ -3086,6 +3199,7 @@ fn make_test_peer(id: EndpointId, rtt_ms: Option<u32>, vram_gb: u64) -> PeerInfo
         owner_attestation: None,
         owner_summary: OwnershipSummary::default(),
         inflight_requests: 0,
+        system_ram_bytes: 0,
         capability: super::NodeCapability::default(),
     }
 }
@@ -3715,6 +3829,7 @@ async fn make_test_node_with_owner(
             seen_plugin_messages: HashMap::new(),
             seen_plugin_message_order: VecDeque::new(),
             policy_rejected_peers: HashMap::new(),
+            target_failures: HashMap::new(),
         })),
         role: Arc::new(Mutex::new(role)),
         models: Arc::new(Mutex::new(Vec::new())),
@@ -3735,6 +3850,7 @@ async fn make_test_node_with_owner(
         )),
         vram_bytes: 64 * 1024 * 1024 * 1024,
         gpu_vram_total_bytes: 64 * 1024 * 1024 * 1024,
+        system_ram_bytes: 64 * 1024 * 1024 * 1024,
         peer_change_tx,
         peer_change_rx,
         inflight_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),

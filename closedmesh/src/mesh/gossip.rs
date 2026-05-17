@@ -763,6 +763,7 @@ impl Node {
                     served_model_runtime: p.served_model_runtime.clone(),
                     owner_attestation: p.owner_attestation.clone(),
                     inflight_requests: p.inflight_requests,
+                    system_ram_bytes: p.system_ram_bytes,
                     capability: Some(p.capability.clone()),
                 })
                 .collect()
@@ -828,6 +829,7 @@ impl Node {
             served_model_runtime: my_model_runtime_descriptors,
             owner_attestation: my_owner_attestation,
             inflight_requests: self.inflight_requests(),
+            system_ram_bytes: self.system_ram_bytes,
             capability: self.local_node_capability().await,
         });
         announcements
@@ -882,6 +884,7 @@ mod tests {
             served_model_runtime: vec![],
             owner_attestation: None,
             inflight_requests: 0,
+            system_ram_bytes: 0,
             capability: None,
         }
     }
