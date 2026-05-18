@@ -723,6 +723,7 @@ fn make_test_peer_info(peer_id: EndpointId) -> PeerInfo {
         owner_summary: OwnershipSummary::default(),
         inflight_requests: 0,
         system_ram_bytes: 0,
+        model_timings: vec![],
         capability: super::NodeCapability::default(),
     }
 }
@@ -1389,6 +1390,7 @@ fn gossip_frame_roundtrip_preserves_scanned_model_metadata() {
         owner_attestation: None,
         inflight_requests: 0,
         system_ram_bytes: 0,
+        model_timings: vec![],
         capability: None,
     };
 
@@ -1613,6 +1615,7 @@ fn transitive_peer_update_refreshes_metadata_fields() {
         owner_attestation: None,
         inflight_requests: 0,
         system_ram_bytes: 0,
+        model_timings: vec![],
         capability: None,
     };
 
@@ -1688,6 +1691,7 @@ fn transitive_peer_merge_preserves_richer_direct_address() {
         owner_attestation: None,
         inflight_requests: 0,
         system_ram_bytes: 0,
+        model_timings: vec![],
         capability: None,
     };
 
@@ -1742,6 +1746,7 @@ fn transitive_peer_merge_preserves_richer_direct_address() {
         owner_attestation: None,
         inflight_requests: 0,
         system_ram_bytes: 0,
+        model_timings: vec![],
         capability: None,
     };
     apply_transitive_ann(&mut existing, &richer_addr, &ann2);
@@ -2290,6 +2295,7 @@ fn transitive_peer_update_refreshes_last_mentioned() {
         owner_attestation: None,
         inflight_requests: 0,
         system_ram_bytes: 0,
+        model_timings: vec![],
         capability: None,
     };
 
@@ -3200,6 +3206,7 @@ fn make_test_peer(id: EndpointId, rtt_ms: Option<u32>, vram_gb: u64) -> PeerInfo
         owner_summary: OwnershipSummary::default(),
         inflight_requests: 0,
         system_ram_bytes: 0,
+        model_timings: vec![],
         capability: super::NodeCapability::default(),
     }
 }

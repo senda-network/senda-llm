@@ -1535,6 +1535,22 @@ impl MeshApi {
                             &p.capability,
                             p.fast_memory_bytes(),
                         ),
+                    // v0.66.41 Phase 1 marketplace metrics: hydrate
+                    // from the peer's gossiped `model_timings` vec.
+                    // Legacy peers gossip an empty vec and the
+                    // resulting HashMaps stay empty — the API contract
+                    // is "missing key = not yet measured", not
+                    // "missing key = measured zero".
+                    measured_tps_p50_by_model: p
+                        .model_timings
+                        .iter()
+                        .map(|t| (t.model.clone(), t.measured_tps_p50))
+                        .collect(),
+                    measured_ttft_ms_p50_by_model: p
+                        .model_timings
+                        .iter()
+                        .map(|t| (t.model.clone(), t.measured_ttft_ms_p50))
+                        .collect(),
                     first_joined_mesh_ts: p.first_joined_mesh_ts,
                     split_role: split_classification.role,
                     split_group: split_classification.group,
@@ -1683,6 +1699,21 @@ impl MeshApi {
                 .unwrap_or_default(),
             routing_affinity,
             routing_metrics,
+            // v0.66.41 Phase 1 marketplace metrics: snapshot the local
+            // node's per-model TPS / TTFT rolling-1h window. Same
+            // "missing key = not measured" convention as the peer side
+            // above; an empty map means this node hasn't completed any
+            // local inference yet.
+            measured_tps_p50_by_model: node
+                .model_timings_snapshot()
+                .iter()
+                .map(|(model, snap)| (model.clone(), snap.measured_tps_p50))
+                .collect(),
+            measured_ttft_ms_p50_by_model: node
+                .model_timings_snapshot()
+                .iter()
+                .map(|(model, snap)| (model.clone(), snap.measured_ttft_ms_p50))
+                .collect(),
             first_joined_mesh_ts: node.first_joined_mesh_ts().await,
             my_split_role: self_split.role,
             my_split_group: self_split.group,
@@ -2771,6 +2802,7 @@ mod tests {
             first_joined_mesh_ts: None,
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: crate::mesh::NodeCapability::default(),
         }
     }
@@ -3052,6 +3084,7 @@ mod tests {
             owner_summary: crate::crypto::OwnershipSummary::default(),
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: crate::mesh::NodeCapability::default(),
         }
     }

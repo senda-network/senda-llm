@@ -779,6 +779,11 @@ impl Node {
                     owner_attestation: p.owner_attestation.clone(),
                     inflight_requests: p.inflight_requests,
                     system_ram_bytes: p.system_ram_bytes,
+                    // v0.66.41 Phase 1: relay the peer's gossiped model
+                    // timings unchanged. We only re-announce what they
+                    // told us; we never substitute our own measurements
+                    // of their performance (those would be WAN-tainted).
+                    model_timings: p.model_timings.clone(),
                     capability: Some(p.capability.clone()),
                 })
                 .collect()
@@ -845,6 +850,22 @@ impl Node {
             owner_attestation: my_owner_attestation,
             inflight_requests: self.inflight_requests(),
             system_ram_bytes: self.system_ram_bytes,
+            // v0.66.41 Phase 1 marketplace metrics: snapshot the local
+            // node's per-model TPS / TTFT rolling-1h window and ship it
+            // to peers. Empty when this node hasn't served any model
+            // locally yet (or the last sample expired out of the
+            // window), which is the right wire shape — see
+            // `ModelTimingEntry` for why empty != "measured zero".
+            model_timings: self
+                .model_timings_snapshot()
+                .into_iter()
+                .map(|(model, snap)| ModelTimingEntry {
+                    model,
+                    measured_tps_p50: snap.measured_tps_p50,
+                    measured_ttft_ms_p50: snap.measured_ttft_ms_p50,
+                    samples_in_window: snap.samples_in_window,
+                })
+                .collect(),
             capability: self.local_node_capability().await,
         });
         announcements
@@ -900,6 +921,7 @@ mod tests {
             owner_attestation: None,
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: None,
         }
     }

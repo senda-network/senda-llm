@@ -487,6 +487,22 @@ pub(crate) fn local_ann_to_proto_ann(
         capability: ann.capability.as_ref().map(|c| c.to_proto()),
         inflight_requests: ann.inflight_requests,
         system_ram_bytes: ann.system_ram_bytes,
+        // v0.66.41 Phase 1 marketplace metrics — see
+        // `mesh::ModelTimingEntry` for the field semantics. We only
+        // gossip entries the local node has actually measured (i.e.
+        // recent successful local-inference completions), so the wire
+        // payload stays small and a peer with no recent local serving
+        // contributes nothing here.
+        model_timings: ann
+            .model_timings
+            .iter()
+            .map(|t| crate::proto::node::ModelTiming {
+                model: t.model.clone(),
+                measured_tps_p50: t.measured_tps_p50,
+                measured_ttft_ms_p50: t.measured_ttft_ms_p50,
+                samples_in_window: t.samples_in_window,
+            })
+            .collect(),
     }
 }
 
@@ -649,6 +665,20 @@ pub(crate) fn proto_ann_to_local(
             .map(proto_owner_attestation_to_local),
         inflight_requests: pa.inflight_requests,
         system_ram_bytes: pa.system_ram_bytes,
+        // v0.66.41 Phase 1 marketplace metrics. Legacy peers (<= v0.66.40)
+        // don't populate this; the empty vec is the right default since
+        // every consumer treats "no entry for model X" as "not measured"
+        // rather than "measured zero".
+        model_timings: pa
+            .model_timings
+            .iter()
+            .map(|t| crate::mesh::ModelTimingEntry {
+                model: t.model.clone(),
+                measured_tps_p50: t.measured_tps_p50,
+                measured_ttft_ms_p50: t.measured_ttft_ms_p50,
+                samples_in_window: t.samples_in_window,
+            })
+            .collect(),
         capability: pa
             .capability
             .as_ref()

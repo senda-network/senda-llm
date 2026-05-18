@@ -718,10 +718,30 @@ pub(crate) struct PeerAnnouncement {
     /// `fast_memory_bytes()` (matches the v0.66.37 behavior so older peers
     /// are not silently filtered out).
     pub(crate) system_ram_bytes: u64,
+    /// v0.66.41 Phase 1 marketplace metrics: per-model TPS p50 and TTFT p50
+    /// for every model this peer has actually served locally in the last hour.
+    /// Empty for legacy peers and for peers with no recent local serving.
+    /// Surfaced on `/api/status` and rendered as the per-model Catalog row
+    /// on closedmesh.com/status.
+    pub(crate) model_timings: Vec<ModelTimingEntry>,
     /// Normalized capability advertisement used for capability-aware routing.
     /// Older peers that don't set this get back-filled from `gpu_*` / `hardware`
     /// when they're upgraded to a `PeerInfo`.
     pub(crate) capability: Option<NodeCapability>,
+}
+
+/// v0.66.41 Phase 1: per-model serving timing summary carried on
+/// `PeerAnnouncement` / `PeerInfo`. The fields mirror
+/// `network::metrics::ModelTimingSnapshot` exactly; this struct exists
+/// separately so the mesh layer doesn't take a dependency on the
+/// metrics module's `Serialize` derive and so the gossip wire shape
+/// is locally inspectable from the mesh module.
+#[derive(Debug, Clone)]
+pub struct ModelTimingEntry {
+    pub model: String,
+    pub measured_tps_p50: f64,
+    pub measured_ttft_ms_p50: u64,
+    pub samples_in_window: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -786,6 +806,12 @@ pub struct PeerInfo {
     /// gossip this field; RAM-aware election back-fills with `fast_memory_bytes()`
     /// so older peers are not silently filtered out.
     pub system_ram_bytes: u64,
+    /// v0.66.41 Phase 1 marketplace metrics: per-model TPS p50 and TTFT p50
+    /// over a rolling 1h window of local-inference completions on this peer.
+    /// Empty for pre-v0.66.41 peers and for peers with no recent local
+    /// serving. Surfaced on `/api/status` and rendered as the per-model
+    /// Catalog row on closedmesh.com/status.
+    pub model_timings: Vec<ModelTimingEntry>,
     /// Normalized capability for routing. Always populated — back-filled from
     /// the legacy GPU fields when the announcement didn't include it.
     pub capability: NodeCapability,
@@ -907,6 +933,7 @@ impl PeerInfo {
             owner_summary,
             inflight_requests: ann.inflight_requests,
             system_ram_bytes: ann.system_ram_bytes,
+            model_timings: ann.model_timings.clone(),
             capability: ann.capability.clone().unwrap_or_else(|| {
                 capability::backfill_from_legacy(
                     ann.gpu_name.as_deref(),
@@ -1618,6 +1645,35 @@ impl Node {
     ) {
         self.routing_metrics
             .record_request(model, attempts, outcome);
+    }
+
+    /// v0.66.41 Phase 1 marketplace metrics: feed a per-model TPS / TTFT
+    /// sample into the rolling 1h window held by `RoutingMetrics`.
+    /// Called from `route_local_attempt` on every successful local
+    /// inference completion (2xx status + non-zero `completion_tokens`).
+    /// Non-local routes never call this — those peers publish their own
+    /// measurements via gossip and we mustn't pollute their numbers with
+    /// our perception of their performance over the WAN.
+    pub fn record_local_inference_completion(
+        &self,
+        model: Option<&str>,
+        ttft: std::time::Duration,
+        decode_duration: std::time::Duration,
+        completion_tokens: u64,
+    ) {
+        self.routing_metrics
+            .record_completion(model, ttft, decode_duration, completion_tokens);
+    }
+
+    /// v0.66.41 Phase 1: per-model `ModelTimingSnapshot` for every model
+    /// with at least one sample in the rolling 1h window. Surfaced on
+    /// `/api/status` as `measured_tps_p50_by_model` /
+    /// `measured_ttft_ms_p50_by_model`, and propagated to peers via the
+    /// `ModelTiming` repeated field on `PeerAnnouncement`.
+    pub fn model_timings_snapshot(
+        &self,
+    ) -> HashMap<String, crate::network::metrics::ModelTimingSnapshot> {
+        self.routing_metrics.model_timings_snapshot()
     }
 
     pub fn routing_metrics_snapshot(

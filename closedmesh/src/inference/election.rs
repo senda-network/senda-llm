@@ -4382,6 +4382,7 @@ mod tests {
             owner_summary: crate::crypto::OwnershipSummary::default(),
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: crate::mesh::NodeCapability::default(),
         }
     }

@@ -178,6 +178,18 @@ pub(super) struct StatusPayload {
     /// Local-only routing outcome and current-node pressure snapshot measured on
     /// this node only; not mesh-wide aggregates.
     pub(super) routing_metrics: metrics::RoutingMetricsStatusSnapshot,
+    /// v0.66.41 Phase 1 marketplace metrics: per-model median tokens/sec
+    /// over the last hour of successful local-inference completions on
+    /// this node. Empty when nothing has been served locally yet — UI
+    /// should treat missing keys as "not yet measured", not "measured 0".
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(super) measured_tps_p50_by_model: std::collections::HashMap<String, f64>,
+    /// v0.66.41 Phase 1 marketplace metrics: per-model median time-to-first-token
+    /// (milliseconds) over the last hour of successful local-inference
+    /// completions on this node. Same "missing = not measured" semantics
+    /// as `measured_tps_p50_by_model`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(super) measured_ttft_ms_p50_by_model: std::collections::HashMap<String, u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) first_joined_mesh_ts: Option<u64>,
     /// This node's current split-role classification, mirroring the same
@@ -241,6 +253,18 @@ pub(super) struct PeerPayload {
     pub(super) is_soc: Option<bool>,
     pub(super) gpus: Vec<GpuEntry>,
     pub(super) capability: NodeCapabilityPayload,
+    /// v0.66.41 Phase 1 marketplace metrics: per-model median tokens/sec
+    /// gossiped by this peer over the last hour of its successful
+    /// local-inference completions. Empty for legacy peers (<= v0.66.40)
+    /// and for peers with no recent local serving — UI treats missing
+    /// keys as "not yet measured", not "measured 0".
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(super) measured_tps_p50_by_model: std::collections::HashMap<String, f64>,
+    /// v0.66.41 Phase 1 marketplace metrics: per-model median time-to-first-token
+    /// (milliseconds) gossiped by this peer. Same semantics as
+    /// `measured_tps_p50_by_model`.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(super) measured_ttft_ms_p50_by_model: std::collections::HashMap<String, u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) first_joined_mesh_ts: Option<u64>,
     /// Coarse classification of how this peer is currently participating in
@@ -646,6 +670,8 @@ mod tests {
             is_soc: None,
             gpus: vec![],
             capability: NodeCapabilityPayload::default(),
+            measured_tps_p50_by_model: std::collections::HashMap::new(),
+            measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             split_role: None,
             split_group: None,
@@ -678,6 +704,8 @@ mod tests {
             is_soc: None,
             gpus: vec![],
             capability: NodeCapabilityPayload::default(),
+            measured_tps_p50_by_model: std::collections::HashMap::new(),
+            measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             split_role: None,
             split_group: None,
@@ -735,6 +763,8 @@ mod tests {
             capability: NodeCapabilityPayload::default(),
             routing_affinity: affinity::AffinityStatsSnapshot::default(),
             routing_metrics: metrics::RoutingMetricsStatusSnapshot::default(),
+            measured_tps_p50_by_model: std::collections::HashMap::new(),
+            measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             my_split_role: None,
             my_split_group: None,
@@ -787,6 +817,8 @@ mod tests {
             capability: NodeCapabilityPayload::default(),
             routing_affinity: affinity::AffinityStatsSnapshot::default(),
             routing_metrics: metrics::RoutingMetricsStatusSnapshot::default(),
+            measured_tps_p50_by_model: std::collections::HashMap::new(),
+            measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             my_split_role: None,
             my_split_group: None,
@@ -846,6 +878,8 @@ mod tests {
             capability: NodeCapabilityPayload::default(),
             routing_affinity: affinity::AffinityStatsSnapshot::default(),
             routing_metrics: metrics::RoutingMetricsStatusSnapshot::default(),
+            measured_tps_p50_by_model: std::collections::HashMap::new(),
+            measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             my_split_role: None,
             my_split_group: None,
@@ -900,6 +934,8 @@ mod tests {
             capability: NodeCapabilityPayload::default(),
             routing_affinity: affinity::AffinityStatsSnapshot::default(),
             routing_metrics: metrics::RoutingMetricsStatusSnapshot::default(),
+            measured_tps_p50_by_model: std::collections::HashMap::new(),
+            measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             my_split_role: None,
             my_split_group: None,
@@ -934,6 +970,8 @@ mod tests {
             is_soc: Some(false),
             gpus: vec![],
             capability: NodeCapabilityPayload::default(),
+            measured_tps_p50_by_model: std::collections::HashMap::new(),
+            measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             split_role: None,
             split_group: None,
@@ -943,6 +981,97 @@ mod tests {
         let json = serde_json::to_string(&peer).expect("serialization failed");
         assert!(json.contains("\"role\":\"Host\""));
         assert!(json.contains("\"state\":\"serving\""));
+    }
+
+    /// v0.66.41 Phase 1: empty per-model timing maps must be SKIPPED in
+    /// the JSON, not emitted as `"measured_tps_p50_by_model": {}`. The
+    /// frontend Catalog view interprets a present-but-empty map the
+    /// same as a populated one ("we measured zero throughput"), so the
+    /// missing-entirely path is the only way to communicate "this peer
+    /// has no measurements yet".
+    #[test]
+    fn peer_payload_omits_empty_model_timing_maps() {
+        let peer = PeerPayload {
+            id: "test-id".to_string(),
+            owner: test_owner_payload(),
+            role: "Host".to_string(),
+            state: NodeState::Serving,
+            models: vec![],
+            available_models: vec![],
+            requested_models: vec![],
+            vram_gb: 8.0,
+            serving_models: vec![],
+            hosted_models: vec![],
+            hosted_models_known: true,
+            version: None,
+            rtt_ms: None,
+            inflight_requests: 0,
+            system_ram_bytes: 0,
+            hostname: None,
+            is_soc: None,
+            gpus: vec![],
+            capability: NodeCapabilityPayload::default(),
+            measured_tps_p50_by_model: std::collections::HashMap::new(),
+            measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
+            first_joined_mesh_ts: None,
+            split_role: None,
+            split_group: None,
+            moe_shard: None,
+        };
+
+        let json = serde_json::to_string(&peer).expect("serialization failed");
+        assert!(
+            !json.contains("measured_tps_p50_by_model"),
+            "empty timing map must be omitted from JSON; got {json}"
+        );
+        assert!(
+            !json.contains("measured_ttft_ms_p50_by_model"),
+            "empty TTFT map must be omitted from JSON; got {json}"
+        );
+    }
+
+    /// Populated per-model timing maps must serialize as JSON objects so
+    /// the frontend Catalog view can render per-model rows.
+    #[test]
+    fn peer_payload_emits_populated_model_timings() {
+        let mut tps = std::collections::HashMap::new();
+        tps.insert("Qwen3-32B-Q4_K_M".to_string(), 14.5);
+        let mut ttft = std::collections::HashMap::new();
+        ttft.insert("Qwen3-32B-Q4_K_M".to_string(), 320u64);
+        let peer = PeerPayload {
+            id: "test-id".to_string(),
+            owner: test_owner_payload(),
+            role: "Host".to_string(),
+            state: NodeState::Serving,
+            models: vec![],
+            available_models: vec![],
+            requested_models: vec![],
+            vram_gb: 8.0,
+            serving_models: vec![],
+            hosted_models: vec![],
+            hosted_models_known: true,
+            version: None,
+            rtt_ms: None,
+            inflight_requests: 0,
+            system_ram_bytes: 0,
+            hostname: None,
+            is_soc: None,
+            gpus: vec![],
+            capability: NodeCapabilityPayload::default(),
+            measured_tps_p50_by_model: tps,
+            measured_ttft_ms_p50_by_model: ttft,
+            first_joined_mesh_ts: None,
+            split_role: None,
+            split_group: None,
+            moe_shard: None,
+        };
+
+        let json = serde_json::to_value(&peer).expect("serialization failed");
+        assert_eq!(json["measured_tps_p50_by_model"]["Qwen3-32B-Q4_K_M"], 14.5);
+        assert_eq!(
+            json["measured_ttft_ms_p50_by_model"]["Qwen3-32B-Q4_K_M"],
+            320
+        );
     }
 
     #[test]

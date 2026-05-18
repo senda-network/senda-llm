@@ -1534,11 +1534,22 @@ async fn route_local_attempt(
     prefetched: &[u8],
     retry_context_overflow: bool,
     response_adapter: ResponseAdapter,
+    // v0.66.41 Phase 1 marketplace metrics: model name plumbed in
+    // so we can attribute the per-model TTFT / TPS sample we record
+    // on the local-inference success path. `None` skips the recording.
+    model: Option<&str>,
 ) -> RouteAttemptResult {
     match TcpStream::connect(format!("127.0.0.1:{port}")).await {
         Ok(mut upstream) => {
             let _inflight = node.begin_inflight_request();
             let _ = upstream.set_nodelay(true);
+            // v0.66.41 Phase 1: TTFT measurement starts at the moment
+            // the upstream connection is established (and `prefetched`
+            // is about to be written). This intentionally excludes the
+            // TCP-connect time so the published number is what users
+            // experience for the second and subsequent requests on a
+            // warm llama-server, not the cold-connect outlier.
+            let request_committed_at = std::time::Instant::now();
             if let Err(err) = upstream.write_all(prefetched).await {
                 tracing::warn!(
                     "API proxy: failed to forward buffered request to local backend proxy on {port}: {err}"
@@ -1548,6 +1559,8 @@ async fn route_local_attempt(
             match probe_http_response_local(&mut upstream).await {
                 Ok(probe) => {
                     let status_code = probe.status_code;
+                    let first_byte_at = std::time::Instant::now();
+                    let ttft = first_byte_at.duration_since(request_committed_at);
                     match relay_probed_response(
                         tcp_stream,
                         &mut upstream,
@@ -1557,7 +1570,34 @@ async fn route_local_attempt(
                     )
                     .await
                     {
-                        Ok(result) => result,
+                        Ok(result) => {
+                            // v0.66.41 Phase 1: record the per-model
+                            // TPS / TTFT sample for the rolling-1h
+                            // window that gets gossiped to peers and
+                            // surfaced as the Catalog metrics on
+                            // `closedmesh.com/status`. We only record
+                            // on success with non-zero `completion_tokens`;
+                            // failures and zero-token responses (rejects,
+                            // empty bodies) are deliberately excluded to
+                            // avoid skewing the median with non-decode
+                            // outcomes.
+                            if let RouteAttemptResult::Delivered {
+                                status_code: code,
+                                completion_tokens: Some(tokens),
+                            } = result
+                            {
+                                if (200..300).contains(&code) && tokens > 0 {
+                                    let decode_duration = first_byte_at.elapsed();
+                                    node.record_local_inference_completion(
+                                        model,
+                                        ttft,
+                                        decode_duration,
+                                        tokens,
+                                    );
+                                }
+                            }
+                            result
+                        }
                         Err(err) => {
                             if is_client_disconnect_error(&err) {
                                 let _ = upstream.shutdown().await;
@@ -2306,6 +2346,11 @@ async fn route_attempt_for_target(
     prefetched: &[u8],
     retry_context_overflow: bool,
     response_adapter: ResponseAdapter,
+    // v0.66.41 Phase 1: forwarded to `route_local_attempt` so it can
+    // record per-model TPS / TTFT for local-inference completions.
+    // Remote/Endpoint targets ignore this — those peers publish their
+    // own measurements via the gossip pipeline.
+    model: Option<&str>,
 ) -> RouteAttemptResult {
     match target {
         election::InferenceTarget::Local(port) | election::InferenceTarget::MoeLocal(port) => {
@@ -2316,6 +2361,7 @@ async fn route_attempt_for_target(
                 prefetched,
                 retry_context_overflow,
                 response_adapter,
+                model,
             )
             .await
         }
@@ -2484,6 +2530,7 @@ pub async fn route_model_request(
             &request.raw,
             retry_context_overflow,
             request.response_adapter,
+            Some(model),
         )
         .await;
         let queue_wait = attempt_started.duration_since(route_started);
@@ -2736,6 +2783,7 @@ pub async fn route_moe_request(
             prefetched,
             retry_context_overflow,
             ResponseAdapter::None,
+            Some(model),
         )
         .await;
         let queue_wait = attempt_started.duration_since(route_started);
@@ -2906,6 +2954,7 @@ pub async fn route_to_target(
         prefetched,
         false,
         response_adapter,
+        model,
     )
     .await;
     node.record_inference_attempt(

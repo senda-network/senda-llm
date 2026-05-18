@@ -46,6 +46,21 @@ message PeerAnnouncement {
   optional NodeCapability capability = 35;          // Introduced for capability-aware routing; back-fillable from `hardware` for older peers
   uint64 inflight_requests = 36;                    // Current local API/tunnel requests; used for load-aware host ordering
   uint64 system_ram_bytes = 37;                     // Total system RAM (sysinfo::System::total_memory). 0 = legacy peer; election treats as unknown.
+  repeated ModelTiming model_timings = 38;          // v0.66.41 Phase 1 marketplace metrics: per-model TPS p50 and TTFT p50 over a rolling 1h window of local-inference completions. Empty for legacy peers and for peers with no recent local serving.
+}
+
+// v0.66.41 Phase 1 marketplace metrics. Each entry summarises a single
+// model's serving performance on the announcing peer over the last hour:
+// median tokens-per-second and median time-to-first-token. Peers only
+// publish models they have actually served locally with a non-zero token
+// response, so the absence of an entry means "not yet measured", not
+// "measured zero". Surfaced on `/api/status` and rendered as the per-model
+// row on closedmesh.com/status.
+message ModelTiming {
+  string model = 1;
+  double measured_tps_p50 = 2;       // Tokens per second, decode-only.
+  uint64 measured_ttft_ms_p50 = 3;   // Milliseconds from request commit to first response byte.
+  uint64 samples_in_window = 4;      // Number of completions that contributed to the p50s. Used by the UI to qualify low-confidence rows.
 }
 
 // NodeCapability is the canonical, normalized advertisement used by the mesh

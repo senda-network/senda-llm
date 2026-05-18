@@ -3,7 +3,7 @@
 
 use serde::Serialize;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -14,6 +14,19 @@ const MAX_TRACKED_MODELS: usize = 128;
 const MAX_TARGETS_PER_MODEL: usize = 16;
 const DEFAULT_MODEL_SHARDS: usize = 32;
 const THROUGHPUT_SCALE_MILLI: u64 = 1000;
+
+/// Rolling window for per-model TPS / TTFT samples surfaced as the Phase 1
+/// marketplace metrics (`measured_tps_p50_by_model` / `measured_ttft_ms_p50_by_model`
+/// on `/api/status`). Held at 1h to match the strategy doc's commitment of
+/// "median TTFT over last hour"; the corresponding decay window for TPS is
+/// the same since both signals describe the same model's serving behaviour.
+const MODEL_TIMING_WINDOW: Duration = Duration::from_secs(60 * 60);
+/// Cap on samples retained per model. 512 is comfortably enough for a stable
+/// p50 estimate and bounds memory at ~16 KB/model worst case across the
+/// 128 tracked models. Samples are dropped FIFO when the cap is reached
+/// regardless of age, so the cap protects against pathological "10 req/s
+/// for an hour" patterns; the time window prunes idle-then-burst cases.
+const MAX_TIMING_SAMPLES_PER_MODEL: usize = 512;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum MetricLayer {
@@ -49,7 +62,7 @@ pub(crate) struct MetricGroupMetadata {
     pub(crate) description: &'static str,
 }
 
-pub(crate) const ROUTING_METRIC_GROUPS: [MetricGroupMetadata; 5] = [
+pub(crate) const ROUTING_METRIC_GROUPS: [MetricGroupMetadata; 6] = [
     MetricGroupMetadata {
         name: "routing_metrics",
         layer: MetricLayer::Information,
@@ -84,6 +97,14 @@ pub(crate) const ROUTING_METRIC_GROUPS: [MetricGroupMetadata; 5] = [
         scope: MetricScope::LocalOnly,
         api_surface: "/api/models",
         description: "Per-target routing outcome memory observed on the current node.",
+    },
+    MetricGroupMetadata {
+        name: "model_timings",
+        layer: MetricLayer::Strategy,
+        scope: MetricScope::PeerAdvertised,
+        api_surface: "/api/status",
+        description: "Per-model measured TPS p50 and TTFT p50 (rolling 1h window) gossiped \
+            to peers and surfaced as the Phase 1 marketplace metrics.",
     },
 ];
 
@@ -180,6 +201,33 @@ pub struct RoutingPressureSnapshot {
     pub local_service_share: f64,
     pub remote_service_share: f64,
     pub endpoint_service_share: f64,
+}
+
+/// Per-model measured TPS p50 and TTFT p50 over a rolling 1h window.
+///
+/// Surfaced on `/api/status` as `measured_tps_p50_by_model` and
+/// `measured_ttft_ms_p50_by_model`, gossiped to peers via the new
+/// `ModelTiming` repeated field on `PeerAnnouncement`, and rendered as
+/// the per-model Catalog row on `closedmesh.com/status` (Phase 1 of the
+/// strategy doc).
+///
+/// `samples_in_window` is intentionally exposed so consumers can decide
+/// whether the p50 is meaningful — under ~5 samples we let the UI render
+/// the row but tag it as "low confidence" rather than hiding it.
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+pub struct ModelTimingSnapshot {
+    /// Median tokens-per-second across all successful local-inference
+    /// requests for this model in the last hour. 0.0 when no samples
+    /// are present (callers should treat that as "not yet measured"
+    /// rather than "zero throughput").
+    pub measured_tps_p50: f64,
+    /// Median time-to-first-token (milliseconds) across all successful
+    /// local-inference requests for this model in the last hour. 0
+    /// when no samples are present.
+    pub measured_ttft_ms_p50: u64,
+    /// Number of samples that contributed to the p50s above. Used by
+    /// the UI to qualify low-confidence rows.
+    pub samples_in_window: u64,
 }
 
 /// Local-only per-model routing outcome summary exposed on `/api/models`.
@@ -376,6 +424,39 @@ impl RoutingMetrics {
         }
     }
 
+    /// Append a (TTFT, decode-duration, completion-tokens) sample to the
+    /// per-model rolling window used by `model_timings_snapshot`. The caller
+    /// is responsible for only invoking this on **local-inference** success
+    /// paths (i.e. when this node actually served the request itself) —
+    /// non-local routes are measurements of OTHER peers' performance and
+    /// those peers publish their own snapshots via gossip.
+    ///
+    /// `ttft` is from "request received by local llama-server" to "first
+    /// body byte returned"; `decode_duration` is from "first body byte" to
+    /// "response complete" and is the denominator for tokens-per-second.
+    /// `completion_tokens` comes from the OpenAI `usage.completion_tokens`
+    /// field in the response body.
+    pub fn record_completion(
+        &self,
+        model: Option<&str>,
+        ttft: Duration,
+        decode_duration: Duration,
+        completion_tokens: u64,
+    ) {
+        let Some(model) = normalized_model_name(model) else {
+            return;
+        };
+        let now = Instant::now();
+        let shard_index = self.shard_index(model);
+        let mut shard = self.shards[shard_index].lock().unwrap();
+        let inserted = !shard.models.contains_key(model);
+        if inserted && shard.models.len() >= self.config.max_models_per_shard {
+            shard.compact(now, &self.config);
+        }
+        let metrics = shard.models.entry(model.to_string()).or_default();
+        metrics.record_completion(now, ttft, decode_duration, completion_tokens);
+    }
+
     pub fn status_snapshot(&self, current_inflight_requests: u64) -> RoutingMetricsStatusSnapshot {
         self.globals.status_snapshot(current_inflight_requests)
     }
@@ -396,6 +477,25 @@ impl RoutingMetrics {
         snapshots
     }
 
+    /// Per-model `ModelTimingSnapshot` map for every model with at least
+    /// one timing sample in the 1h rolling window. Models with no samples
+    /// are omitted so consumers can distinguish "not yet measured" from
+    /// "measured zero", and so the gossip payload doesn't redundantly
+    /// announce empty entries for every catalog model.
+    pub fn model_timings_snapshot(&self) -> HashMap<String, ModelTimingSnapshot> {
+        let now = Instant::now();
+        let mut snapshots = HashMap::new();
+        for shard in self.shards.iter() {
+            let mut shard = shard.lock().unwrap();
+            for (name, metrics) in shard.models.iter_mut() {
+                if let Some(snap) = metrics.timing_snapshot(now) {
+                    snapshots.insert(name.clone(), snap);
+                }
+            }
+        }
+        snapshots
+    }
+
     fn shard_index(&self, model: &str) -> usize {
         let mut hasher = DefaultHasher::new();
         model.hash(&mut hasher);
@@ -408,6 +508,26 @@ impl RoutingMetrics {
         let mut shard = self.shards[shard_index].lock().unwrap();
         if let Some(metrics) = shard.models.get_mut(model) {
             metrics.last_updated = Instant::now() - age;
+        }
+    }
+
+    /// Test-only: age every timing sample for `model` by `age`. Used by
+    /// the rolling-window pruning test in this module to avoid waiting
+    /// real time. Production callers cannot reach this — the cfg(test)
+    /// gate keeps the only mutation path that pre-dates `Instant::now()`
+    /// out of the released runtime.
+    #[cfg(test)]
+    fn age_timing_samples_for_test(&self, model: &str, age: Duration) {
+        let shard_index = self.shard_index(model);
+        let mut shard = self.shards[shard_index].lock().unwrap();
+        if let Some(metrics) = shard.models.get_mut(model) {
+            let earlier = Instant::now().checked_sub(age).unwrap_or_else(Instant::now);
+            for sample in metrics.timing_tps_milli_samples.iter_mut() {
+                sample.0 = earlier;
+            }
+            for sample in metrics.timing_ttft_ms_samples.iter_mut() {
+                sample.0 = earlier;
+            }
         }
     }
 }
@@ -730,6 +850,14 @@ struct ModelMetrics {
     throughput_tps_milli_sum: u64,
     throughput_samples: u64,
     targets: HashMap<TargetKey, TargetMetrics>,
+    /// Rolling per-request decode throughput samples (tokens-per-second
+    /// scaled by `THROUGHPUT_SCALE_MILLI`). Pruned to `MODEL_TIMING_WINDOW`
+    /// on every insert + snapshot. See `ModelTimingSnapshot` for the
+    /// public surface this feeds.
+    timing_tps_milli_samples: VecDeque<(Instant, u64)>,
+    /// Rolling per-request time-to-first-token samples (milliseconds).
+    /// Same pruning policy as `timing_tps_milli_samples`.
+    timing_ttft_ms_samples: VecDeque<(Instant, u64)>,
 }
 
 impl Default for ModelMetrics {
@@ -751,6 +879,8 @@ impl Default for ModelMetrics {
             throughput_tps_milli_sum: 0,
             throughput_samples: 0,
             targets: HashMap::new(),
+            timing_tps_milli_samples: VecDeque::new(),
+            timing_ttft_ms_samples: VecDeque::new(),
         }
     }
 }
@@ -806,6 +936,70 @@ impl ModelMetrics {
         if matches!(outcome, RequestOutcome::Success(_)) {
             self.successful_requests += 1;
         }
+    }
+
+    /// Append a new (TPS, TTFT) sample for this model. Called from the
+    /// transport layer on every successful local-inference completion;
+    /// non-local routes don't call this because the other peers
+    /// publish their own measurements via gossip. Prunes the rolling
+    /// window before insertion so the structure self-bounds even
+    /// under sustained traffic.
+    fn record_completion(
+        &mut self,
+        now: Instant,
+        ttft: Duration,
+        decode_duration: Duration,
+        completion_tokens: u64,
+    ) {
+        self.last_updated = now;
+        self.prune_timing_samples(now);
+        if let Some(tps_milli) = tokens_per_second_milli(completion_tokens, decode_duration) {
+            self.timing_tps_milli_samples.push_back((now, tps_milli));
+            while self.timing_tps_milli_samples.len() > MAX_TIMING_SAMPLES_PER_MODEL {
+                self.timing_tps_milli_samples.pop_front();
+            }
+        }
+        let ttft_ms = duration_millis(ttft);
+        self.timing_ttft_ms_samples.push_back((now, ttft_ms));
+        while self.timing_ttft_ms_samples.len() > MAX_TIMING_SAMPLES_PER_MODEL {
+            self.timing_ttft_ms_samples.pop_front();
+        }
+    }
+
+    fn prune_timing_samples(&mut self, now: Instant) {
+        while let Some(&(ts, _)) = self.timing_tps_milli_samples.front() {
+            if now.duration_since(ts) > MODEL_TIMING_WINDOW {
+                self.timing_tps_milli_samples.pop_front();
+            } else {
+                break;
+            }
+        }
+        while let Some(&(ts, _)) = self.timing_ttft_ms_samples.front() {
+            if now.duration_since(ts) > MODEL_TIMING_WINDOW {
+                self.timing_ttft_ms_samples.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    fn timing_snapshot(&mut self, now: Instant) -> Option<ModelTimingSnapshot> {
+        self.prune_timing_samples(now);
+        if self.timing_ttft_ms_samples.is_empty() && self.timing_tps_milli_samples.is_empty() {
+            return None;
+        }
+        let tps_p50_milli = percentile_50(self.timing_tps_milli_samples.iter().map(|(_, v)| *v));
+        let ttft_ms_p50 = percentile_50(self.timing_ttft_ms_samples.iter().map(|(_, v)| *v));
+        Some(ModelTimingSnapshot {
+            measured_tps_p50: tps_p50_milli
+                .map(|v| v as f64 / THROUGHPUT_SCALE_MILLI as f64)
+                .unwrap_or(0.0),
+            measured_ttft_ms_p50: ttft_ms_p50.unwrap_or(0),
+            samples_in_window: self
+                .timing_tps_milli_samples
+                .len()
+                .max(self.timing_ttft_ms_samples.len()) as u64,
+        })
     }
 
     fn compact_targets(&mut self, now: Instant, config: &MetricsConfig) {
@@ -1026,6 +1220,31 @@ fn tokens_per_second_milli(tokens: u64, elapsed: Duration) -> Option<u64> {
     }
 }
 
+/// Median over a stream of u64 samples. Returns `None` when the stream is
+/// empty. We clone into a Vec rather than maintain a sorted structure
+/// because the sample count is bounded by `MAX_TIMING_SAMPLES_PER_MODEL`
+/// (currently 512) and `model_timings_snapshot` only runs on the
+/// `/api/status` request path, not the inference hot path. For a 512-element
+/// sort the cost is negligible compared to the JSON serialization that
+/// follows.
+fn percentile_50<I: IntoIterator<Item = u64>>(samples: I) -> Option<u64> {
+    let mut values: Vec<u64> = samples.into_iter().collect();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    let mid = values.len() / 2;
+    if values.len() % 2 == 1 {
+        Some(values[mid])
+    } else {
+        // Even-length: average the two middle values, rounded down.
+        // `saturating_add` guards against the (degenerate) case of two
+        // u64::MAX samples; for TPS_MILLI and TTFT_MS this is unreachable
+        // in practice but cheaper than an extra branch on the hot path.
+        Some(values[mid - 1].saturating_add(values[mid]) / 2)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1044,6 +1263,7 @@ mod tests {
             vec![
                 "mesh_models[].routing_metrics",
                 "mesh_models[].routing_metrics.targets[]",
+                "model_timings",
                 "routing_metrics",
                 "routing_metrics.local_node",
                 "routing_metrics.pressure",
@@ -1063,9 +1283,20 @@ mod tests {
             group.scope,
             MetricScope::LocalOnly | MetricScope::PeerAdvertised | MetricScope::MeshDerived
         )));
-        assert!(ROUTING_METRIC_GROUPS
+        // `model_timings` is the only PeerAdvertised group (it ships
+        // over gossip so every peer can see other peers' measurements);
+        // everything else is LocalOnly. Asserting the partition keeps
+        // future additions honest about their scope.
+        let local_only_count = ROUTING_METRIC_GROUPS
             .iter()
-            .all(|group| group.scope == MetricScope::LocalOnly));
+            .filter(|g| g.scope == MetricScope::LocalOnly)
+            .count();
+        let peer_advertised_count = ROUTING_METRIC_GROUPS
+            .iter()
+            .filter(|g| g.scope == MetricScope::PeerAdvertised)
+            .count();
+        assert_eq!(local_only_count, 5);
+        assert_eq!(peer_advertised_count, 1);
     }
 
     #[test]
@@ -1252,6 +1483,119 @@ mod tests {
 
         let status = metrics.status_snapshot(0);
         assert_eq!(status.local_node.peak_inflight_requests, 5);
+    }
+
+    #[test]
+    fn percentile_50_handles_empty_odd_and_even() {
+        assert_eq!(percentile_50(std::iter::empty()), None);
+        assert_eq!(percentile_50(vec![5u64]), Some(5));
+        assert_eq!(percentile_50(vec![3u64, 1, 2]), Some(2));
+        assert_eq!(percentile_50(vec![10u64, 20, 30, 40]), Some(25));
+        // Saturating add path: two u64::MAX samples would overflow with
+        // a naive `a + b`; assert percentile_50 returns u64::MAX / 2
+        // (the saturated value, divided by 2) rather than panicking.
+        assert_eq!(percentile_50(vec![u64::MAX, u64::MAX]), Some(u64::MAX / 2));
+    }
+
+    #[test]
+    fn record_completion_surfaces_p50s_and_sample_count() {
+        let metrics = RoutingMetrics::new();
+        // Three completions: 8 t/s, 12 t/s, 16 t/s ⇒ p50 = 12.
+        // TTFTs: 100ms, 200ms, 300ms ⇒ p50 = 200.
+        for (tokens, decode_ms, ttft_ms) in
+            [(8u64, 1000u64, 100u64), (12, 1000, 200), (16, 1000, 300)]
+        {
+            metrics.record_completion(
+                Some("qwen3"),
+                Duration::from_millis(ttft_ms),
+                Duration::from_millis(decode_ms),
+                tokens,
+            );
+        }
+        let timings = metrics.model_timings_snapshot();
+        let snap = timings
+            .get("qwen3")
+            .expect("model with samples must appear in timings snapshot");
+        assert!(
+            (snap.measured_tps_p50 - 12.0).abs() < 0.01,
+            "expected ~12 t/s, got {}",
+            snap.measured_tps_p50
+        );
+        assert_eq!(snap.measured_ttft_ms_p50, 200);
+        assert_eq!(snap.samples_in_window, 3);
+    }
+
+    #[test]
+    fn record_completion_skips_auto_and_empty_model() {
+        let metrics = RoutingMetrics::new();
+        metrics.record_completion(
+            Some("auto"),
+            Duration::from_millis(10),
+            Duration::from_millis(500),
+            10,
+        );
+        metrics.record_completion(
+            Some(""),
+            Duration::from_millis(10),
+            Duration::from_millis(500),
+            10,
+        );
+        metrics.record_completion(
+            None,
+            Duration::from_millis(10),
+            Duration::from_millis(500),
+            10,
+        );
+        assert!(
+            metrics.model_timings_snapshot().is_empty(),
+            "auto / empty / None models must be ignored, just like record_attempt"
+        );
+    }
+
+    #[test]
+    fn model_timings_prune_samples_outside_window() {
+        let metrics = RoutingMetrics::new();
+        metrics.record_completion(
+            Some("glm"),
+            Duration::from_millis(150),
+            Duration::from_millis(1000),
+            10,
+        );
+        // Snapshot once before aging to confirm the sample is live.
+        assert!(metrics.model_timings_snapshot().contains_key("glm"));
+        // Age beyond the 1h window. The next snapshot must drop the
+        // entry entirely — empty timings, not a zero p50 — because
+        // "no samples in window" is semantically different from
+        // "samples that average to zero".
+        metrics.age_timing_samples_for_test("glm", Duration::from_secs(60 * 60 + 1));
+        let timings = metrics.model_timings_snapshot();
+        assert!(
+            !timings.contains_key("glm"),
+            "expired samples must drop the model from the timings snapshot, got {timings:?}"
+        );
+    }
+
+    #[test]
+    fn model_timings_cap_per_model_at_sample_limit() {
+        let metrics = RoutingMetrics::new();
+        for i in 0..(MAX_TIMING_SAMPLES_PER_MODEL + 50) {
+            // Vary tokens slightly so percentile is well-defined.
+            let tokens = (i as u64).max(1);
+            metrics.record_completion(
+                Some("qwen3"),
+                Duration::from_millis(100),
+                Duration::from_millis(1000),
+                tokens,
+            );
+        }
+        let snap = metrics
+            .model_timings_snapshot()
+            .remove("qwen3")
+            .expect("expected the model to be present");
+        assert_eq!(
+            snap.samples_in_window, MAX_TIMING_SAMPLES_PER_MODEL as u64,
+            "samples_in_window must be capped at MAX_TIMING_SAMPLES_PER_MODEL"
+        );
     }
 
     #[test]

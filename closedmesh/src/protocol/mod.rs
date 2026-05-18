@@ -556,6 +556,7 @@ mod tests {
             owner_summary: OwnershipSummary::default(),
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: crate::mesh::NodeCapability::default(),
         }
     }
@@ -1235,6 +1236,7 @@ mod tests {
             }),
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: None,
         };
         let proto_pa = local_ann_to_proto_ann(&ann);
@@ -1292,6 +1294,7 @@ mod tests {
             owner_attestation: None,
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: None,
         };
 
@@ -1340,6 +1343,97 @@ mod tests {
             roundtripped.gpu_compute_tflops_fp16.as_deref(),
             Some("312.00")
         );
+    }
+
+    /// v0.66.41 Phase 1: per-model timings round-trip cleanly through the
+    /// PeerAnnouncement protobuf and back. Empty vec stays empty; populated
+    /// entries preserve model name, p50 numbers, and sample count. This is
+    /// the "any new gossip input must round-trip through every layer in the
+    /// same commit" rule from the strategy doc — the test fails loudly if
+    /// either side of convert.rs drops the field.
+    #[test]
+    fn test_proto_round_trip_model_timings() {
+        let peer_id = EndpointId::from(SecretKey::from_bytes(&[0xCE; 32]).public());
+        let ann = super::PeerAnnouncement {
+            addr: EndpointAddr {
+                id: peer_id,
+                addrs: Default::default(),
+            },
+            role: super::NodeRole::Host { http_port: 3131 },
+            first_joined_mesh_ts: None,
+            models: vec![],
+            vram_bytes: 0,
+            model_source: None,
+            serving_models: vec![],
+            hosted_models: None,
+            available_models: vec![],
+            requested_models: vec![],
+            version: None,
+            model_demand: HashMap::new(),
+            mesh_id: None,
+            gpu_name: None,
+            hostname: None,
+            is_soc: None,
+            gpu_vram: None,
+            gpu_reserved_bytes: None,
+            gpu_mem_bandwidth_gbps: None,
+            gpu_compute_tflops_fp32: None,
+            gpu_compute_tflops_fp16: None,
+            available_model_metadata: vec![],
+            experts_summary: None,
+            available_model_sizes: HashMap::new(),
+            served_model_descriptors: vec![],
+            served_model_runtime: vec![],
+            owner_attestation: None,
+            inflight_requests: 0,
+            system_ram_bytes: 0,
+            model_timings: vec![
+                crate::mesh::ModelTimingEntry {
+                    model: "Qwen3-32B-Q4_K_M".to_string(),
+                    measured_tps_p50: 14.5,
+                    measured_ttft_ms_p50: 320,
+                    samples_in_window: 7,
+                },
+                crate::mesh::ModelTimingEntry {
+                    model: "Llama-3.3-70B-Q4_K_M".to_string(),
+                    measured_tps_p50: 6.2,
+                    measured_ttft_ms_p50: 1100,
+                    samples_in_window: 2,
+                },
+            ],
+            capability: None,
+        };
+
+        let proto_pa = local_ann_to_proto_ann(&ann);
+        assert_eq!(proto_pa.model_timings.len(), 2);
+        let qwen = &proto_pa.model_timings[0];
+        assert_eq!(qwen.model, "Qwen3-32B-Q4_K_M");
+        assert!((qwen.measured_tps_p50 - 14.5).abs() < 0.001);
+        assert_eq!(qwen.measured_ttft_ms_p50, 320);
+        assert_eq!(qwen.samples_in_window, 7);
+
+        let (_, roundtripped) =
+            proto_ann_to_local(&proto_pa).expect("proto_ann_to_local must succeed");
+        assert_eq!(roundtripped.model_timings.len(), 2);
+        assert_eq!(roundtripped.model_timings[1].model, "Llama-3.3-70B-Q4_K_M");
+        assert_eq!(roundtripped.model_timings[1].measured_ttft_ms_p50, 1100);
+        assert_eq!(roundtripped.model_timings[1].samples_in_window, 2);
+    }
+
+    /// Legacy peers (<= v0.66.40) gossip a PeerAnnouncement without the
+    /// `model_timings` field. They show up on the wire as an empty
+    /// repeated field, which must decode to an empty Vec on our side —
+    /// not panic or drop the announcement entirely.
+    #[test]
+    fn test_proto_legacy_peer_has_empty_model_timings() {
+        let mut proto_pa = crate::proto::node::PeerAnnouncement::default();
+        proto_pa.endpoint_id = EndpointId::from(SecretKey::from_bytes(&[0xCF; 32]).public())
+            .as_bytes()
+            .to_vec();
+        proto_pa.role = crate::proto::node::NodeRole::Worker as i32;
+        // model_timings stays empty by default.
+        let (_, local) = proto_ann_to_local(&proto_pa).expect("legacy proto must decode cleanly");
+        assert!(local.model_timings.is_empty());
     }
 
     #[test]
@@ -1992,6 +2086,7 @@ mod tests {
             owner_attestation: None,
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: None,
         };
 
@@ -2038,6 +2133,7 @@ mod tests {
             owner_attestation: None,
             inflight_requests: 0,
             system_ram_bytes: 0,
+            model_timings: vec![],
             capability: None,
         };
 
