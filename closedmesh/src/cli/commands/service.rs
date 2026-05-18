@@ -500,13 +500,7 @@ mod windows {
             pid = self_pid,
         );
         let _ = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-WindowStyle",
-                "Hidden",
-                "-Command",
-                &script,
-            ])
+            .args(["-NoProfile", "-WindowStyle", "Hidden", "-Command", &script])
             .hide_console()
             .output();
     }
