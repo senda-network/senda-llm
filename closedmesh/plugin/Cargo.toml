@@ -1,6 +1,6 @@
 [package]
 name = "closedmesh-plugin"
-version = "0.66.41"
+version = "0.66.42"
 edition = "2021"
 
 [dependencies]
