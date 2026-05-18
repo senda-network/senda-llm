@@ -417,16 +417,30 @@ mod windows {
         //
         // Match the startup-side `stop_runtime_aggressively_windows`
         // hygiene: schtasks /End for the polite path, sleep so the
-        // process tree has a chance to wind down on its own, then
-        // taskkill /F /T per image as the safety net for orphaned
-        // children. We exclude our own PID via `/FI "PID ne …"` so
-        // that running `closedmesh service stop` from a console attached
-        // to closedmesh.exe (the CLI subcommand is part of the same
-        // binary) doesn't kill the process executing the command before
-        // the response writes back. taskkill returns non-zero when no
-        // matching process is running, which is the *expected* path on
-        // a cleanly-shut-down system, so we don't propagate that as an
-        // error — the schtasks step is the one whose status we trust.
+        // process tree has a chance to wind down on its own, then a
+        // best-effort kill of orphaned children as the safety net.
+        //
+        // Why the closedmesh.exe kill uses a path-filtered PowerShell
+        // call instead of `taskkill /F /T /IM closedmesh.exe`: the
+        // Tauri desktop shell that bundles us also ships its binary
+        // under the image name `closedmesh.exe` (at
+        // `…\AppData\Local\ClosedMesh\closedmesh.exe`, capital C, a
+        // different path from the runtime install). Pre-0.66.41 the
+        // safety-net kill matched by image name alone and only
+        // excluded the CLI's own PID — which meant a `service stop`
+        // invocation from inside the desktop's bundled controller
+        // (the "Set as startup model" button) blew up its own Tauri
+        // parent process tree, including the Next.js sidecar
+        // executing the bounce. Symptom on Windows: app vanished
+        // mid-bounce, config.toml had been updated but no restart
+        // toast ever rendered. See diagnostic-msi-2026-05-18 in the
+        // closedmesh website repo for the controller-side log trace
+        // pinpointing the exact step the cascade fired on.
+        //
+        // taskkill returns non-zero when no matching process is
+        // running, which is the *expected* path on a cleanly-shut-down
+        // system, so we don't propagate that as an error — the
+        // schtasks step is the one whose status we trust.
         let status = Command::new("schtasks")
             .args(["/End", "/TN", SERVICE_NAME_WINDOWS])
             .hide_console()
@@ -443,15 +457,58 @@ mod windows {
 
         let self_pid = std::process::id();
         let pid_filter = format!("PID ne {self_pid}");
-        for image in ["llama-server.exe", "rpc-server.exe", "closedmesh.exe"] {
+        for image in ["llama-server.exe", "rpc-server.exe"] {
             let _ = Command::new("taskkill")
                 .args(["/F", "/T", "/IM", image, "/FI", &pid_filter])
                 .hide_console()
                 .output();
         }
 
+        kill_path_matched_closedmesh_exe(self_pid);
+
         eprintln!("✓ ClosedMesh service stopped");
         Ok(())
+    }
+
+    /// Best-effort kill of any `closedmesh.exe` whose executable path
+    /// matches the currently-running CLI's path, excluding the CLI
+    /// itself. Path filtering is the only safe way to clean up
+    /// orphaned runtime children without also terminating the Tauri
+    /// desktop shell, which shares the image name but lives at a
+    /// different install path.
+    ///
+    /// We shell out to PowerShell because `taskkill /FI` has no PATH
+    /// filter and the runtime CLI already shells out to several other
+    /// Windows utilities — pulling in a process-enumeration crate
+    /// just for this would be overkill. PowerShell is present on
+    /// every supported Windows install (10+, 11). If PowerShell
+    /// itself isn't on PATH or `current_exe()` fails, we silently
+    /// skip the safety-net; the `schtasks /End` step above has
+    /// already done the polite stop and the OS will reap orphans
+    /// when the parent session ends.
+    fn kill_path_matched_closedmesh_exe(self_pid: u32) {
+        let runtime_path = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let runtime_path = runtime_path.to_string_lossy().replace('\'', "''");
+        let script = format!(
+            "Get-Process -Name closedmesh -ErrorAction SilentlyContinue \
+             | Where-Object {{ $_.Path -and ($_.Path -ieq '{path}') -and ($_.Id -ne {pid}) }} \
+             | Stop-Process -Force -ErrorAction SilentlyContinue",
+            path = runtime_path,
+            pid = self_pid,
+        );
+        let _ = Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-Command",
+                &script,
+            ])
+            .hide_console()
+            .output();
     }
 
     pub(super) fn status() -> Result<()> {
