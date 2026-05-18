@@ -689,8 +689,17 @@ impl Node {
             // last_mentioned = now keeps the peer alive for the prune window.
             let mut peer = PeerInfo::from_announcement(id, addr.clone(), ann, owner_summary);
             // Mark as never directly seen — only transitively mentioned.
-            peer.last_seen =
-                std::time::Instant::now() - std::time::Duration::from_secs(PEER_STALE_SECS * 2);
+            // `checked_sub` instead of `-`: on Windows `Instant` is anchored to
+            // QueryPerformanceCounter ticks since system boot, so within the
+            // first ~6 min after boot the bare subtraction panics ("overflow
+            // when subtracting duration from instant"). Saw this on the May
+            // 18 2026 LYU panic-loop after a Windows Update reboot. Falling
+            // back to "now" makes the new transitive peer trivially stale-
+            // eligible for the next prune, which is the same direction the
+            // original code intended (just safer arithmetic).
+            peer.last_seen = std::time::Instant::now()
+                .checked_sub(std::time::Duration::from_secs(PEER_STALE_SECS * 2))
+                .unwrap_or_else(std::time::Instant::now);
             state.peers.insert(id, peer.clone());
             let count = state.peers.len();
             drop(state);
@@ -721,8 +730,14 @@ impl Node {
         let my_mesh_id = self.mesh_id.lock().await.clone();
         let my_owner_attestation = self.owner_attestation.lock().await.clone();
         let my_demand = self.get_demand();
-        let stale_cutoff =
-            std::time::Instant::now() - std::time::Duration::from_secs(PEER_STALE_SECS);
+        // See `peer.last_seen` assignment above for the `checked_sub` rationale
+        // (May 18 2026 Windows panic-loop). Right after boot the cutoff
+        // collapses to "now", which means the gossip filter pass-through
+        // (`p.last_seen >= stale_cutoff`) admits everything — correct, since
+        // nothing has had time to go stale yet.
+        let stale_cutoff = std::time::Instant::now()
+            .checked_sub(std::time::Duration::from_secs(PEER_STALE_SECS))
+            .unwrap_or_else(std::time::Instant::now);
         // Gossip wire encoding strips available_model_metadata and available_model_sizes,
         // and remote ingest ignores them. Avoid an expensive scan_local_inventory_snapshot()
         // on the hot gossip path.

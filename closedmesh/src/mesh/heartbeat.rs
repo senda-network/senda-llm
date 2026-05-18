@@ -605,8 +605,16 @@ impl Node {
                 // mentioned within 2× the stale window. A peer survives if
                 // either last_seen (direct) or last_mentioned (transitive) is
                 // fresh, but is pruned when both are stale.
-                let prune_cutoff =
-                    std::time::Instant::now() - std::time::Duration::from_secs(PEER_STALE_SECS * 2);
+                //
+                // `checked_sub` instead of `-`: see `gossip.rs::collect_announcements`
+                // for the Windows panic rationale (May 18 2026 LYU post-reboot
+                // crash). Within ~6 min of boot the cutoff collapses to "now",
+                // which makes the comparison `p.last_seen < prune_cutoff` false
+                // for everything — nothing pruned yet, exactly what we want
+                // before the mesh has had time to stabilize.
+                let prune_cutoff = std::time::Instant::now()
+                    .checked_sub(std::time::Duration::from_secs(PEER_STALE_SECS * 2))
+                    .unwrap_or_else(std::time::Instant::now);
                 let stale_peers: Vec<EndpointId> = {
                     let state = node.state.lock().await;
                     state
