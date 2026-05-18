@@ -8,7 +8,7 @@ use crate::proto::node::{GossipFrame, NodeRole, PeerAnnouncement, RouteTableRequ
 use std::collections::HashSet;
 use tokio::sync::watch;
 
-async fn make_test_node(role: super::NodeRole) -> Result<Node> {
+pub(crate) async fn make_test_node(role: super::NodeRole) -> Result<Node> {
     use iroh::endpoint::QuicTransportConfig;
 
     let transport_config = QuicTransportConfig::builder()

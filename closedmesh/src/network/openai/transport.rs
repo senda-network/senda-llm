@@ -1527,6 +1527,56 @@ async fn relay_probed_response<R: AsyncRead + Unpin>(
     })
 }
 
+/// v0.66.43 Phase 1: backend-proxy entry point for the same probe + relay +
+/// metric-record pipeline that `route_local_attempt` already uses internally.
+///
+/// Why this exists: in our production topology no inference request ever
+/// hits `route_local_attempt`. Public traffic arrives at the entry node's
+/// `ingress.rs`, gets routed `Remote(LYU)`, opens a QUIC tunnel, and on
+/// LYU lands in `tunnel.rs::handle_inbound_http_stream` → backend proxy →
+/// llama-server as a chain of raw byte relays. v0.66.42's metric hook
+/// lived in `route_local_attempt` and was therefore dead code in the
+/// tunnel path. Moving the hook into `backend_proxy::handle_connection`
+/// (via this helper) records measurements on the peer that actually does
+/// the inference, regardless of whether the request arrived locally or
+/// over a QUIC tunnel.
+///
+/// The caller must:
+///   1. Have already written the request bytes to `upstream`.
+///   2. Pass `request_committed_at` from immediately *before* that write
+///      so TTFT excludes upstream-connect time but includes prefill.
+///   3. Pass the model name parsed from the request body (or `None`;
+///      `record_completion` will silently no-op for missing/empty/auto
+///      models).
+///
+/// On any error (probe failure, mid-relay disconnect) we still consume
+/// whatever we can from `upstream` so the connection closes cleanly —
+/// we never break a request just to collect metrics.
+pub(crate) async fn relay_with_metrics(
+    downstream: &mut TcpStream,
+    upstream: &mut TcpStream,
+    model: Option<&str>,
+    node: &crate::mesh::Node,
+    request_committed_at: std::time::Instant,
+) -> Result<()> {
+    let probe = probe_http_response_local(upstream).await?;
+    let first_byte_at = std::time::Instant::now();
+    let ttft = first_byte_at.duration_since(request_committed_at);
+    let result =
+        relay_probed_response(downstream, upstream, probe, false, ResponseAdapter::None).await;
+    if let Ok(RouteAttemptResult::Delivered {
+        status_code: code,
+        completion_tokens: Some(tokens),
+    }) = result
+    {
+        if (200..300).contains(&code) && tokens > 0 {
+            let decode_duration = first_byte_at.elapsed();
+            node.record_local_inference_completion(model, ttft, decode_duration, tokens);
+        }
+    }
+    Ok(())
+}
+
 async fn route_local_attempt(
     node: &mesh::Node,
     tcp_stream: &mut TcpStream,

@@ -1,3 +1,4 @@
+use crate::mesh::Node;
 use crate::network::openai::transport;
 use anyhow::Result;
 use std::sync::Arc;
@@ -37,7 +38,7 @@ impl BackendProxyHandle {
     }
 }
 
-pub(crate) async fn start_backend_proxy(llama_port: u16) -> Result<BackendProxyHandle> {
+pub(crate) async fn start_backend_proxy(llama_port: u16, node: Node) -> Result<BackendProxyHandle> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let port = listener.local_addr()?.port();
     let (stop_tx, mut stop_rx) = watch::channel(false);
@@ -87,9 +88,11 @@ pub(crate) async fn start_backend_proxy(llama_port: u16) -> Result<BackendProxyH
                                 break;
                             }
                         };
+                        let conn_node = node.clone();
                         connections.spawn(async move {
                             let _permit = permit;
-                            if let Err(err) = handle_connection(stream, llama_port).await {
+                            if let Err(err) = handle_connection(stream, llama_port, conn_node).await
+                            {
                                 tracing::debug!("backend proxy request failed: {err}");
                             }
                         });
@@ -119,7 +122,7 @@ pub(crate) async fn start_backend_proxy(llama_port: u16) -> Result<BackendProxyH
     })
 }
 
-async fn handle_connection(mut stream: TcpStream, llama_port: u16) -> Result<()> {
+async fn handle_connection(mut stream: TcpStream, llama_port: u16, node: Node) -> Result<()> {
     let _ = stream.set_nodelay(true);
     let request = match transport::read_http_request(&mut stream).await {
         Ok(request) => request,
@@ -128,6 +131,7 @@ async fn handle_connection(mut stream: TcpStream, llama_port: u16) -> Result<()>
             return Ok(());
         }
     };
+    let model = request.model_name.clone();
 
     let mut upstream = match TcpStream::connect(format!("127.0.0.1:{llama_port}")).await {
         Ok(stream) => stream,
@@ -139,14 +143,35 @@ async fn handle_connection(mut stream: TcpStream, llama_port: u16) -> Result<()>
     };
     let _ = upstream.set_nodelay(true);
 
+    // Capture TTFT origin *immediately before* the write so we exclude
+    // upstream-connect time but include prefill on llama-server's side.
+    // Matches the convention used in `route_local_attempt`.
+    let request_committed_at = std::time::Instant::now();
     if let Err(err) = upstream.write_all(&request.raw).await {
         tracing::warn!("failed to write request to llama backend on port {llama_port}: {err}");
         let _ = transport::send_503(stream, "llama backend unavailable").await;
         return Ok(());
     }
 
-    // The buffered request is already written to upstream; relay the response back to the client.
-    let _ = tokio::io::copy(&mut upstream, &mut stream).await;
+    // v0.66.43 Phase 1: probe + relay the response and, on success with a
+    // parseable `usage.completion_tokens`, record a per-model TPS/TTFT
+    // sample. See `transport::relay_with_metrics` for why the metric hook
+    // lives here (backend proxy) rather than in `route_local_attempt`
+    // (transport router) — the tunnel path bypasses the router entirely
+    // and the proxy is the actual chokepoint every served request flows
+    // through. Falls back to the raw relay shape internally on probe
+    // failure so we never break the request just to collect metrics.
+    if let Err(err) = transport::relay_with_metrics(
+        &mut stream,
+        &mut upstream,
+        model.as_deref(),
+        &node,
+        request_committed_at,
+    )
+    .await
+    {
+        tracing::debug!("backend proxy measured relay ended after commit: {err}");
+    }
     let _ = stream.shutdown().await;
     Ok(())
 }
@@ -154,10 +179,23 @@ async fn handle_connection(mut stream: TcpStream, llama_port: u16) -> Result<()>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mesh::tests::make_test_node;
+    use crate::mesh::NodeRole;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
     use tokio::sync::oneshot;
     use tokio::time::timeout;
+
+    /// Build a throwaway `Node` for tests that just need to pass the
+    /// `start_backend_proxy` Node parameter through. We don't exercise
+    /// the metric-recording path in these connection-level tests — they
+    /// care only that the proxy forwards bytes and respects the
+    /// shutdown / 503 / capacity contracts.
+    async fn test_node() -> Node {
+        make_test_node(NodeRole::Host { http_port: 0 })
+            .await
+            .unwrap()
+    }
 
     /// Starts a minimal dummy HTTP server that echoes a fixed response for every connection.
     async fn start_dummy_upstream(response: &'static str) -> u16 {
@@ -213,7 +251,9 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
         let (upstream_port, request_rx) = start_recording_upstream(upstream_response).await;
 
-        let proxy = start_backend_proxy(upstream_port).await.unwrap();
+        let proxy = start_backend_proxy(upstream_port, test_node().await)
+            .await
+            .unwrap();
         let proxy_port = proxy.port();
 
         let mut client = TcpStream::connect(format!("127.0.0.1:{proxy_port}"))
@@ -245,7 +285,9 @@ mod tests {
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
         let upstream_port = start_dummy_upstream(upstream_response).await;
 
-        let proxy = start_backend_proxy(upstream_port).await.unwrap();
+        let proxy = start_backend_proxy(upstream_port, test_node().await)
+            .await
+            .unwrap();
         let proxy_port = proxy.port();
 
         // Confirm proxy accepts connections before shutdown.
@@ -269,7 +311,9 @@ mod tests {
     async fn test_backend_proxy_shutdown_aborts_inflight_connections() {
         let upstream_port = start_stalled_upstream().await;
 
-        let proxy = start_backend_proxy(upstream_port).await.unwrap();
+        let proxy = start_backend_proxy(upstream_port, test_node().await)
+            .await
+            .unwrap();
         let proxy_port = proxy.port();
 
         let mut client = TcpStream::connect(format!("127.0.0.1:{proxy_port}"))
@@ -308,7 +352,9 @@ mod tests {
             // listener dropped — port freed
         };
 
-        let proxy = start_backend_proxy(dead_port).await.unwrap();
+        let proxy = start_backend_proxy(dead_port, test_node().await)
+            .await
+            .unwrap();
         let proxy_port = proxy.port();
 
         let mut client = TcpStream::connect(format!("127.0.0.1:{proxy_port}"))
@@ -335,7 +381,9 @@ mod tests {
         // the cap, then assert that the next client gets dropped without
         // a response instead of being queued.
         let upstream_port = start_stalled_upstream().await;
-        let proxy = start_backend_proxy(upstream_port).await.unwrap();
+        let proxy = start_backend_proxy(upstream_port, test_node().await)
+            .await
+            .unwrap();
         let proxy_port = proxy.port();
 
         let req = b"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
@@ -378,6 +426,83 @@ mod tests {
         }
 
         drop(saturating);
+        proxy.shutdown().await;
+    }
+
+    /// v0.66.43 Phase 1 acceptance: forwarding a request whose upstream
+    /// returns a 2xx JSON body with `usage.completion_tokens > 0` must
+    /// cause the backend proxy to push a sample into the Node's routing
+    /// metrics. Without this hook (and prior to v0.66.43) the catalog
+    /// metrics on closedmesh.com/status stayed permanently empty because
+    /// the entry node tunneled all production traffic through the proxy
+    /// path that bypassed `route_local_attempt`.
+    #[tokio::test]
+    async fn test_backend_proxy_records_completion_metrics() {
+        // Upstream returns a valid OpenAI-shaped non-streaming chat
+        // completion with usage.completion_tokens=7. Content-Length is
+        // set so `relay_probed_response` takes the buffered branch and
+        // parses the body.
+        let body =
+            br#"{"id":"x","object":"chat.completion","model":"test-model","choices":[{"index":0,"message":{"role":"assistant","content":"hi"}}],"usage":{"prompt_tokens":3,"completion_tokens":7,"total_tokens":10}}"#;
+        let mut resp = Vec::new();
+        resp.extend_from_slice(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ",
+        );
+        resp.extend_from_slice(body.len().to_string().as_bytes());
+        resp.extend_from_slice(b"\r\n\r\n");
+        resp.extend_from_slice(body);
+        let resp_static: &'static [u8] = Box::leak(resp.into_boxed_slice());
+        let resp_str: &'static str = std::str::from_utf8(resp_static).unwrap();
+
+        let upstream_port = start_dummy_upstream(resp_str).await;
+        let node = test_node().await;
+        let proxy = start_backend_proxy(upstream_port, node.clone())
+            .await
+            .unwrap();
+        let proxy_port = proxy.port();
+
+        // Send a chat-completion request with an explicit model. The
+        // proxy's request parser will populate `request.model_name`
+        // from the body, which feeds the metric attribution.
+        let req_body = br#"{"model":"my-test-model","messages":[{"role":"user","content":"hi"}],"max_tokens":1,"stream":false}"#;
+        let mut req = Vec::new();
+        req.extend_from_slice(
+            b"POST /v1/chat/completions HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: ",
+        );
+        req.extend_from_slice(req_body.len().to_string().as_bytes());
+        req.extend_from_slice(b"\r\n\r\n");
+        req.extend_from_slice(req_body);
+
+        let mut client = TcpStream::connect(format!("127.0.0.1:{proxy_port}"))
+            .await
+            .unwrap();
+        client.write_all(&req).await.unwrap();
+
+        // Drain the response so the proxy completes its measure+relay
+        // path and records the sample before we observe metrics.
+        let mut buf = Vec::new();
+        client.read_to_end(&mut buf).await.unwrap();
+        assert!(
+            String::from_utf8_lossy(&buf).starts_with("HTTP/1.1 200 OK"),
+            "unexpected response: {:?}",
+            String::from_utf8_lossy(&buf)
+        );
+
+        // Verify the sample landed under the request's `model` field.
+        let snapshot = node.model_timings_snapshot();
+        let entry = snapshot.get("my-test-model").expect(
+            "expected a timing snapshot for the requested model — backend proxy did not record",
+        );
+        assert_eq!(
+            entry.samples_in_window, 1,
+            "expected exactly one sample in the rolling window"
+        );
+        assert!(
+            entry.measured_tps_p50 > 0.0,
+            "p50 t/s should be positive: {:?}",
+            entry
+        );
+
         proxy.shutdown().await;
     }
 }

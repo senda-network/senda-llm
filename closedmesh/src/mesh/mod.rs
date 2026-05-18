@@ -5020,7 +5020,7 @@ pub(crate) use heartbeat::{
 pub use visibility::MeshVisibilityState;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 #[cfg(test)]
 mod public_identity_tests;
