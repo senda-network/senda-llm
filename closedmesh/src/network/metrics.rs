@@ -953,7 +953,25 @@ impl ModelMetrics {
     ) {
         self.last_updated = now;
         self.prune_timing_samples(now);
-        if let Some(tps_milli) = tokens_per_second_milli(completion_tokens, decode_duration) {
+        // For non-streaming responses llama-server writes the entire body
+        // in a single burst after generation completes, so the caller's
+        // `first_byte_at` is essentially "generation done" and the
+        // `decode_duration` it derives collapses to network return time
+        // (≈0ms). Dividing `completion_tokens` by ~0s blows up into
+        // physically impossible TPS (we observed 953,000 t/s on the
+        // public dashboard from a 4.7s, 8-token chat). When the decode
+        // window is shorter than this floor, fall back to wall-clock
+        // (`ttft + decode_duration`) as the throughput denominator. That
+        // gives an honest end-to-end t/s for compressed/non-streaming
+        // responses while leaving genuine streaming decode windows
+        // (where `decode_duration` is the real decode time) untouched.
+        const DECODE_DURATION_FLOOR: Duration = Duration::from_millis(100);
+        let effective_decode = if decode_duration < DECODE_DURATION_FLOOR {
+            ttft.saturating_add(decode_duration)
+        } else {
+            decode_duration
+        };
+        if let Some(tps_milli) = tokens_per_second_milli(completion_tokens, effective_decode) {
             self.timing_tps_milli_samples.push_back((now, tps_milli));
             while self.timing_tps_milli_samples.len() > MAX_TIMING_SAMPLES_PER_MODEL {
                 self.timing_tps_milli_samples.pop_front();
@@ -1523,6 +1541,40 @@ mod tests {
         );
         assert_eq!(snap.measured_ttft_ms_p50, 200);
         assert_eq!(snap.samples_in_window, 3);
+    }
+
+    /// Regression for v0.66.47: when the caller's `decode_duration` is
+    /// near-zero (compressed/non-streaming response, where the server
+    /// returns the whole body in one shot after generation), TPS used
+    /// to explode into impossible values. The floor falls back to
+    /// `ttft + decode_duration` as the throughput denominator so the
+    /// reported t/s is honest end-to-end throughput instead of
+    /// `tokens / ε`. Streaming responses with a real decode window
+    /// must still report decode-only TPS — covered by
+    /// `record_completion_surfaces_p50s_and_sample_count` above,
+    /// which uses `decode=1000ms` and expects the literal 12 t/s.
+    #[test]
+    fn record_completion_floors_zero_decode_to_wall_clock() {
+        let metrics = RoutingMetrics::new();
+        // Non-streaming shape: 84 tokens, 7000ms ttft, ~0ms decode.
+        // Wall clock = 7s ⇒ ~12 t/s end-to-end, not 84,000+ t/s.
+        metrics.record_completion(
+            Some("qwen3"),
+            Duration::from_millis(7000),
+            Duration::from_millis(0),
+            84,
+        );
+        let snap = metrics
+            .model_timings_snapshot()
+            .remove("qwen3")
+            .expect("model must appear in timings snapshot");
+        assert!(
+            (snap.measured_tps_p50 - 12.0).abs() < 0.5,
+            "expected ~12 t/s end-to-end, got {}",
+            snap.measured_tps_p50
+        );
+        // TTFT itself is recorded unmodified.
+        assert_eq!(snap.measured_ttft_ms_p50, 7000);
     }
 
     #[test]

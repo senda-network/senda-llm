@@ -964,6 +964,52 @@ fn parse_completion_tokens_from_json_body(body: &[u8]) -> Option<u64> {
         .and_then(|value| value.as_u64())
 }
 
+/// Tail of bytes we keep buffered during a chunked / streaming relay so
+/// we can fish the OpenAI `usage` chunk out without parsing every event.
+/// llama-server's usage payload is well under 1 KB; 8 KB of tail leaves
+/// generous slack for any wrapping overhead llama-server or a downstream
+/// proxy adds.
+pub(super) const SSE_USAGE_TAIL_BYTES: usize = 8 * 1024;
+
+/// Scan the tail of a chunked SSE response body for the `usage` event
+/// that llama-server emits just before `data: [DONE]` when the client
+/// opted in with `stream_options: {include_usage: true}`. Each event is
+/// a `data: {json}\n\n` block; we walk lines from the bottom and pick
+/// the most recent payload whose JSON contains `usage.completion_tokens`
+/// (or `usage.output_tokens` — Responses-API variant).
+///
+/// Returns `None` for legitimate cases (caller did not request usage,
+/// tail starts mid-event, body was non-SSE garbage) so the caller can
+/// degrade to "TTFT only, no TPS sample". Tolerates lossy UTF-8 because
+/// the tail buffer can slice through multi-byte chars when it wraps.
+pub(super) fn parse_completion_tokens_from_sse_tail(tail: &[u8]) -> Option<u64> {
+    let text = String::from_utf8_lossy(tail);
+    for raw_line in text.rsplit('\n') {
+        let line = raw_line.trim_end_matches('\r').trim_start();
+        let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
+            continue;
+        };
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        let json: serde_json::Value = match serde_json::from_str(payload) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let Some(usage) = json.get("usage") else {
+            continue;
+        };
+        if let Some(tokens) = usage
+            .get("completion_tokens")
+            .or_else(|| usage.get("output_tokens"))
+            .and_then(|v| v.as_u64())
+        {
+            return Some(tokens);
+        }
+    }
+    None
+}
+
 fn delivered_attempt_outcome(status_code: u16) -> crate::network::metrics::AttemptOutcome {
     match status_code {
         200..=299 => crate::network::metrics::AttemptOutcome::Success,
@@ -1469,7 +1515,7 @@ async fn relay_error_response<R: AsyncRead + Unpin>(
 }
 
 async fn relay_probed_response<R: AsyncRead + Unpin>(
-    mut tcp_stream: &mut TcpStream,
+    tcp_stream: &mut TcpStream,
     reader: &mut R,
     probe: ResponseProbe,
     retry_context_overflow: bool,
@@ -1516,14 +1562,52 @@ async fn relay_probed_response<R: AsyncRead + Unpin>(
         }
     }
 
+    // Chunked / unknown-length / oversize-body path: stream bytes through
+    // verbatim but keep a rolling tail buffer so we can scan it for the
+    // OpenAI streaming `usage` chunk after the relay completes. Before
+    // v0.66.47 this branch always returned `completion_tokens: None`,
+    // which meant the metric hook silently dropped every streaming
+    // request — and the website chat uses streaming, so the marketplace
+    // numbers on closedmesh.com/status could only ever be seeded by the
+    // tiny minority of non-streaming callers. See
+    // `parse_completion_tokens_from_sse_tail` for the wire shape we
+    // expect and why an 8 KB tail is sufficient.
     tcp_stream.write_all(&probe.buffered).await?;
-    if let Err(err) = tokio::io::copy(reader, &mut tcp_stream).await {
-        tracing::debug!("response relay ended after headers were committed: {err}");
+    let mut tail: Vec<u8> = if probe.buffered.len() > parsed.header_end {
+        probe.buffered[parsed.header_end..].to_vec()
+    } else {
+        Vec::new()
+    };
+    if tail.len() > SSE_USAGE_TAIL_BYTES * 2 {
+        let drop_to = tail.len() - SSE_USAGE_TAIL_BYTES;
+        tail.drain(..drop_to);
+    }
+    let mut buf = [0u8; 16 * 1024];
+    loop {
+        match reader.read(&mut buf).await {
+            Ok(0) => break,
+            Ok(n) => {
+                if let Err(err) = tcp_stream.write_all(&buf[..n]).await {
+                    tracing::debug!("response relay ended after headers were committed: {err}");
+                    break;
+                }
+                tail.extend_from_slice(&buf[..n]);
+                if tail.len() > SSE_USAGE_TAIL_BYTES * 2 {
+                    let drop_to = tail.len() - SSE_USAGE_TAIL_BYTES;
+                    tail.drain(..drop_to);
+                }
+            }
+            Err(err) => {
+                tracing::debug!("response relay ended after headers were committed: {err}");
+                break;
+            }
+        }
     }
     let _ = tcp_stream.shutdown().await;
+    let completion_tokens = parse_completion_tokens_from_sse_tail(&tail);
     Ok(RouteAttemptResult::Delivered {
         status_code: probe.status_code,
-        completion_tokens: None,
+        completion_tokens,
     })
 }
 
@@ -3558,6 +3642,80 @@ mod tests {
     fn test_pipeline_request_supported_rejects_other_endpoint() {
         let body = serde_json::json!({"messages":[{"role":"user","content":"hi"}]});
         assert!(!pipeline_request_supported("/v1/responses", &body));
+    }
+
+    /// v0.66.47 Phase 1 metric collection: the streaming relay path now
+    /// scans the tail for the OpenAI `usage` chunk that clients receive
+    /// when they pass `stream_options: {include_usage: true}` (the same
+    /// option `app/api/chat/route.ts` enables for the public chat). The
+    /// chunk arrives just before `[DONE]` and looks like a regular SSE
+    /// event with a JSON payload containing `usage.completion_tokens`.
+    #[test]
+    fn test_parse_completion_tokens_from_sse_tail_finds_usage_chunk() {
+        let body = b"data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: {\"choices\":[],\"usage\":{\"completion_tokens\":104,\"prompt_tokens\":19,\"total_tokens\":123}}\n\ndata: [DONE]\n\n";
+        assert_eq!(parse_completion_tokens_from_sse_tail(body), Some(104));
+    }
+
+    /// Responses-API streaming variant uses `output_tokens` instead of
+    /// `completion_tokens`. The parser already prefers `completion_tokens`
+    /// (via `or_else`) so this just confirms the fallback isn't a
+    /// regression — the same convention applies in
+    /// `parse_completion_tokens_from_json_body`.
+    #[test]
+    fn test_parse_completion_tokens_from_sse_tail_accepts_output_tokens() {
+        let body = b"data: {\"usage\":{\"output_tokens\":47}}\n\ndata: [DONE]\n\n";
+        assert_eq!(parse_completion_tokens_from_sse_tail(body), Some(47));
+    }
+
+    /// Tail of an SSE response where the caller didn't request usage
+    /// (no `stream_options.include_usage`) — just delta chunks then
+    /// `[DONE]`. Must degrade to `None` so the metric hook records
+    /// TTFT only (skipping the TPS sample) rather than charging the
+    /// model 0 t/s.
+    #[test]
+    fn test_parse_completion_tokens_from_sse_tail_returns_none_without_usage() {
+        let body = b"data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n\ndata: [DONE]\n\n";
+        assert_eq!(parse_completion_tokens_from_sse_tail(body), None);
+    }
+
+    /// Tail buffer wrapped mid-event so the first bytes are a partial
+    /// JSON fragment that doesn't parse. The parser must keep walking
+    /// further up rather than bailing on the first bad line.
+    #[test]
+    fn test_parse_completion_tokens_from_sse_tail_skips_unparseable_lines() {
+        let body = b":{\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\ndata: {\"usage\":{\"completion_tokens\":12}}\n\ndata: [DONE]\n\n";
+        assert_eq!(parse_completion_tokens_from_sse_tail(body), Some(12));
+    }
+
+    /// CRLF line endings — some proxies / clients normalize SSE this
+    /// way even though the spec uses LF. The parser strips trailing
+    /// `\r` before parsing.
+    #[test]
+    fn test_parse_completion_tokens_from_sse_tail_handles_crlf() {
+        let body = b"data: {\"usage\":{\"completion_tokens\":9}}\r\n\r\ndata: [DONE]\r\n\r\n";
+        assert_eq!(parse_completion_tokens_from_sse_tail(body), Some(9));
+    }
+
+    /// Non-SSE garbage in the buffer (e.g. a plain JSON body that
+    /// slipped past the `Content-Length` branch because the upstream
+    /// omitted the header). Must not panic and must not pull a number
+    /// out of nowhere.
+    #[test]
+    fn test_parse_completion_tokens_from_sse_tail_rejects_non_sse() {
+        let body = b"{\"usage\":{\"completion_tokens\":7}}";
+        assert_eq!(parse_completion_tokens_from_sse_tail(body), None);
+    }
+
+    /// Invalid UTF-8 prefix from a buffer that wrapped mid-multibyte.
+    /// `from_utf8_lossy` substitutes replacement chars, the SSE chunk
+    /// after the corrupt prefix still parses cleanly.
+    #[test]
+    fn test_parse_completion_tokens_from_sse_tail_tolerates_invalid_utf8_prefix() {
+        let mut body: Vec<u8> = vec![0xC3, 0x28]; // invalid UTF-8 leading bytes
+        body.extend_from_slice(
+            b"\ndata: {\"usage\":{\"completion_tokens\":33}}\n\ndata: [DONE]\n\n",
+        );
+        assert_eq!(parse_completion_tokens_from_sse_tail(&body), Some(33));
     }
 
     #[test]
