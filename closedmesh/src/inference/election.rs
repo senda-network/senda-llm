@@ -219,6 +219,225 @@ pub fn should_be_host_for_model_with_solo_bias(
     true
 }
 
+/// Minimum fast-memory budget for a solo serve (matches `build_dense_launch_plan`).
+fn min_vram_for_solo(model_bytes: u64) -> u64 {
+    (model_bytes as f64 * 1.1) as u64
+}
+
+fn peer_can_solo_model(peer: &mesh::PeerInfo, model_bytes: u64) -> bool {
+    peer.fast_memory_bytes() >= min_vram_for_solo(model_bytes)
+}
+
+fn any_other_peer_can_solo(
+    model: &str,
+    model_bytes: u64,
+    peers: &[mesh::PeerInfo],
+) -> bool {
+    peers
+        .iter()
+        .any(|p| p.is_assigned_model(model) && peer_can_solo_model(p, model_bytes))
+}
+
+fn demand_count(
+    catalog_demand: &std::collections::HashMap<String, u64>,
+    model: &str,
+) -> u64 {
+    catalog_demand.get(model).copied().unwrap_or(0)
+}
+
+/// Phase 2: choose which configured models this peer should actually advertise
+/// and run, given local fast memory and mesh-wide capability. The desktop UI's
+/// requested model list is a hint set — we drop models that waste this peer's
+/// capacity on a split cohort when a better solo assignment exists.
+///
+/// `force_split_models` preserves explicit "Run on the mesh" opt-ins.
+pub fn select_serving_models_for_peer(
+    local_vram: u64,
+    requested_models: &[String],
+    model_bytes_by_name: &std::collections::HashMap<String, u64>,
+    force_split_models: &std::collections::HashSet<String>,
+    catalog_demand: &std::collections::HashMap<String, u64>,
+    peers: &[mesh::PeerInfo],
+) -> Vec<String> {
+    let mut selected: Vec<String> = Vec::new();
+    let mut flexible: Vec<(String, u64)> = Vec::new();
+
+    for model in requested_models {
+        let Some(&bytes) = model_bytes_by_name.get(model) else {
+            continue;
+        };
+        if force_split_models.contains(model) {
+            selected.push(model.clone());
+        } else {
+            flexible.push((model.clone(), bytes));
+        }
+    }
+
+    if flexible.is_empty() {
+        return sort_models_by_demand(selected, catalog_demand);
+    }
+
+    let largest_bytes = flexible.iter().map(|(_, b)| *b).max().unwrap_or(0);
+    let smallest_bytes = flexible.iter().map(|(_, b)| *b).min().unwrap_or(0);
+
+    if local_vram >= min_vram_for_solo(largest_bytes) {
+        selected.extend(flexible.into_iter().map(|(m, _)| m));
+    } else if local_vram >= min_vram_for_solo(smallest_bytes) {
+        // Serve the largest model that still fits solo; drop the rest.
+        let best = flexible
+            .iter()
+            .filter(|(_, bytes)| local_vram >= min_vram_for_solo(*bytes))
+            .max_by(|(a_name, a_bytes), (b_name, b_bytes)| {
+                a_bytes
+                    .cmp(b_bytes)
+                    .then_with(|| {
+                        demand_count(catalog_demand, a_name)
+                            .cmp(&demand_count(catalog_demand, b_name))
+                    })
+                    .then_with(|| a_name.cmp(b_name))
+            });
+        if let Some((model, _)) = best {
+            selected.push(model.clone());
+        }
+    } else if flexible
+        .iter()
+        .any(|(name, bytes)| any_other_peer_can_solo(name, *bytes, peers))
+    {
+        // Can't solo anything, but another peer can solo at least one
+        // requested model — only stay in cohorts for models nobody can solo.
+        for (name, bytes) in flexible {
+            if !any_other_peer_can_solo(&name, bytes, peers) {
+                selected.push(name);
+            }
+        }
+    } else {
+        selected.extend(flexible.into_iter().map(|(m, _)| m));
+    }
+
+    sort_models_by_demand(selected, catalog_demand)
+}
+
+fn sort_models_by_demand(
+    mut models: Vec<String>,
+    catalog_demand: &std::collections::HashMap<String, u64>,
+) -> Vec<String> {
+    models.sort_by(|a, b| {
+        demand_count(catalog_demand, b)
+            .cmp(&demand_count(catalog_demand, a))
+            .then_with(|| a.cmp(b))
+    });
+    models
+}
+
+/// Routing preference for a target: lower is better. Solo end-to-end hosts
+/// win over pipeline-split hosts when both can serve the same model name.
+impl InferenceTarget {
+    pub fn priority_class(
+        &self,
+        model: &str,
+        model_bytes: u64,
+        peers: &[mesh::PeerInfo],
+    ) -> u8 {
+        match self {
+            InferenceTarget::Local(_) | InferenceTarget::MoeLocal(_) => 0,
+            InferenceTarget::Remote(peer_id) | InferenceTarget::MoeRemote(peer_id) => {
+                peers
+                    .iter()
+                    .find(|p| p.id == *peer_id)
+                    .map(|p| {
+                        if is_split_pipeline_host_for_model(p, model, model_bytes, peers) {
+                            1
+                        } else {
+                            0
+                        }
+                    })
+                    .unwrap_or(0)
+            }
+            InferenceTarget::None => 2,
+        }
+    }
+}
+
+fn is_split_pipeline_host_for_model(
+    host: &mesh::PeerInfo,
+    model: &str,
+    model_bytes: u64,
+    peers: &[mesh::PeerInfo],
+) -> bool {
+    if !matches!(host.role, NodeRole::Host { .. }) {
+        return false;
+    }
+    if peer_can_solo_model(host, model_bytes) {
+        return false;
+    }
+    peers.iter().any(|p| {
+        p.id != host.id
+            && p.is_assigned_model(model)
+            && matches!(p.role, NodeRole::Worker)
+    })
+}
+
+fn routing_stable_hash(local_id: iroh::EndpointId, host_id: iroh::EndpointId) -> u64 {
+    local_id
+        .as_bytes()
+        .iter()
+        .chain(host_id.as_bytes().iter())
+        .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
+}
+
+fn inflight_for_target(
+    target: &InferenceTarget,
+    peers: &[mesh::PeerInfo],
+) -> u64 {
+    match target {
+        InferenceTarget::Local(_) | InferenceTarget::MoeLocal(_) => 0,
+        InferenceTarget::Remote(peer_id) | InferenceTarget::MoeRemote(peer_id) => peers
+            .iter()
+            .find(|p| p.id == *peer_id)
+            .map(|p| p.inflight_requests)
+            .unwrap_or(0),
+        InferenceTarget::None => u64::MAX,
+    }
+}
+
+fn force_split_routing_enabled() -> bool {
+    std::env::var("CLOSEDMESH_FORCE_SPLIT_ROUTING")
+        .ok()
+        .as_deref()
+        == Some("1")
+}
+
+fn sort_targets_for_model(
+    model: &str,
+    model_bytes: u64,
+    targets: &mut [InferenceTarget],
+    peers: &[mesh::PeerInfo],
+    local_id: iroh::EndpointId,
+) {
+    if force_split_routing_enabled() {
+        return;
+    }
+    targets.sort_by(|a, b| {
+        let pa = a.priority_class(model, model_bytes, peers);
+        let pb = b.priority_class(model, model_bytes, peers);
+        let ia = inflight_for_target(a, peers);
+        let ib = inflight_for_target(b, peers);
+        let ha = match a {
+            InferenceTarget::Remote(id) | InferenceTarget::MoeRemote(id) => {
+                routing_stable_hash(local_id, *id)
+            }
+            _ => 0,
+        };
+        let hb = match b {
+            InferenceTarget::Remote(id) | InferenceTarget::MoeRemote(id) => {
+                routing_stable_hash(local_id, *id)
+            }
+            _ => 0,
+        };
+        (pa, ia, ha).cmp(&(pb, ib, hb))
+    });
+}
+
 /// Maximum time a peer may sit "elected but not actually serving" before the
 /// rest of the cohort gives up on it and excludes it from host candidacy.
 ///
@@ -3884,6 +4103,24 @@ async fn update_targets(
         }
     }
 
+    if !force_split_routing_enabled() {
+        for (model, model_targets) in targets.iter_mut() {
+            let model_bytes = model_requirements
+                .get(model)
+                .and_then(|req| req.min_vram_mb)
+                .map(|mb| mb.saturating_mul(1024 * 1024))
+                .filter(|b| *b > 0)
+                .unwrap_or_else(|| {
+                    peers
+                        .iter()
+                        .find(|p| p.id == local_id)
+                        .and_then(|p| p.available_model_sizes.get(model).copied())
+                        .unwrap_or(0)
+                });
+            sort_targets_for_model(model, model_bytes, model_targets, &peers, local_id);
+        }
+    }
+
     target_tx.send_replace(ModelTargets {
         targets,
         moe: None,
@@ -5982,6 +6219,70 @@ mod tests {
             "discovery grace must stay short enough that a genuinely-solo node (no peers \
              at all on the mesh) still launches its model within human-tolerable startup \
              time; got {grace:?}"
+        );
+    }
+
+    #[test]
+    fn select_serving_models_picks_qwen3_8b_solo_on_14gb_mac() {
+        let qwen8 = "Qwen3-8B-Q4_K_M".to_string();
+        let qwen32 = "Qwen3-32B-Q4_K_M".to_string();
+        let eight_gb = 5 * 1024 * 1024 * 1024;
+        let thirtytwo_gb = 20 * 1024 * 1024 * 1024;
+        let local_vram = (14.5 * 1024.0 * 1024.0 * 1024.0) as u64;
+        let mut sizes = HashMap::new();
+        sizes.insert(qwen8.clone(), eight_gb);
+        sizes.insert(qwen32.clone(), thirtytwo_gb);
+        let requested = vec![qwen32.clone(), qwen8.clone()];
+        let selected = select_serving_models_for_peer(
+            local_vram,
+            &requested,
+            &sizes,
+            &HashSet::new(),
+            &HashMap::new(),
+            &[],
+        );
+        assert_eq!(
+            selected,
+            vec![qwen8],
+            "14.5 GB MBA should solo Qwen3-8B and drop Qwen3-32B from its serving set"
+        );
+    }
+
+    #[test]
+    fn target_priority_class_prefers_solo_remote_over_split_host() {
+        let model = "Qwen3-32B-Q4_K_M";
+        let id_solo = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[1; 32]).public());
+        let id_split = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[2; 32]).public());
+        let id_worker = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[3; 32]).public());
+        let mut solo_host = make_dense_peer(id_solo, 24 * 1024 * 1024 * 1024, None, model);
+        solo_host.role = NodeRole::Host { http_port: 4001 };
+        solo_host.hosted_models = vec![model.to_string()];
+        solo_host.hosted_models_known = true;
+        let mut split_host = make_dense_peer(id_split, 16 * 1024 * 1024 * 1024, None, model);
+        split_host.role = NodeRole::Host { http_port: 4002 };
+        split_host.hosted_models = vec![model.to_string()];
+        split_host.hosted_models_known = true;
+        let mut worker = make_dense_peer(id_worker, 12 * 1024 * 1024 * 1024, None, model);
+        worker.role = NodeRole::Worker;
+        let peers = vec![solo_host, split_host.clone(), worker];
+        let model_bytes = 20 * 1024 * 1024 * 1024;
+        assert_eq!(
+            InferenceTarget::Remote(id_solo).priority_class(model, model_bytes, &peers),
+            0
+        );
+        assert_eq!(
+            InferenceTarget::Remote(id_split).priority_class(model, model_bytes, &peers),
+            1
+        );
+        let mut targets = vec![
+            InferenceTarget::Remote(id_split),
+            InferenceTarget::Remote(id_solo),
+        ];
+        sort_targets_for_model(model, model_bytes, &mut targets, &peers, id_solo);
+        assert_eq!(
+            targets[0],
+            InferenceTarget::Remote(id_solo),
+            "solo host must sort ahead of split host for the same model"
         );
     }
 

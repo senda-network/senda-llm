@@ -2909,6 +2909,92 @@ async fn run_auto(
             all_declared,
         );
     }
+
+    // Phase 2: per-peer model selection — drop models this hardware cannot
+    // usefully solo-serve when a better assignment exists (see STRATEGY.md §3
+    // deliverable 2.1). `requested_models` from config remain the hint set.
+    let mut model_bytes_by_name = std::collections::HashMap::new();
+    for sm in &startup_models {
+        let stem = sm
+            .resolved_path
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let name = router::strip_split_suffix_owned(&stem);
+        let bytes = election::total_model_bytes(&sm.resolved_path);
+        if bytes > 0 {
+            model_bytes_by_name.insert(name, bytes);
+        }
+    }
+    let mut force_split_models = std::collections::HashSet::new();
+    if cli.split {
+        force_split_models.insert(model_name.clone());
+    }
+    for sm in &startup_models {
+        if sm.force_split.unwrap_or(false) {
+            let stem = sm
+                .resolved_path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            force_split_models.insert(router::strip_split_suffix_owned(&stem));
+        }
+    }
+    let catalog_demand: std::collections::HashMap<String, u64> = node
+        .get_demand()
+        .into_iter()
+        .map(|(k, v)| (k, v.request_count))
+        .collect();
+    let peers_for_selection = node.peers().await;
+    let local_fast_vram = node.fast_memory_bytes();
+    let all_declared_before = all_declared.clone();
+    let all_declared = election::select_serving_models_for_peer(
+        local_fast_vram,
+        &all_declared,
+        &model_bytes_by_name,
+        &force_split_models,
+        &catalog_demand,
+        &peers_for_selection,
+    );
+    if all_declared.is_empty() {
+        anyhow::bail!(
+            "per-peer model selection removed every servable model from this peer's \
+             advertisement set; refusing to start with an empty serving list"
+        );
+    }
+    if !all_declared.iter().any(|m| m == &model_name) {
+        anyhow::bail!(
+            "primary model `{}` was filtered out by per-peer model selection \
+             (local fast memory {:.1} GB). This peer will instead serve {:?}. \
+             Remove `{}` from config, choose a smaller primary model, or set \
+             `force_split = true` on that model to keep it in the pooled cohort.",
+            model_name,
+            local_fast_vram as f64 / 1e9,
+            all_declared,
+            model_name,
+        );
+    }
+    let dropped_models: Vec<String> = all_declared_before
+        .iter()
+        .filter(|m| !all_declared.contains(m))
+        .cloned()
+        .collect();
+    if !dropped_models.is_empty() {
+        let _ = emit_event(OutputEvent::Info {
+            message: format!(
+                "Per-peer model selection: serving {:?} on {:.1} GB fast memory; \
+                 not advertising {:?} on this peer (another peer can solo, or this \
+                 hardware fits a smaller model better). Set force_split = true to override.",
+                all_declared,
+                local_fast_vram as f64 / 1e9,
+                dropped_models,
+            ),
+            context: None,
+        });
+    }
+
     node.set_serving_models(all_declared.clone()).await;
     node.set_hosted_models(Vec::new()).await;
     node.set_models(all_declared.clone()).await;
@@ -3322,17 +3408,8 @@ async fn run_auto(
     // Each additional model gets its own solo election loop — no rpc, no draft, no split.
     // They share the same target_tx so the proxy sees all models.
     if startup_models.len() > 1 {
-        // Announce all models to mesh
-        let all_names: Vec<String> = startup_models
-            .iter()
-            .map(|m| {
-                m.resolved_path
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_string()
-            })
-            .collect();
+        // Announce only models this peer selected to serve (Phase 2 filter).
+        let all_names: Vec<String> = all_declared.clone();
         let _ = emit_event(OutputEvent::MultiModelMode {
             count: all_names.len(),
             models: all_names.clone(),
@@ -3350,6 +3427,9 @@ async fn run_auto(
                     .to_string();
                 router::strip_split_suffix_owned(&stem)
             };
+            if !all_declared.contains(&extra_name) {
+                continue;
+            }
             let extra_node = node.clone();
             let extra_tunnel = tunnel_mgr.clone();
             let extra_bin = bin_dir.clone();

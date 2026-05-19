@@ -187,6 +187,23 @@ struct PeerSplitClassification {
     moe_shard: Option<MoeShardPayload>,
 }
 
+fn serving_mode_from_classification(
+    peer: &mesh::PeerInfo,
+    split: &PeerSplitClassification,
+) -> Option<String> {
+    if peer.serving_models.is_empty() && peer.hosted_models.is_empty() {
+        return None;
+    }
+    if split.moe_shard.is_some() {
+        return Some("moe_shard".to_string());
+    }
+    match split.role.as_deref() {
+        Some("pipeline_host") => Some("split_host".to_string()),
+        Some("pipeline_worker") => Some("split_worker".to_string()),
+        _ => Some("solo".to_string()),
+    }
+}
+
 /// Coarse classification of a peer's role inside the mesh's current
 /// inference topology. Pure inference from observable gossip — no live
 /// election state is required.
@@ -1552,6 +1569,7 @@ impl MeshApi {
                         .map(|t| (t.model.clone(), t.measured_ttft_ms_p50))
                         .collect(),
                     first_joined_mesh_ts: p.first_joined_mesh_ts,
+                    serving_mode: serving_mode_from_classification(p, &split_classification),
                     split_role: split_classification.role,
                     split_group: split_classification.group,
                     moe_shard: split_classification.moe_shard,

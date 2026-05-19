@@ -278,6 +278,9 @@ pub(super) struct PeerPayload {
     /// runtime does NOT (yet) propagate live MoE shard membership or
     /// per-layer assignment over gossip; clients that want layer ranges or
     /// expert counts should treat those fields as best-effort hints.
+    /// Phase 2: coarse serving topology for marketplace UI (`solo` default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) serving_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) split_role: Option<String>,
     /// When this peer is participating in pipeline-parallel inference for a
@@ -673,6 +676,7 @@ mod tests {
             measured_tps_p50_by_model: std::collections::HashMap::new(),
             measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
+            serving_mode: None,
             split_role: None,
             split_group: None,
             moe_shard: None,
@@ -707,6 +711,7 @@ mod tests {
             measured_tps_p50_by_model: std::collections::HashMap::new(),
             measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
+            serving_mode: None,
             split_role: None,
             split_group: None,
             moe_shard: None,
@@ -973,6 +978,7 @@ mod tests {
             measured_tps_p50_by_model: std::collections::HashMap::new(),
             measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
+            serving_mode: None,
             split_role: None,
             split_group: None,
             moe_shard: None,
@@ -1014,6 +1020,7 @@ mod tests {
             measured_tps_p50_by_model: std::collections::HashMap::new(),
             measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
+            serving_mode: None,
             split_role: None,
             split_group: None,
             moe_shard: None,
@@ -1061,6 +1068,7 @@ mod tests {
             measured_tps_p50_by_model: tps,
             measured_ttft_ms_p50_by_model: ttft,
             first_joined_mesh_ts: None,
+            serving_mode: None,
             split_role: None,
             split_group: None,
             moe_shard: None,
