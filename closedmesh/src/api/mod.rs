@@ -2854,7 +2854,7 @@ mod tests {
             inflight_requests: 0,
             system_ram_bytes: 0,
             model_timings: vec![],
-           native_baselines: vec![],
+            native_baselines: vec![],
             capability: crate::mesh::NodeCapability::default(),
         }
     }
@@ -3137,7 +3137,7 @@ mod tests {
             inflight_requests: 0,
             system_ram_bytes: 0,
             model_timings: vec![],
-           native_baselines: vec![],
+            native_baselines: vec![],
             capability: crate::mesh::NodeCapability::default(),
         }
     }

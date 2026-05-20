@@ -644,7 +644,7 @@ async fn test_moe_remote_failure_removes_peer_for_faildown() {
         inflight_requests: 0,
         system_ram_bytes: 0,
         model_timings: vec![],
-       native_baselines: vec![],
+        native_baselines: vec![],
         capability: crate::mesh::NodeCapability::default(),
     })
     .await;

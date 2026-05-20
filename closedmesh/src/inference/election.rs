@@ -228,20 +228,13 @@ fn peer_can_solo_model(peer: &mesh::PeerInfo, model_bytes: u64) -> bool {
     peer.fast_memory_bytes() >= min_vram_for_solo(model_bytes)
 }
 
-fn any_other_peer_can_solo(
-    model: &str,
-    model_bytes: u64,
-    peers: &[mesh::PeerInfo],
-) -> bool {
+fn any_other_peer_can_solo(model: &str, model_bytes: u64, peers: &[mesh::PeerInfo]) -> bool {
     peers
         .iter()
         .any(|p| p.is_assigned_model(model) && peer_can_solo_model(p, model_bytes))
 }
 
-fn demand_count(
-    catalog_demand: &std::collections::HashMap<String, u64>,
-    model: &str,
-) -> u64 {
+fn demand_count(catalog_demand: &std::collections::HashMap<String, u64>, model: &str) -> u64 {
     catalog_demand.get(model).copied().unwrap_or(0)
 }
 
@@ -332,27 +325,20 @@ fn sort_models_by_demand(
 /// Routing preference for a target: lower is better. Solo end-to-end hosts
 /// win over pipeline-split hosts when both can serve the same model name.
 impl InferenceTarget {
-    pub fn priority_class(
-        &self,
-        model: &str,
-        model_bytes: u64,
-        peers: &[mesh::PeerInfo],
-    ) -> u8 {
+    pub fn priority_class(&self, model: &str, model_bytes: u64, peers: &[mesh::PeerInfo]) -> u8 {
         match self {
             InferenceTarget::Local(_) | InferenceTarget::MoeLocal(_) => 0,
-            InferenceTarget::Remote(peer_id) | InferenceTarget::MoeRemote(peer_id) => {
-                peers
-                    .iter()
-                    .find(|p| p.id == *peer_id)
-                    .map(|p| {
-                        if is_split_pipeline_host_for_model(p, model, model_bytes, peers) {
-                            1
-                        } else {
-                            0
-                        }
-                    })
-                    .unwrap_or(0)
-            }
+            InferenceTarget::Remote(peer_id) | InferenceTarget::MoeRemote(peer_id) => peers
+                .iter()
+                .find(|p| p.id == *peer_id)
+                .map(|p| {
+                    if is_split_pipeline_host_for_model(p, model, model_bytes, peers) {
+                        1
+                    } else {
+                        0
+                    }
+                })
+                .unwrap_or(0),
             InferenceTarget::None => 2,
         }
     }
@@ -371,9 +357,7 @@ fn is_split_pipeline_host_for_model(
         return false;
     }
     peers.iter().any(|p| {
-        p.id != host.id
-            && p.is_assigned_model(model)
-            && matches!(p.role, NodeRole::Worker)
+        p.id != host.id && p.is_assigned_model(model) && matches!(p.role, NodeRole::Worker)
     })
 }
 
@@ -385,10 +369,7 @@ fn routing_stable_hash(local_id: iroh::EndpointId, host_id: iroh::EndpointId) ->
         .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
 }
 
-fn inflight_for_target(
-    target: &InferenceTarget,
-    peers: &[mesh::PeerInfo],
-) -> u64 {
+fn inflight_for_target(target: &InferenceTarget, peers: &[mesh::PeerInfo]) -> u64 {
     match target {
         InferenceTarget::Local(_) | InferenceTarget::MoeLocal(_) => 0,
         InferenceTarget::Remote(peer_id) | InferenceTarget::MoeRemote(peer_id) => peers
@@ -4653,7 +4634,7 @@ mod tests {
             inflight_requests: 0,
             system_ram_bytes: 0,
             model_timings: vec![],
-           native_baselines: vec![],
+            native_baselines: vec![],
             capability: crate::mesh::NodeCapability::default(),
         }
     }

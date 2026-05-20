@@ -725,7 +725,7 @@ fn make_test_peer_info(peer_id: EndpointId) -> PeerInfo {
         inflight_requests: 0,
         system_ram_bytes: 0,
         model_timings: vec![],
-       native_baselines: vec![],
+        native_baselines: vec![],
         capability: super::NodeCapability::default(),
     }
 }
@@ -1393,7 +1393,7 @@ fn gossip_frame_roundtrip_preserves_scanned_model_metadata() {
         inflight_requests: 0,
         system_ram_bytes: 0,
         model_timings: vec![],
-       native_baselines: vec![],
+        native_baselines: vec![],
         capability: None,
     };
 
@@ -1619,7 +1619,7 @@ fn transitive_peer_update_refreshes_metadata_fields() {
         inflight_requests: 0,
         system_ram_bytes: 0,
         model_timings: vec![],
-       native_baselines: vec![],
+        native_baselines: vec![],
         capability: None,
     };
 
@@ -1696,7 +1696,7 @@ fn transitive_peer_merge_preserves_richer_direct_address() {
         inflight_requests: 0,
         system_ram_bytes: 0,
         model_timings: vec![],
-       native_baselines: vec![],
+        native_baselines: vec![],
         capability: None,
     };
 
@@ -1752,7 +1752,7 @@ fn transitive_peer_merge_preserves_richer_direct_address() {
         inflight_requests: 0,
         system_ram_bytes: 0,
         model_timings: vec![],
-       native_baselines: vec![],
+        native_baselines: vec![],
         capability: None,
     };
     apply_transitive_ann(&mut existing, &richer_addr, &ann2);
@@ -2302,7 +2302,7 @@ fn transitive_peer_update_refreshes_last_mentioned() {
         inflight_requests: 0,
         system_ram_bytes: 0,
         model_timings: vec![],
-       native_baselines: vec![],
+        native_baselines: vec![],
         capability: None,
     };
 
@@ -3214,7 +3214,7 @@ fn make_test_peer(id: EndpointId, rtt_ms: Option<u32>, vram_gb: u64) -> PeerInfo
         inflight_requests: 0,
         system_ram_bytes: 0,
         model_timings: vec![],
-       native_baselines: vec![],
+        native_baselines: vec![],
         capability: super::NodeCapability::default(),
     }
 }

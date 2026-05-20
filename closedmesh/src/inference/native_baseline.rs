@@ -438,7 +438,10 @@ mod tests {
         let body = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\
                     data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"completion_tokens\":42,\"prompt_tokens\":7}}\n\
                     data: [DONE]\n";
-        assert_eq!(parse_completion_tokens_from_sse_tail(body.as_bytes()), Some(42));
+        assert_eq!(
+            parse_completion_tokens_from_sse_tail(body.as_bytes()),
+            Some(42)
+        );
     }
 
     #[test]
