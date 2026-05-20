@@ -24,17 +24,24 @@
 //!   and emit a tracing warning rather than a user-visible error.
 //!
 //! Methodology caveats (deliberately simple):
-//! - `samples = 1` per refresh. A single 128-token output is enough for
-//!   a directional ratio; we are not trying to publish a benchmark, we
-//!   are trying to attribute "is mesh overhead 10% or 90%?" The
-//!   `samples` field on the wire exists so we can raise the count later
-//!   without a schema change.
+//! - `samples = 3` per refresh, median of 3 published. v0.66.49 → v0.66.51
+//!   ran a single sample per refresh, which a config sweep on the same
+//!   M3 Pro showed had ~30 % single-shot variance — large enough to
+//!   make the published number meaningfully different from the actual
+//!   capability. v0.66.52 raised the count to 3 (sorted, middle value
+//!   wins). The `samples` field on the wire was always there for this;
+//!   the gossip schema didn't need to change.
 //! - The synthetic prompt asks for ~80–128 output tokens with `temperature=0`
 //!   and a fixed seed, so the same model produces the same shape of
 //!   output across runs. This is not an apples-to-apples comparison
 //!   with through-mesh traffic (which has variable prompt + output
 //!   shapes); it is a *baseline* the through-mesh number can be
 //!   referenced against.
+//! - Inter-sample delay is 1 s so consecutive runs don't race the same
+//!   prompt cache state, but small enough that the whole 3-sample
+//!   sweep finishes in ~30 s on Apple Silicon. Failed samples in a
+//!   sweep are dropped silently; we still publish a median across the
+//!   surviving subset (down to 1) rather than blank the cache.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -59,6 +66,16 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 /// decode rate dominates over TTFT noise without waiting forever on
 /// slow hardware.
 const MAX_TOKENS: u32 = 128;
+/// Samples per refresh. 3 gives a median that tolerates one outlier
+/// run without inflating measurement time past ~30 s. See module-level
+/// methodology note for why this isn't 1 anymore.
+const SAMPLES_PER_REFRESH: u32 = 3;
+/// Pause between consecutive samples in a single refresh sweep. Long
+/// enough that prompt-cache state from the previous run isn't reused
+/// (llama-server's prompt cache TTL is much higher, but the delay also
+/// gives the GPU command queue a moment to drain), short enough that
+/// 3 samples still finish in ~30 s on Apple Silicon.
+const INTER_SAMPLE_DELAY: Duration = Duration::from_secs(1);
 
 /// On-disk cache shape. Keyed by model name; the entry stores
 /// `model_file_mtime_secs` so reinstalling/requantizing the model
@@ -308,6 +325,74 @@ pub fn model_file_mtime_secs(path: &std::path::Path) -> Option<u64> {
     mtime.duration_since(UNIX_EPOCH).ok().map(|d| d.as_secs())
 }
 
+/// Reduce a vec of single-sample measurements to one median measurement
+/// plus the count of surviving samples. Pulled out of
+/// [`measure_baseline_median`] so the median selection is testable
+/// without spinning up an HTTP server.
+///
+/// Returns `None` for an empty input. TPS and TTFT are sorted and
+/// medianed independently — they're correlated (a slow run is slow on
+/// both) but not identical, and per-axis sort matches what a downstream
+/// reader would compute from the raw samples themselves.
+fn median_measurement(
+    samples: Vec<BaselineMeasurement>,
+    backend: String,
+) -> Option<(BaselineMeasurement, u32)> {
+    if samples.is_empty() {
+        return None;
+    }
+    let mut tps: Vec<f64> = samples.iter().map(|m| m.native_tps_p50).collect();
+    let mut ttft: Vec<u64> = samples.iter().map(|m| m.native_ttft_ms_p50).collect();
+    tps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    ttft.sort();
+    let mid = samples.len() / 2;
+    Some((
+        BaselineMeasurement {
+            native_tps_p50: tps[mid],
+            native_ttft_ms_p50: ttft[mid],
+            backend,
+            measured_at_unix_secs: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        },
+        samples.len() as u32,
+    ))
+}
+
+/// Run [`measure_baseline`] up to `n` times with a 1 s gap between
+/// samples and return the median TPS / TTFT across the runs that
+/// succeeded. `Err` only when *every* sample failed; partial sample
+/// sets (1 of 3, 2 of 3) still produce a usable measurement so a
+/// flaky network blip doesn't blank a peer's published baseline.
+async fn measure_baseline_median(
+    req: &BaselineRequest,
+    n: u32,
+) -> anyhow::Result<(BaselineMeasurement, u32)> {
+    let mut samples: Vec<BaselineMeasurement> = Vec::with_capacity(n as usize);
+    let mut last_err: Option<anyhow::Error> = None;
+    for i in 0..n {
+        if i > 0 {
+            tokio::time::sleep(INTER_SAMPLE_DELAY).await;
+        }
+        match measure_baseline(req).await {
+            Ok(m) => samples.push(m),
+            Err(e) => {
+                tracing::warn!(
+                    target: "closedmesh::native_baseline",
+                    model = %req.model,
+                    sample_index = i,
+                    "native baseline sample failed: {e}"
+                );
+                last_err = Some(e);
+            }
+        }
+    }
+    median_measurement(samples, req.backend.clone()).ok_or_else(|| {
+        last_err.unwrap_or_else(|| anyhow::anyhow!("all native baseline samples failed"))
+    })
+}
+
 /// Settle delay before issuing the first synthetic measurement. Lets
 /// llama-server warm up its KV cache and any backend-side
 /// pre-allocation, so the first baseline doesn't measure a cold start.
@@ -361,20 +446,22 @@ pub fn spawn_collector(
             }
 
             // Step 2: cache miss or stale → run a fresh synthetic
-            // measurement against the local llama-server.
+            // measurement against the local llama-server. Take
+            // `SAMPLES_PER_REFRESH` shots and publish the median; see
+            // the module docstring for why single-shot was insufficient.
             let req = BaselineRequest {
                 model: model.clone(),
                 http_port,
                 backend: backend.clone(),
             };
-            match measure_baseline(&req).await {
-                Ok(meas) => {
+            match measure_baseline_median(&req, SAMPLES_PER_REFRESH).await {
+                Ok((meas, sample_count)) => {
                     let entry = NativeBaselineEntry {
                         model: model.clone(),
                         native_tps_p50: meas.native_tps_p50,
                         native_ttft_ms_p50: meas.native_ttft_ms_p50,
                         measured_at_unix_secs: meas.measured_at_unix_secs,
-                        samples: 1,
+                        samples: sample_count,
                         backend: meas.backend.clone(),
                     };
                     if let Some(ref cp) = cache_file {
@@ -404,6 +491,7 @@ pub fn spawn_collector(
                         model = %model,
                         native_tps_p50 = meas.native_tps_p50,
                         native_ttft_ms_p50 = meas.native_ttft_ms_p50,
+                        samples = sample_count,
                         backend = %backend,
                         "recorded native baseline"
                     );
@@ -499,6 +587,41 @@ mod tests {
         assert!(is_fresh(&entry, Some(1_000_000)));
         // Different mtime → not fresh, force re-run.
         assert!(!is_fresh(&entry, Some(2_000_000)));
+    }
+
+    fn meas(tps: f64, ttft: u64) -> BaselineMeasurement {
+        BaselineMeasurement {
+            native_tps_p50: tps,
+            native_ttft_ms_p50: ttft,
+            backend: "metal".to_string(),
+            measured_at_unix_secs: 0,
+        }
+    }
+
+    #[test]
+    fn median_picks_middle_of_three_per_axis() {
+        // Real-world example from the v0.66.51 sweep: same hardware,
+        // same config, three back-to-back runs returned 12.34, 14.30,
+        // 17.58 t/s. Median is the middle value, not the mean.
+        let samples = vec![meas(14.30, 1159), meas(12.34, 1220), meas(17.58, 1014)];
+        let (m, n) = median_measurement(samples, "metal".to_string()).unwrap();
+        assert_eq!(n, 3);
+        assert!((m.native_tps_p50 - 14.30).abs() < 1e-9);
+        assert_eq!(m.native_ttft_ms_p50, 1159);
+    }
+
+    #[test]
+    fn median_is_resilient_to_partial_sample_failures() {
+        // 1 of 3 succeeded — still publish that one rather than blank
+        // the cache. (The collector logs the failures separately.)
+        let only_one = vec![meas(14.41, 734)];
+        let (m, n) = median_measurement(only_one, "metal".to_string()).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(m.native_ttft_ms_p50, 734);
+
+        // Empty input → None; the collector translates that to keeping
+        // the previously-cached entry, not gossiping nothing.
+        assert!(median_measurement(vec![], "metal".to_string()).is_none());
     }
 
     #[test]
