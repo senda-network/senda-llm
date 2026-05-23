@@ -228,13 +228,20 @@ fn peer_can_solo_model(peer: &mesh::PeerInfo, model_bytes: u64) -> bool {
     peer.fast_memory_bytes() >= min_vram_for_solo(model_bytes)
 }
 
-fn any_other_peer_can_solo(model: &str, model_bytes: u64, peers: &[mesh::PeerInfo]) -> bool {
+fn any_other_peer_can_solo(
+    model: &str,
+    model_bytes: u64,
+    peers: &[mesh::PeerInfo],
+) -> bool {
     peers
         .iter()
         .any(|p| p.is_assigned_model(model) && peer_can_solo_model(p, model_bytes))
 }
 
-fn demand_count(catalog_demand: &std::collections::HashMap<String, u64>, model: &str) -> u64 {
+fn demand_count(
+    catalog_demand: &std::collections::HashMap<String, u64>,
+    model: &str,
+) -> u64 {
     catalog_demand.get(model).copied().unwrap_or(0)
 }
 
@@ -325,20 +332,27 @@ fn sort_models_by_demand(
 /// Routing preference for a target: lower is better. Solo end-to-end hosts
 /// win over pipeline-split hosts when both can serve the same model name.
 impl InferenceTarget {
-    pub fn priority_class(&self, model: &str, model_bytes: u64, peers: &[mesh::PeerInfo]) -> u8 {
+    pub fn priority_class(
+        &self,
+        model: &str,
+        model_bytes: u64,
+        peers: &[mesh::PeerInfo],
+    ) -> u8 {
         match self {
             InferenceTarget::Local(_) | InferenceTarget::MoeLocal(_) => 0,
-            InferenceTarget::Remote(peer_id) | InferenceTarget::MoeRemote(peer_id) => peers
-                .iter()
-                .find(|p| p.id == *peer_id)
-                .map(|p| {
-                    if is_split_pipeline_host_for_model(p, model, model_bytes, peers) {
-                        1
-                    } else {
-                        0
-                    }
-                })
-                .unwrap_or(0),
+            InferenceTarget::Remote(peer_id) | InferenceTarget::MoeRemote(peer_id) => {
+                peers
+                    .iter()
+                    .find(|p| p.id == *peer_id)
+                    .map(|p| {
+                        if is_split_pipeline_host_for_model(p, model, model_bytes, peers) {
+                            1
+                        } else {
+                            0
+                        }
+                    })
+                    .unwrap_or(0)
+            }
             InferenceTarget::None => 2,
         }
     }
@@ -357,7 +371,9 @@ fn is_split_pipeline_host_for_model(
         return false;
     }
     peers.iter().any(|p| {
-        p.id != host.id && p.is_assigned_model(model) && matches!(p.role, NodeRole::Worker)
+        p.id != host.id
+            && p.is_assigned_model(model)
+            && matches!(p.role, NodeRole::Worker)
     })
 }
 
@@ -369,7 +385,10 @@ fn routing_stable_hash(local_id: iroh::EndpointId, host_id: iroh::EndpointId) ->
         .fold(0u64, |acc, &b| acc.wrapping_mul(31).wrapping_add(b as u64))
 }
 
-fn inflight_for_target(target: &InferenceTarget, peers: &[mesh::PeerInfo]) -> u64 {
+fn inflight_for_target(
+    target: &InferenceTarget,
+    peers: &[mesh::PeerInfo],
+) -> u64 {
     match target {
         InferenceTarget::Local(_) | InferenceTarget::MoeLocal(_) => 0,
         InferenceTarget::Remote(peer_id) | InferenceTarget::MoeRemote(peer_id) => peers
@@ -430,6 +449,44 @@ fn sort_targets_for_model(
 /// ≤ 12 s. Doubling for safety gets us 30. Anything longer and we should be
 /// looking at a stuck peer, not an honest-but-slow one.
 pub const HOST_CLAIM_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Minimum closedmesh runtime for participating in pipeline-parallel host
+/// election and split planning. Peers below this (e.g. 0.66.18 during the
+/// May 2026 DeepSeek-70B deadlock) are ignored for cohort capacity and host
+/// picks so the rest of the mesh can converge without waiting for them to
+/// upgrade. Shipped in v0.66.53 alongside `peers_for_pipeline_election`.
+pub const MIN_PIPELINE_ELECTION_PEER_VERSION: &str = "0.66.20";
+
+/// True when `version` meets [`MIN_PIPELINE_ELECTION_PEER_VERSION`] (or
+/// `CLOSEDMESH_MIN_PIPELINE_PEER_VERSION` when set). Missing or malformed
+/// versions are treated as too old — safer than letting a silent legacy peer
+/// block election.
+pub fn peer_supports_pipeline_election(version: Option<&str>) -> bool {
+    let min = std::env::var("CLOSEDMESH_MIN_PIPELINE_PEER_VERSION")
+        .ok()
+        .and_then(|raw| semver::Version::parse(raw.trim()).ok())
+        .unwrap_or_else(|| {
+            semver::Version::parse(MIN_PIPELINE_ELECTION_PEER_VERSION)
+                .expect("MIN_PIPELINE_ELECTION_PEER_VERSION is valid semver")
+        });
+    let Some(raw) = version.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    let Ok(peer_v) = semver::Version::parse(raw) else {
+        return false;
+    };
+    peer_v >= min
+}
+
+/// Peers assigned to this model that are new enough for split election /
+/// worker planning. Outdated stragglers stay in gossip but do not count.
+pub fn peers_for_pipeline_election(model_peers: &[mesh::PeerInfo]) -> Vec<mesh::PeerInfo> {
+    model_peers
+        .iter()
+        .filter(|p| peer_supports_pipeline_election(p.version.as_deref()))
+        .cloned()
+        .collect()
+}
 
 /// Filter a peer set down to those that can still credibly become host for
 /// this model. The election picks the highest-fast-memory peer, but if that
@@ -2651,6 +2708,37 @@ pub async fn election_loop(
             .cloned()
             .collect();
 
+        // Splitting decision: only split when forced OR when the model
+        // genuinely doesn't fit on this node alone. If it fits, every
+        // node serving this model runs its own independent llama-server
+        // (no election needed — everyone is a host).
+        let requires_split = force_split || !model_fits_locally;
+        let election_peers = if requires_split {
+            peers_for_pipeline_election(&model_peers)
+        } else {
+            model_peers.clone()
+        };
+        if requires_split {
+            let outdated: Vec<_> = model_peers
+                .iter()
+                .filter(|p| !peer_supports_pipeline_election(p.version.as_deref()))
+                .map(|p| {
+                    (
+                        p.hostname.clone().unwrap_or_else(|| p.id.fmt_short().to_string()),
+                        p.version.clone().unwrap_or_else(|| "unknown".to_string()),
+                    )
+                })
+                .collect();
+            if !outdated.is_empty() {
+                tracing::warn!(
+                    model = %model_name,
+                    outdated = ?outdated,
+                    min = MIN_PIPELINE_ELECTION_PEER_VERSION,
+                    "excluding outdated peers from pipeline election cohort"
+                );
+            }
+        }
+
         // Stamp first-seen for any newly-observed peer. We use this for the
         // host-claim grace check below — see `viable_host_candidates` and
         // issue #9. Stamping happens BEFORE filtering so that even a peer
@@ -2665,22 +2753,24 @@ pub async fn election_loop(
         first_observed.retain(|id, _| model_peers.iter().any(|p| &p.id == id));
 
         let grace_host_candidates =
-            viable_host_candidates(&model_peers, &first_observed, now, HOST_CLAIM_GRACE);
-        let host_candidates =
+            viable_host_candidates(&election_peers, &first_observed, now, HOST_CLAIM_GRACE);
+        let mut host_candidates =
             ram_filtered_host_candidates(grace_host_candidates.clone(), model_bytes);
+        // When every peer is past HOST_CLAIM_GRACE but still Worker, the
+        // grace filter returns an empty set and (pre-v0.66.53) every node
+        // self-elected. Fall back to the version-capable cohort so exactly
+        // one runner-up can claim host.
+        if requires_split && host_candidates.is_empty() && !election_peers.is_empty() {
+            host_candidates =
+                ram_filtered_host_candidates(election_peers.clone(), model_bytes);
+        }
         let desired_launch = build_dense_launch_plan(
             local_launch_vram,
             model_bytes,
             force_split,
             &model_name,
-            &model_peers,
+            &election_peers,
         );
-
-        // Splitting decision: only split when forced OR when the model
-        // genuinely doesn't fit on this node alone. If it fits, every
-        // node serving this model runs its own independent llama-server
-        // (no election needed — everyone is a host).
-        let requires_split = force_split || !model_fits_locally;
 
         // If our recent `start_llama` attempts have piled up (e.g. all
         // workers behind broken iroh tunnels — see issue #10) we force
@@ -2709,6 +2799,12 @@ pub async fn election_loop(
         }
 
         let i_am_host = if host_backoff_active || in_discovery_grace {
+            false
+        } else if requires_split && !peer_supports_pipeline_election(Some(crate::VERSION)) {
+            // This node is too old to coordinate a split — stay worker so
+            // current runtimes can elect among themselves.
+            false
+        } else if requires_split && election_peers.is_empty() {
             false
         } else if requires_split {
             // Distributed mode: elect one host from the model group using the
@@ -2777,8 +2873,13 @@ pub async fn election_loop(
         // the May 17 2026 fix — see `current_cohort_still_viable`. Without
         // it, RTT jitter that re-orders worker preference tears down a
         // perfectly healthy llama-server every gossip tick.
+        let cohort_for_viability = if requires_split {
+            &election_peers
+        } else {
+            &model_peers
+        };
         let running_cohort_stays_viable = matches!(&last_running_plan, Some(running)
-            if current_cohort_still_viable(running, &model_peers, local_launch_vram, model_bytes));
+            if current_cohort_still_viable(running, cohort_for_viability, local_launch_vram, model_bytes));
         let desired_matches_running = desired_launch.running_plan() == last_running_plan;
         if currently_host && i_am_host && (desired_matches_running || running_cohort_stays_viable) {
             // Just update the target map (in case other models' hosts changed)
@@ -2926,7 +3027,7 @@ pub async fn election_loop(
 
             // In solo mode, pass empty model_peers so start_llama won't use any workers
             let peers_for_launch = if matches!(desired_launch, DenseLaunchPlan::Split { .. }) {
-                &model_peers[..]
+                &election_peers[..]
             } else {
                 &[]
             };
@@ -4796,6 +4897,20 @@ mod tests {
              that if anyone ever wires inflated vram back into the host arg \
              we surface the asymmetry in CI rather than in the field"
         );
+    }
+
+    #[test]
+    fn peers_for_pipeline_election_drops_outdated_runtime() {
+        let model = "DeepSeek-R1-Distill-70B-Q4_K_M";
+        let id_old = make_id(1);
+        let id_new = make_id(2);
+        let mut old = make_dense_peer(id_old, 26 * 1024 * 1024 * 1024, None, model);
+        old.version = Some("0.66.18".to_string());
+        let mut new_peer = make_dense_peer(id_new, 16 * 1024 * 1024 * 1024, None, model);
+        new_peer.version = Some("0.66.52".to_string());
+        let filtered = peers_for_pipeline_election(&[old, new_peer.clone()]);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].id, id_new);
     }
 
     /// Issue #9 / v0.66.18 → v0.66.20 mixed-version deadlock regression.

@@ -27,6 +27,11 @@ pub(crate) enum StuckReason {
         peer_count: usize,
     },
     NoHostElected,
+    /// Cohort includes peers below [`election::MIN_PIPELINE_ELECTION_PEER_VERSION`].
+    OutdatedPeersBlockingElection {
+        min_version: String,
+        peers: Vec<(String, String)>,
+    },
     LlamaServerStartFailed {
         detail: String,
     },
@@ -65,6 +70,16 @@ impl StuckReason {
             Self::NoHostElected => format!(
                 "`{model}` has been loading too long: no peer has claimed host. Check peer connectivity and host election logs."
             ),
+            Self::OutdatedPeersBlockingElection { min_version, peers } => {
+                let list = peers
+                    .iter()
+                    .map(|(host, ver)| format!("{host} (v{ver})"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "`{model}` has been loading too long: outdated peer(s) in the cohort block pipeline election (need closedmesh >= {min_version}): {list}. Upgrade those machines or wait for auto-update; current runtimes ignore them for host picks."
+                )
+            }
             Self::LlamaServerStartFailed { detail } => format!(
                 "`{model}` has been loading too long: llama-server startup appears to be failing repeatedly. {detail}"
             ),
@@ -79,6 +94,8 @@ pub(crate) struct LoadingPeerSnapshot {
     pub system_ram_bytes: u64,
     pub serving_models: Vec<String>,
     pub hosted_models: Vec<String>,
+    pub version: Option<String>,
+    pub hostname: Option<String>,
 }
 
 impl From<&PeerInfo> for LoadingPeerSnapshot {
@@ -89,6 +106,8 @@ impl From<&PeerInfo> for LoadingPeerSnapshot {
             system_ram_bytes: peer.system_ram_bytes,
             serving_models: peer.serving_models.clone(),
             hosted_models: peer.hosted_models.clone(),
+            version: peer.version.clone(),
+            hostname: peer.hostname.clone(),
         }
     }
 }
@@ -168,6 +187,25 @@ pub(crate) fn diagnose_stuck_loading(
         }
     }
 
+    let outdated: Vec<(String, String)> = cohort_peers
+        .iter()
+        .filter(|p| !crate::inference::election::peer_supports_pipeline_election(p.version.as_deref()))
+        .map(|p| {
+            (
+                p.hostname
+                    .clone()
+                    .unwrap_or_else(|| "peer".to_string()),
+                p.version.clone().unwrap_or_else(|| "unknown".to_string()),
+            )
+        })
+        .collect();
+    if !outdated.is_empty() {
+        return StuckReason::OutdatedPeersBlockingElection {
+            min_version: crate::inference::election::MIN_PIPELINE_ELECTION_PEER_VERSION.to_string(),
+            peers: outdated,
+        };
+    }
+
     StuckReason::NoHostElected
 }
 
@@ -244,6 +282,8 @@ mod tests {
             system_ram_bytes: 0,
             serving_models: serving.iter().map(|s| s.to_string()).collect(),
             hosted_models: hosted.iter().map(|s| s.to_string()).collect(),
+            version: Some(crate::VERSION.to_string()),
+            hostname: None,
         }
     }
 
