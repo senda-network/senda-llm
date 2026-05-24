@@ -3418,6 +3418,14 @@ async fn send_503_inner(
 /// 3. Injects the plan into the request
 /// 4. Forwards to the strong model via HTTP
 /// 5. Streams the response back to the client
+///
+/// v0.66.55: also records the per-model TTFT / TPS sample on the
+/// success path so split-host serves (planner + strong + workers)
+/// contribute to the same rolling-1h marketplace metrics that the
+/// direct `route_local_attempt` path already publishes. Without this,
+/// any model elected through the pipeline path was invisible to the
+/// `closedmesh.com/status` Catalog and the public KPI dashboard.
+#[allow(clippy::too_many_arguments)]
 pub async fn pipeline_proxy_local(
     client_stream: &mut TcpStream,
     request_path: &str,
@@ -3425,6 +3433,7 @@ pub async fn pipeline_proxy_local(
     planner_port: u16,
     planner_model: &str,
     strong_port: u16,
+    strong_model: &str,
     node: &mesh::Node,
 ) -> PipelineProxyResult {
     if !pipeline_request_supported(request_path, &body) {
@@ -3432,7 +3441,6 @@ pub async fn pipeline_proxy_local(
         return PipelineProxyResult::FallbackToDirect;
     }
 
-    // Extract whether this is a streaming request
     let is_streaming = body
         .get("stream")
         .and_then(|s| s.as_bool())
@@ -3465,13 +3473,20 @@ pub async fn pipeline_proxy_local(
         }
     }
 
-    // Forward to strong model — use reqwest for full HTTP handling
     let strong_url = format!("http://127.0.0.1:{strong_port}/v1/chat/completions");
 
     let _inflight = node.begin_inflight_request();
 
+    // v0.66.55 marketplace-metrics plumbing. Mirrors
+    // `route_local_attempt`: TTFT is measured from the moment we
+    // commit the strong-model request to the moment the first body
+    // byte arrives; the decode duration is wall time from first byte
+    // to last byte; the sample is only recorded on 2xx + non-zero
+    // completion tokens so failures/empty responses do not skew the
+    // median TPS the Catalog surfaces.
+    let request_committed_at = std::time::Instant::now();
+
     if is_streaming {
-        // Streaming: forward SSE chunks to client
         match http_client.post(&strong_url).json(&body).send().await {
             Ok(resp) => {
                 let status = resp.status();
@@ -3482,33 +3497,57 @@ pub async fn pipeline_proxy_local(
                     .unwrap_or("text/event-stream")
                     .to_string();
 
-                // Send HTTP response headers
                 let header = format!(
                     "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nTransfer-Encoding: chunked\r\nCache-Control: no-cache\r\n\r\n",
                 );
                 if client_stream.write_all(header.as_bytes()).await.is_err() {
+                    log_pipeline_metric_skip(
+                        strong_model,
+                        status.as_u16(),
+                        "client_disconnected_before_body",
+                    );
                     return PipelineProxyResult::Handled;
                 }
 
-                // Stream body chunks
                 use tokio_stream::StreamExt;
                 let mut stream = resp.bytes_stream();
+                let mut first_byte_at: Option<std::time::Instant> = None;
+                let mut tail: Vec<u8> = Vec::with_capacity(SSE_USAGE_TAIL_BYTES);
+                let mut client_disconnected = false;
+
                 while let Some(chunk) = stream.next().await {
                     match chunk {
                         Ok(bytes) => {
-                            // HTTP chunked encoding
+                            if first_byte_at.is_none() {
+                                first_byte_at = Some(std::time::Instant::now());
+                            }
+                            // Maintain a rolling tail of the last
+                            // SSE_USAGE_TAIL_BYTES so we can fish the
+                            // usage chunk out without buffering the
+                            // whole response.
+                            if !bytes.is_empty() {
+                                tail.extend_from_slice(&bytes);
+                                if tail.len() > SSE_USAGE_TAIL_BYTES {
+                                    let drop = tail.len() - SSE_USAGE_TAIL_BYTES;
+                                    tail.drain(..drop);
+                                }
+                            }
+
                             let chunk_header = format!("{:x}\r\n", bytes.len());
                             if client_stream
                                 .write_all(chunk_header.as_bytes())
                                 .await
                                 .is_err()
                             {
+                                client_disconnected = true;
                                 break;
                             }
                             if client_stream.write_all(&bytes).await.is_err() {
+                                client_disconnected = true;
                                 break;
                             }
                             if client_stream.write_all(b"\r\n").await.is_err() {
+                                client_disconnected = true;
                                 break;
                             }
                         }
@@ -3518,9 +3557,31 @@ pub async fn pipeline_proxy_local(
                         }
                     }
                 }
-                // Terminal chunk
                 let _ = client_stream.write_all(b"0\r\n\r\n").await;
                 let _ = client_stream.shutdown().await;
+
+                let status_u16 = status.as_u16();
+                if client_disconnected {
+                    log_pipeline_metric_skip(strong_model, status_u16, "client_disconnected");
+                } else if !(200..300).contains(&status_u16) {
+                    log_pipeline_metric_skip(strong_model, status_u16, "non_2xx_status");
+                } else if let Some(first) = first_byte_at {
+                    let ttft = first.duration_since(request_committed_at);
+                    let decode_duration = first.elapsed();
+                    let tokens = parse_completion_tokens_from_sse_tail(&tail);
+                    record_pipeline_completion(
+                        node,
+                        strong_model,
+                        status_u16,
+                        ttft,
+                        decode_duration,
+                        tokens,
+                        "streaming",
+                    );
+                } else {
+                    log_pipeline_metric_skip(strong_model, status_u16, "no_body_bytes_received");
+                }
+
                 PipelineProxyResult::Handled
             }
             Err(e) => {
@@ -3531,12 +3592,15 @@ pub async fn pipeline_proxy_local(
             }
         }
     } else {
-        // Non-streaming: simple request/response
         match http_client.post(&strong_url).json(&body).send().await {
             Ok(resp) => {
                 let status = resp.status();
                 match resp.bytes().await {
                     Ok(resp_bytes) => {
+                        let first_byte_at = std::time::Instant::now();
+                        let ttft = first_byte_at.duration_since(request_committed_at);
+                        let decode_duration = first_byte_at.elapsed();
+
                         let header = format!(
                             "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
                             resp_bytes.len()
@@ -3544,6 +3608,23 @@ pub async fn pipeline_proxy_local(
                         let _ = client_stream.write_all(header.as_bytes()).await;
                         let _ = client_stream.write_all(&resp_bytes).await;
                         let _ = client_stream.shutdown().await;
+
+                        let status_u16 = status.as_u16();
+                        if (200..300).contains(&status_u16) {
+                            let tokens = parse_completion_tokens_from_json_body(&resp_bytes);
+                            record_pipeline_completion(
+                                node,
+                                strong_model,
+                                status_u16,
+                                ttft,
+                                decode_duration,
+                                tokens,
+                                "non_streaming",
+                            );
+                        } else {
+                            log_pipeline_metric_skip(strong_model, status_u16, "non_2xx_status");
+                        }
+
                         PipelineProxyResult::Handled
                     }
                     Err(e) => {
@@ -3562,6 +3643,50 @@ pub async fn pipeline_proxy_local(
             }
         }
     }
+}
+
+/// v0.66.55: emits a single `info!` line at the metric-recording site
+/// for the pipeline path so a default-level `~/.closedmesh/logs/stderr.log`
+/// is self-diagnostic — operators can confirm a split-host serve is or
+/// is not feeding the Catalog metrics without enabling `RUST_LOG=debug`.
+fn record_pipeline_completion(
+    node: &mesh::Node,
+    model: &str,
+    status_code: u16,
+    ttft: std::time::Duration,
+    decode_duration: std::time::Duration,
+    completion_tokens: Option<u64>,
+    flavour: &str,
+) {
+    match completion_tokens {
+        Some(tokens) if tokens > 0 => {
+            node.record_local_inference_completion(Some(model), ttft, decode_duration, tokens);
+            tracing::info!(
+                model = %model,
+                status_code,
+                completion_tokens = tokens,
+                ttft_ms = ttft.as_millis() as u64,
+                decode_ms = decode_duration.as_millis() as u64,
+                flavour,
+                "pipeline_proxy: recorded marketplace metric sample"
+            );
+        }
+        Some(_) => {
+            log_pipeline_metric_skip(model, status_code, "zero_completion_tokens");
+        }
+        None => {
+            log_pipeline_metric_skip(model, status_code, "usage_chunk_missing");
+        }
+    }
+}
+
+fn log_pipeline_metric_skip(model: &str, status_code: u16, reason: &str) {
+    tracing::info!(
+        model = %model,
+        status_code,
+        reason,
+        "pipeline_proxy: skipped marketplace metric sample"
+    );
 }
 
 #[cfg(test)]

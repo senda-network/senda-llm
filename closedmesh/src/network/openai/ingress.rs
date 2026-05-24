@@ -250,6 +250,7 @@ pub(crate) async fn api_proxy(
                                             planner_port,
                                             &planner_name,
                                             strong_port,
+                                            strong_name,
                                             &node,
                                         )
                                         .await,
