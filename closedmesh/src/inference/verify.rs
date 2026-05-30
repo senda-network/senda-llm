@@ -31,7 +31,7 @@ use super::native_baseline::{self, LogitFingerprint};
 use crate::mesh;
 use iroh::EndpointId;
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 /// Tunables for [`compare_fingerprints`]. Defaults are deliberately
 /// conservative: they favor *not* convicting an honest peer over catching
@@ -84,8 +84,7 @@ pub fn compare_fingerprints(
     // An exact hash match is a clean positive; a mismatch with no prefix is
     // ambiguous (expected across backends), so we decline to judge.
     if reference.prefix_tokens.is_empty() || candidate.prefix_tokens.is_empty() {
-        if !reference.output_sha256.is_empty()
-            && reference.output_sha256 == candidate.output_sha256
+        if !reference.output_sha256.is_empty() && reference.output_sha256 == candidate.output_sha256
         {
             return FingerprintVerdict::Match {
                 prefix_agreement: 1.0,
@@ -179,7 +178,12 @@ impl Default for VerifierConfig {
 
 fn enforce_from_env() -> bool {
     std::env::var(ENFORCE_ENV)
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -294,8 +298,20 @@ async fn self_baseline_fingerprints(node: &mesh::Node) -> HashMap<String, LogitF
         .collect()
 }
 
-/// Pick one `(peer, model)` with an available reference, re-probe that peer,
-/// compare, and log the verdict. `Err` only signals "nothing to do this tick".
+/// Pick one auditable `(peer, model)`, establish ground truth, re-probe the
+/// peer with the identical probe, compare, and log + enforce the verdict.
+/// `Err` only signals "nothing to do this tick".
+///
+/// Ground truth is established one of two ways, preferring the stronger:
+/// - **Self-oracle (preferred).** When *we* serve the model locally, generate
+///   a fresh nonce-randomized probe, run it on our own llama-server, and send
+///   the identical probe to the suspect. Because the probe is unpredictable,
+///   a peer can't recognize it and serve the real model only for it — this is
+///   what closes the known-prompt spoof.
+/// - **Fixed reference (fallback).** Otherwise compare the suspect's fixed
+///   probe against the precomputed reference (embedded / on-disk / our own
+///   baseline). Spoofable by a peer that detects the known prompt, but still
+///   catches wrong/smaller models, canned text, and misconfiguration.
 async fn run_one_audit(
     node: &mesh::Node,
     store: &ReferenceStore,
@@ -304,8 +320,11 @@ async fn run_one_audit(
 ) -> anyhow::Result<()> {
     let local_id = node.id();
     let self_refs = self_baseline_fingerprints(node).await;
+    let local_ports = node.local_model_ports_snapshot().await;
 
-    let mut candidates: Vec<(EndpointId, String, LogitFingerprint)> = Vec::new();
+    // (peer, model) pairs we can establish ground truth for — either we serve
+    // the model (self-oracle) or we hold a fixed reference for it.
+    let mut candidates: Vec<(EndpointId, String)> = Vec::new();
     for p in node.peers().await {
         if p.id == local_id {
             continue; // never audit ourselves
@@ -314,36 +333,58 @@ async fn run_one_audit(
             continue; // only HTTP-routable hosts are reachable for a probe
         }
         for model in p.http_routable_models() {
-            let reference = store
-                .get(&model)
-                .cloned()
-                .or_else(|| self_refs.get(&model).cloned());
-            if let Some(reference) = reference {
-                candidates.push((p.id, model, reference));
+            let auditable = local_ports.contains_key(&model)
+                || store.get(&model).is_some()
+                || self_refs.contains_key(&model);
+            if auditable {
+                candidates.push((p.id, model));
             }
         }
     }
     if candidates.is_empty() {
-        anyhow::bail!("no (peer, model) pairs with an available reference");
+        anyhow::bail!("no auditable (peer, model) pairs");
     }
 
-    // Cheap, roughly-uniform pick. A verifiable random function (unbiased,
-    // unpredictable) is only needed once verdicts gate routing — that lands
-    // with the enforcement increment.
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0) as usize;
-    let idx = nanos % candidates.len();
-    let (peer_id, model, reference) = candidates.swap_remove(idx);
+    let idx = (rand::random::<u64>() as usize) % candidates.len();
+    let (peer_id, model) = candidates.swap_remove(idx);
 
-    let candidate =
-        tokio::time::timeout(config.probe_timeout, remote_probe_fingerprint(node, peer_id, &model))
-            .await
-            .map_err(|_| anyhow::anyhow!("probe timed out"))??;
+    let (reference, candidate, mode) = if let Some(&port) = local_ports.get(&model) {
+        // Self-oracle: fresh unpredictable probe, ground truth from our own model.
+        let nonce: u64 = rand::random();
+        let messages = native_baseline::probe_messages_for(nonce);
+        let reference =
+            native_baseline::local_probe_fingerprint(port, &model, messages.clone(), nonce).await?;
+        let candidate = tokio::time::timeout(
+            config.probe_timeout,
+            remote_probe_fingerprint(node, peer_id, &model, messages, nonce),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("probe timed out"))??;
+        (reference, candidate, "self_oracle_random")
+    } else {
+        // Fixed reference fallback.
+        let reference = store
+            .get(&model)
+            .cloned()
+            .or_else(|| self_refs.get(&model).cloned())
+            .ok_or_else(|| anyhow::anyhow!("reference vanished between selection and probe"))?;
+        let candidate = tokio::time::timeout(
+            config.probe_timeout,
+            remote_probe_fingerprint(
+                node,
+                peer_id,
+                &model,
+                native_baseline::probe_messages(),
+                native_baseline::PROBE_SEED,
+            ),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("probe timed out"))??;
+        (reference, candidate, "fixed_reference")
+    };
 
     let verdict = compare_fingerprints(&reference, &candidate, &config.thresholds);
-    log_verdict(peer_id, &model, &verdict);
+    log_verdict(peer_id, &model, mode, &verdict);
     apply_enforcement(node, peer_id, &model, &verdict, config, streaks).await;
     Ok(())
 }
@@ -433,20 +474,23 @@ async fn apply_enforcement(
     }
 }
 
-/// Re-probe a specific peer with the byte-identical deterministic probe used
-/// by the native baseline collector, over the mesh QUIC tunnel, and build the
-/// candidate fingerprint from the (non-streaming) response.
+/// Re-probe a specific peer with a byte-identical probe over the mesh QUIC
+/// tunnel and build the candidate fingerprint from the (non-streaming)
+/// response. `messages`/`seed` must match whatever the reference side used —
+/// the fixed probe, or a randomized self-oracle probe.
 async fn remote_probe_fingerprint(
     node: &mesh::Node,
     peer_id: EndpointId,
     model: &str,
+    messages: Vec<serde_json::Value>,
+    seed: u64,
 ) -> anyhow::Result<LogitFingerprint> {
     let body = serde_json::json!({
         "model": model,
-        "messages": native_baseline::probe_messages(),
+        "messages": messages,
         "max_tokens": native_baseline::MAX_TOKENS,
         "temperature": 0,
-        "seed": native_baseline::PROBE_SEED,
+        "seed": seed,
         "stream": false,
         "logprobs": true,
         // Don't let the peer recurse into its own consultation hooks.
@@ -489,7 +533,7 @@ async fn remote_probe_fingerprint(
         .ok_or_else(|| anyhow::anyhow!("peer probe response had no usable output"))
 }
 
-fn log_verdict(peer_id: EndpointId, model: &str, verdict: &FingerprintVerdict) {
+fn log_verdict(peer_id: EndpointId, model: &str, mode: &str, verdict: &FingerprintVerdict) {
     match verdict {
         FingerprintVerdict::Match {
             prefix_agreement,
@@ -499,6 +543,7 @@ fn log_verdict(peer_id: EndpointId, model: &str, verdict: &FingerprintVerdict) {
                 target: "closedmesh::verify",
                 peer = %peer_id.fmt_short(),
                 model,
+                mode,
                 prefix_agreement,
                 compared_tokens,
                 "verify: MATCH"
@@ -513,6 +558,7 @@ fn log_verdict(peer_id: EndpointId, model: &str, verdict: &FingerprintVerdict) {
                 target: "closedmesh::verify",
                 peer = %peer_id.fmt_short(),
                 model,
+                mode,
                 prefix_agreement,
                 compared_tokens,
                 reason,
@@ -524,6 +570,7 @@ fn log_verdict(peer_id: EndpointId, model: &str, verdict: &FingerprintVerdict) {
                 target: "closedmesh::verify",
                 peer = %peer_id.fmt_short(),
                 model,
+                mode,
                 reason,
                 "verify: inconclusive"
             );
@@ -574,7 +621,15 @@ mod tests {
         let r = fp(&ten(), "h1");
         let wrong = fp(
             &[
-                "Hola", " mundo", " esto", " es", " otro", " modelo", " muy", " distinto", " aqui",
+                "Hola",
+                " mundo",
+                " esto",
+                " es",
+                " otro",
+                " modelo",
+                " muy",
+                " distinto",
+                " aqui",
                 " vale",
             ],
             "h2",

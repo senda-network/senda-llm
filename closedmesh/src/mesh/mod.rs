@@ -1184,6 +1184,12 @@ pub struct Node {
     serving_models: Arc<Mutex<Vec<String>>>,
     served_model_descriptors: Arc<Mutex<Vec<ServedModelDescriptor>>>,
     model_runtime_descriptors: Arc<Mutex<Vec<ModelRuntimeDescriptor>>>,
+    /// Local llama-server port per model this node *solo-hosts*, e.g.
+    /// `Qwen3-8B-Q4_K_M → 63427`. Set when a solo host launch succeeds and
+    /// cleared on teardown. Never gossiped (it's a 127.0.0.1 port). The
+    /// verifier uses it to run an on-demand random probe against our own
+    /// model as ground truth (the "self-oracle" — see `inference::verify`).
+    local_model_ports: Arc<Mutex<HashMap<String, u16>>>,
     hosted_models: Arc<Mutex<Vec<String>>>,
     llama_ready: Arc<Mutex<bool>>,
     available_models: Arc<Mutex<Vec<String>>>,
@@ -2018,6 +2024,7 @@ impl Node {
                 target_failures: HashMap::new(),
                 verifier_demotions: HashMap::new(),
             })),
+            local_model_ports: Arc::new(Mutex::new(HashMap::new())),
             role: Arc::new(Mutex::new(role)),
             models: Arc::new(Mutex::new(Vec::new())),
             model_source: Arc::new(Mutex::new(None)),
@@ -2138,6 +2145,7 @@ impl Node {
                 target_failures: HashMap::new(),
                 verifier_demotions: HashMap::new(),
             })),
+            local_model_ports: Arc::new(Mutex::new(HashMap::new())),
             role: Arc::new(Mutex::new(role)),
             models: Arc::new(Mutex::new(Vec::new())),
             model_source: Arc::new(Mutex::new(None)),
@@ -2437,6 +2445,27 @@ impl Node {
                 ready: false,
             });
         }
+    }
+
+    /// Record the local llama-server port for a model we solo-host. Used by
+    /// the verifier's self-oracle to compute ground truth on demand.
+    pub async fn set_local_model_port(&self, model: &str, port: u16) {
+        let mut ports = self.local_model_ports.lock().await;
+        ports.insert(model.to_string(), port);
+    }
+
+    /// Drop the local llama-server port for a model we no longer host. Called
+    /// on every host teardown; idempotent. Clearing matters for correctness:
+    /// a stale entry pointing at a port later reused by a *different* model
+    /// would make the self-oracle compare against the wrong ground truth.
+    pub async fn clear_local_model_port(&self, model: &str) {
+        let mut ports = self.local_model_ports.lock().await;
+        ports.remove(model);
+    }
+
+    /// Snapshot of every model→local-port pair we currently solo-host.
+    pub async fn local_model_ports_snapshot(&self) -> HashMap<String, u16> {
+        self.local_model_ports.lock().await.clone()
     }
 
     pub async fn local_model_context_length(&self, model_name: &str) -> Option<u32> {

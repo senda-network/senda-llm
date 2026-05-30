@@ -2671,6 +2671,7 @@ pub async fn election_loop(
                 node.set_role(NodeRole::Worker).await;
                 currently_host = false;
                 current_local_port = None;
+                node.clear_local_model_port(&model_name).await;
                 last_running_plan = None;
                 launched_at = None;
                 let _ = host_attempt_backoff.record_failure(std::time::Instant::now());
@@ -2924,6 +2925,7 @@ pub async fn election_loop(
                     tunnel_mgr.set_http_port(0);
                     currently_host = false;
                     current_local_port = None;
+            node.clear_local_model_port(&model_name).await;
                     node.set_role(NodeRole::Worker).await;
                     last_running_plan = None;
                     update_targets(&node, &model_name, InferenceTarget::None, &target_tx).await;
@@ -2951,6 +2953,7 @@ pub async fn election_loop(
             tunnel_mgr.set_http_port(0);
             node.set_role(NodeRole::Worker).await;
             current_local_port = None;
+            node.clear_local_model_port(&model_name).await;
             last_running_plan = None;
             update_targets(&node, &model_name, InferenceTarget::None, &target_tx).await;
             on_process(None);
@@ -3127,6 +3130,10 @@ pub async fn election_loop(
             // the catalog can render the through-mesh / native ratio.
             // Solo only — see `is_solo_launch` definition.
             if is_solo_launch {
+                // Record the local llama-server port so the verifier's
+                // self-oracle can run on-demand ground-truth probes for the
+                // model we serve. Cleared on teardown.
+                node.set_local_model_port(&model_name, llama_port).await;
                 crate::inference::native_baseline::spawn_collector(
                     node.clone(),
                     model_name.clone(),
@@ -3247,6 +3254,7 @@ pub async fn election_loop(
                 }
                 currently_host = false;
                 current_local_port = None;
+            node.clear_local_model_port(&model_name).await;
                 tunnel_mgr.set_http_port(0);
                 last_running_plan = None;
                 update_targets(&node, &model_name, InferenceTarget::None, &target_tx).await;
@@ -3531,6 +3539,7 @@ async fn moe_election_loop(
             tunnel_mgr.set_http_port(0);
             currently_running = false;
             current_local_port = None;
+            node.clear_local_model_port(&model_name).await;
             on_process(None);
             on_change(false, false);
         }
@@ -4175,9 +4184,7 @@ async fn update_targets(
     if !demotions.is_empty() {
         for (model, model_targets) in targets.iter_mut() {
             model_targets.retain(|t| match t {
-                InferenceTarget::Remote(peer_id) => {
-                    !demotions.contains(&(*peer_id, model.clone()))
-                }
+                InferenceTarget::Remote(peer_id) => !demotions.contains(&(*peer_id, model.clone())),
                 _ => true,
             });
         }

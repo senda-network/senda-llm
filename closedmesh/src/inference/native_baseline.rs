@@ -104,6 +104,46 @@ pub(crate) fn probe_messages() -> Vec<serde_json::Value> {
     ]
 }
 
+/// Topic pool for the *randomized* verifier probe. Combined with a per-audit
+/// nonce these make each probe unique, so a peer can't precompute answers or
+/// recognize "the probe" and serve the real model only for it. The topics are
+/// substantive enough that a wrong/smaller model diverges on the greedy decode.
+pub(crate) const PROBE_TOPICS: &[&str] = &[
+    "latency percentiles",
+    "cache invalidation",
+    "consensus under network partition",
+    "backpressure",
+    "idempotent retries",
+    "tail latency amplification",
+    "clock skew",
+    "load shedding",
+    "connection pooling",
+    "write amplification",
+    "quorum reads",
+    "head-of-line blocking",
+    "exactly-once delivery",
+    "circuit breakers",
+    "bloom filters",
+    "vector clocks",
+];
+
+/// A fresh, unpredictable probe keyed by `nonce`. Used by the verifier's
+/// self-oracle: it generates a nonce per audit, runs this probe against its
+/// own llama-server for ground truth, and sends the *identical* probe to the
+/// suspect. Deterministic for a given nonce (temp=0 greedy), so the two sides
+/// are comparable, but unpredictable across audits.
+pub(crate) fn probe_messages_for(nonce: u64) -> Vec<serde_json::Value> {
+    let topic = PROBE_TOPICS[(nonce as usize) % PROBE_TOPICS.len()];
+    let user = format!(
+        "Probe {nonce}. In about 80 words, explain why {topic} matters when \
+         operating a distributed inference system. Be concrete and concise."
+    );
+    vec![
+        serde_json::json!({"role": "system", "content": PROBE_SYSTEM_PROMPT}),
+        serde_json::json!({"role": "user", "content": user}),
+    ]
+}
+
 /// On-disk cache shape. Keyed by model name; the entry stores
 /// `model_file_mtime_secs` so reinstalling/requantizing the model
 /// invalidates the cache without us needing to hash GBs of weights.
@@ -178,7 +218,11 @@ pub(crate) fn build_fingerprint(tokens: &[String], full_text: &str) -> LogitFing
     let mut hasher = Sha256::new();
     hasher.update(full_text.as_bytes());
     let output_sha256 = hex::encode(hasher.finalize());
-    let prefix_tokens = tokens.iter().take(FINGERPRINT_PREFIX_LEN).cloned().collect();
+    let prefix_tokens = tokens
+        .iter()
+        .take(FINGERPRINT_PREFIX_LEN)
+        .cloned()
+        .collect();
     LogitFingerprint {
         token_count: tokens.len() as u32,
         output_sha256,
@@ -217,15 +261,18 @@ pub(crate) fn fingerprint_from_completion_json(v: &serde_json::Value) -> Option<
     Some(build_fingerprint(&tokens, &text))
 }
 
-/// Capture an auditor *reference* fingerprint by issuing the deterministic
-/// probe to a local llama-server (non-streaming) and building the fingerprint
-/// via the exact same code path the remote verifier uses
-/// ([`fingerprint_from_completion_json`]) — so a reference and a candidate are
-/// guaranteed to be constructed identically. Used by the
-/// `benchmark capture-reference` subcommand.
-pub(crate) async fn capture_reference_fingerprint(
+/// Issue a probe to a *local* llama-server (non-streaming) and build the
+/// fingerprint via the exact same code path the remote verifier uses
+/// ([`fingerprint_from_completion_json`]) — so a local oracle's fingerprint
+/// and a remote candidate are guaranteed to be constructed identically.
+/// `messages`/`seed` are the probe spec; pass [`probe_messages`] + [`PROBE_SEED`]
+/// for the fixed reference, or [`probe_messages_for`] + the nonce for the
+/// verifier's randomized self-oracle.
+pub(crate) async fn local_probe_fingerprint(
     http_port: u16,
     model: &str,
+    messages: Vec<serde_json::Value>,
+    seed: u64,
 ) -> anyhow::Result<LogitFingerprint> {
     let client = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
@@ -234,10 +281,10 @@ pub(crate) async fn capture_reference_fingerprint(
     let url = format!("http://127.0.0.1:{http_port}/v1/chat/completions");
     let body = serde_json::json!({
         "model": model,
-        "messages": probe_messages(),
+        "messages": messages,
         "max_tokens": MAX_TOKENS,
         "temperature": 0,
-        "seed": PROBE_SEED,
+        "seed": seed,
         "stream": false,
         "logprobs": true,
     });
@@ -246,17 +293,26 @@ pub(crate) async fn capture_reference_fingerprint(
         .json(&body)
         .send()
         .await
-        .map_err(|e| anyhow::anyhow!("reference probe request failed: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("local probe request failed: {e}"))?;
     let status = resp.status();
     if !status.is_success() {
-        anyhow::bail!("reference probe llama-server returned {status}");
+        anyhow::bail!("local probe llama-server returned {status}");
     }
     let parsed: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| anyhow::anyhow!("parse reference probe response: {e}"))?;
+        .map_err(|e| anyhow::anyhow!("parse local probe response: {e}"))?;
     fingerprint_from_completion_json(&parsed)
-        .ok_or_else(|| anyhow::anyhow!("reference probe response had no usable output"))
+        .ok_or_else(|| anyhow::anyhow!("local probe response had no usable output"))
+}
+
+/// Capture an auditor *reference* fingerprint with the fixed deterministic
+/// probe. Used by the `benchmark capture-reference` subcommand.
+pub(crate) async fn capture_reference_fingerprint(
+    http_port: u16,
+    model: &str,
+) -> anyhow::Result<LogitFingerprint> {
+    local_probe_fingerprint(http_port, model, probe_messages(), PROBE_SEED).await
 }
 
 /// Parse an SSE chat-completion body into the concatenated output text and
@@ -684,16 +740,16 @@ pub fn spawn_collector(
                         let mut cache = load_cache(cp);
                         cache.entries.insert(
                             model.clone(),
-                        CachedNativeBaseline {
-                            model: entry.model.clone(),
-                            native_tps_p50: entry.native_tps_p50,
-                            native_ttft_ms_p50: entry.native_ttft_ms_p50,
-                            measured_at_unix_secs: entry.measured_at_unix_secs,
-                            samples: entry.samples,
-                            backend: entry.backend.clone(),
-                            model_file_mtime_secs: live_mtime,
-                            logit_fingerprint: meas.logit_fingerprint.clone(),
-                        },
+                            CachedNativeBaseline {
+                                model: entry.model.clone(),
+                                native_tps_p50: entry.native_tps_p50,
+                                native_ttft_ms_p50: entry.native_ttft_ms_p50,
+                                measured_at_unix_secs: entry.measured_at_unix_secs,
+                                samples: entry.samples,
+                                backend: entry.backend.clone(),
+                                model_file_mtime_secs: live_mtime,
+                                logit_fingerprint: meas.logit_fingerprint.clone(),
+                            },
                         );
                         if let Err(err) = save_cache(cp, &cache) {
                             tracing::warn!(
@@ -873,6 +929,23 @@ mod tests {
         // A wrong/smaller model returning different text → different hash.
         let b = build_fingerprint(&toks_a, "Hola mundo");
         assert_ne!(a1.output_sha256, b.output_sha256);
+    }
+
+    #[test]
+    fn randomized_probe_is_deterministic_per_nonce_and_varies_across_nonces() {
+        // Same nonce → byte-identical probe (so the self-oracle and the
+        // suspect issue the same request and their fingerprints are
+        // comparable).
+        assert_eq!(probe_messages_for(7), probe_messages_for(7));
+        // Different nonces → different user content (unpredictable across
+        // audits; a peer can't precompute or recognize the probe).
+        let a = probe_messages_for(7);
+        let b = probe_messages_for(8);
+        assert_ne!(a, b);
+        // The nonce itself appears in the prompt, so even same-topic probes
+        // (nonce + TOPICS.len()) differ.
+        let same_topic = probe_messages_for(7 + PROBE_TOPICS.len() as u64);
+        assert_ne!(a, same_topic);
     }
 
     #[test]
