@@ -44,6 +44,7 @@
 //!   surviving subset (down to 1) rather than blank the cache.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -64,8 +65,9 @@ const DECODE_DURATION_FLOOR: Duration = Duration::from_millis(100);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 /// Output tokens we ask the model to produce. ~80–128 is enough that
 /// decode rate dominates over TTFT noise without waiting forever on
-/// slow hardware.
-const MAX_TOKENS: u32 = 128;
+/// slow hardware. `pub(crate)` so the remote verifier sends the identical
+/// budget — fingerprints are only comparable across a byte-identical probe.
+pub(crate) const MAX_TOKENS: u32 = 128;
 /// Samples per refresh. 3 gives a median that tolerates one outlier
 /// run without inflating measurement time past ~30 s. See module-level
 /// methodology note for why this isn't 1 anymore.
@@ -76,6 +78,31 @@ const SAMPLES_PER_REFRESH: u32 = 3;
 /// gives the GPU command queue a moment to drain), short enough that
 /// 3 samples still finish in ~30 s on Apple Silicon.
 const INTER_SAMPLE_DELAY: Duration = Duration::from_secs(1);
+/// How many decoded tokens the fingerprint covers. The greedy decode of a
+/// fixed prompt is a strong model-identity signal; a bounded prefix lets a
+/// verifier compare with tolerance instead of demanding an exact
+/// cross-backend match.
+const FINGERPRINT_PREFIX_LEN: usize = 32;
+
+/// The exact prompt + sampling params the deterministic probe sends.
+/// Shared by the local baseline collector and the remote verifier so
+/// their fingerprints are comparable — the fingerprint is only meaningful
+/// if both sides issue a byte-identical request.
+pub(crate) const PROBE_SYSTEM_PROMPT: &str = "You are a benchmark probe. Respond concisely.";
+pub(crate) const PROBE_USER_PROMPT: &str = "Write a short paragraph (about 100 words) explaining \
+     why direct measurement beats marketing claims when \
+     comparing distributed systems performance.";
+/// Sampling seed shared by the baseline + verifier probes.
+pub(crate) const PROBE_SEED: u64 = 42;
+
+/// The probe's `messages` array. Identical on both the local and remote
+/// sides so the greedy decode (and thus the fingerprint) lines up.
+pub(crate) fn probe_messages() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({"role": "system", "content": PROBE_SYSTEM_PROMPT}),
+        serde_json::json!({"role": "user", "content": PROBE_USER_PROMPT}),
+    ]
+}
 
 /// On-disk cache shape. Keyed by model name; the entry stores
 /// `model_file_mtime_secs` so reinstalling/requantizing the model
@@ -104,6 +131,177 @@ pub struct CachedNativeBaseline {
     /// this differs from the live file's mtime — covers re-quantization
     /// and redownload without us having to hash the weights.
     pub model_file_mtime_secs: Option<u64>,
+    /// Deterministic logit fingerprint from the same probe. `None` for
+    /// caches written before this field existed (serde default) or when
+    /// the probe produced no output. Captured + cached only today — not
+    /// yet gossiped or used for enforcement.
+    #[serde(default)]
+    pub logit_fingerprint: Option<LogitFingerprint>,
+}
+
+/// Deterministic model-identity fingerprint captured from the same
+/// temp=0 / seed=42 probe that produces the timing baseline.
+///
+/// Why it exists: a peer that claims to serve model X but actually runs a
+/// smaller/different model — or returns canned text — produces a different
+/// greedy decode for this fixed prompt. A verifier (the entry, or a sampled
+/// second peer) re-runs the identical probe and compares. We store the
+/// full-output hash plus a bounded prefix of decoded token strings so the
+/// comparison can be tolerance-based (prefix agreement) rather than an exact
+/// byte match — exact equality is impossible across Metal / CUDA / Vulkan
+/// because of floating-point divergence in the argmax tail.
+///
+/// Per-token logprobs were intentionally dropped: at `temperature=0` the
+/// chosen token's logprob is definitionally 0 (prob 1.0) and llama.cpp
+/// returns no alternatives, so they carried no signal. The token sequence
+/// and output hash are the discriminators.
+///
+/// This struct is captured + cached + gossiped, but drives no enforcement
+/// yet — pure instrumentation, same risk profile as the timing baseline.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogitFingerprint {
+    /// Number of decoded tokens observed for the probe (`0` when the backend
+    /// returned no per-token data).
+    pub token_count: u32,
+    /// Lowercase-hex SHA-256 of the full greedy-decoded output text.
+    pub output_sha256: String,
+    /// First `FINGERPRINT_PREFIX_LEN` decoded token strings. Empty when the
+    /// backend returned no per-token data — the output hash still
+    /// fingerprints the model in that case.
+    pub prefix_tokens: Vec<String>,
+}
+
+/// Build a [`LogitFingerprint`] from the decoded token stream and the
+/// concatenated output text. Pure + deterministic so it is unit-testable
+/// without an llama-server.
+pub(crate) fn build_fingerprint(tokens: &[String], full_text: &str) -> LogitFingerprint {
+    let mut hasher = Sha256::new();
+    hasher.update(full_text.as_bytes());
+    let output_sha256 = hex::encode(hasher.finalize());
+    let prefix_tokens = tokens.iter().take(FINGERPRINT_PREFIX_LEN).cloned().collect();
+    LogitFingerprint {
+        token_count: tokens.len() as u32,
+        output_sha256,
+        prefix_tokens,
+    }
+}
+
+/// Build a fingerprint from a *non-streaming* chat-completion JSON value —
+/// the shape the remote verifier reads back over the mesh tunnel. Mirrors
+/// the SSE path: text from `choices[0].message.content`, the per-token
+/// stream from `choices[0].logprobs.content[].token`. `None` when the
+/// response carried no output text.
+pub(crate) fn fingerprint_from_completion_json(v: &serde_json::Value) -> Option<LogitFingerprint> {
+    let choice = v.get("choices")?.get(0)?;
+    let text = choice
+        .get("message")
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("")
+        .to_string();
+    if text.is_empty() {
+        return None;
+    }
+    let mut tokens: Vec<String> = Vec::new();
+    if let Some(content) = choice
+        .get("logprobs")
+        .and_then(|l| l.get("content"))
+        .and_then(|c| c.as_array())
+    {
+        for entry in content {
+            if let Some(tok) = entry.get("token").and_then(|t| t.as_str()) {
+                tokens.push(tok.to_string());
+            }
+        }
+    }
+    Some(build_fingerprint(&tokens, &text))
+}
+
+/// Capture an auditor *reference* fingerprint by issuing the deterministic
+/// probe to a local llama-server (non-streaming) and building the fingerprint
+/// via the exact same code path the remote verifier uses
+/// ([`fingerprint_from_completion_json`]) — so a reference and a candidate are
+/// guaranteed to be constructed identically. Used by the
+/// `benchmark capture-reference` subcommand.
+pub(crate) async fn capture_reference_fingerprint(
+    http_port: u16,
+    model: &str,
+) -> anyhow::Result<LogitFingerprint> {
+    let client = reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .map_err(|e| anyhow::anyhow!("build reqwest client: {e}"))?;
+    let url = format!("http://127.0.0.1:{http_port}/v1/chat/completions");
+    let body = serde_json::json!({
+        "model": model,
+        "messages": probe_messages(),
+        "max_tokens": MAX_TOKENS,
+        "temperature": 0,
+        "seed": PROBE_SEED,
+        "stream": false,
+        "logprobs": true,
+    });
+    let resp = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("reference probe request failed: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        anyhow::bail!("reference probe llama-server returned {status}");
+    }
+    let parsed: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("parse reference probe response: {e}"))?;
+    fingerprint_from_completion_json(&parsed)
+        .ok_or_else(|| anyhow::anyhow!("reference probe response had no usable output"))
+}
+
+/// Parse an SSE chat-completion body into the concatenated output text and
+/// the per-token stream. Mirrors the lenient line-walking the usage parser
+/// uses; a backend that omits `logprobs` yields an empty token stream (the
+/// text is still recovered). Used only to build the deterministic
+/// fingerprint.
+fn parse_output_and_tokens_from_sse(buf: &[u8]) -> (String, Vec<String>) {
+    let mut text = String::new();
+    let mut tokens: Vec<String> = Vec::new();
+    let Ok(body) = std::str::from_utf8(buf) else {
+        return (text, tokens);
+    };
+    for line in body.lines() {
+        let line = line.trim();
+        let payload = line.strip_prefix("data:").map(str::trim).unwrap_or(line);
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(payload) else {
+            continue;
+        };
+        let Some(choice) = v.get("choices").and_then(|c| c.get(0)) else {
+            continue;
+        };
+        if let Some(content) = choice
+            .get("delta")
+            .and_then(|d| d.get("content"))
+            .and_then(|c| c.as_str())
+        {
+            text.push_str(content);
+        }
+        if let Some(content) = choice
+            .get("logprobs")
+            .and_then(|l| l.get("content"))
+            .and_then(|c| c.as_array())
+        {
+            for entry in content {
+                if let Some(tok) = entry.get("token").and_then(|t| t.as_str()) {
+                    tokens.push(tok.to_string());
+                }
+            }
+        }
+    }
+    (text, tokens)
 }
 
 impl From<&CachedNativeBaseline> for NativeBaselineEntry {
@@ -115,6 +313,7 @@ impl From<&CachedNativeBaseline> for NativeBaselineEntry {
             measured_at_unix_secs: c.measured_at_unix_secs,
             samples: c.samples,
             backend: c.backend.clone(),
+            logit_fingerprint: c.logit_fingerprint.clone(),
         }
     }
 }
@@ -167,6 +366,9 @@ pub struct BaselineMeasurement {
     pub native_ttft_ms_p50: u64,
     pub backend: String,
     pub measured_at_unix_secs: u64,
+    /// Deterministic logit fingerprint from this run. `None` when the
+    /// probe produced no output bytes.
+    pub logit_fingerprint: Option<LogitFingerprint>,
 }
 
 /// Issue a synthetic chat completion to the local llama-server and
@@ -185,18 +387,16 @@ pub async fn measure_baseline(req: &BaselineRequest) -> anyhow::Result<BaselineM
     let url = format!("http://127.0.0.1:{}/v1/chat/completions", req.http_port);
     let body = serde_json::json!({
         "model": req.model,
-        "messages": [
-            {"role": "system", "content": "You are a benchmark probe. Respond concisely."},
-            {"role": "user",
-             "content": "Write a short paragraph (about 100 words) explaining \
-                         why direct measurement beats marketing claims when \
-                         comparing distributed systems performance."}
-        ],
+        "messages": probe_messages(),
         "max_tokens": MAX_TOKENS,
         "temperature": 0,
-        "seed": 42,
+        "seed": PROBE_SEED,
         "stream": true,
         "stream_options": {"include_usage": true},
+        // `logprobs` gives us per-token segmentation for the fingerprint
+        // prefix. Backends that don't return it just leave the prefix empty
+        // (the output hash still fingerprints the model).
+        "logprobs": true,
     });
 
     let request_started = Instant::now();
@@ -252,6 +452,15 @@ pub async fn measure_baseline(req: &BaselineRequest) -> anyhow::Result<BaselineM
     }
     let native_tps_p50 = (completion_tokens as f64) / secs;
 
+    // Build the deterministic fingerprint from the same buffered body.
+    // No extra request; the probe already streamed it.
+    let (output_text, tokens) = parse_output_and_tokens_from_sse(&buf);
+    let logit_fingerprint = if output_text.is_empty() {
+        None
+    } else {
+        Some(build_fingerprint(&tokens, &output_text))
+    };
+
     Ok(BaselineMeasurement {
         native_tps_p50,
         native_ttft_ms_p50: ttft.as_millis().min(u64::MAX as u128) as u64,
@@ -260,6 +469,7 @@ pub async fn measure_baseline(req: &BaselineRequest) -> anyhow::Result<BaselineM
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0),
+        logit_fingerprint,
     })
 }
 
@@ -346,6 +556,10 @@ fn median_measurement(
     tps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     ttft.sort();
     let mid = samples.len() / 2;
+    // The probe is deterministic (temp=0/seed=42), so every surviving
+    // sample's fingerprint should be identical; take the first present.
+    let logit_fingerprint = samples.iter().find_map(|m| m.logit_fingerprint.clone());
+    let sample_count = samples.len() as u32;
     Some((
         BaselineMeasurement {
             native_tps_p50: tps[mid],
@@ -355,8 +569,9 @@ fn median_measurement(
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_secs())
                 .unwrap_or(0),
+            logit_fingerprint,
         },
-        samples.len() as u32,
+        sample_count,
     ))
 }
 
@@ -463,20 +678,22 @@ pub fn spawn_collector(
                         measured_at_unix_secs: meas.measured_at_unix_secs,
                         samples: sample_count,
                         backend: meas.backend.clone(),
+                        logit_fingerprint: meas.logit_fingerprint.clone(),
                     };
                     if let Some(ref cp) = cache_file {
                         let mut cache = load_cache(cp);
                         cache.entries.insert(
                             model.clone(),
-                            CachedNativeBaseline {
-                                model: entry.model.clone(),
-                                native_tps_p50: entry.native_tps_p50,
-                                native_ttft_ms_p50: entry.native_ttft_ms_p50,
-                                measured_at_unix_secs: entry.measured_at_unix_secs,
-                                samples: entry.samples,
-                                backend: entry.backend.clone(),
-                                model_file_mtime_secs: live_mtime,
-                            },
+                        CachedNativeBaseline {
+                            model: entry.model.clone(),
+                            native_tps_p50: entry.native_tps_p50,
+                            native_ttft_ms_p50: entry.native_ttft_ms_p50,
+                            measured_at_unix_secs: entry.measured_at_unix_secs,
+                            samples: entry.samples,
+                            backend: entry.backend.clone(),
+                            model_file_mtime_secs: live_mtime,
+                            logit_fingerprint: meas.logit_fingerprint.clone(),
+                        },
                         );
                         if let Err(err) = save_cache(cp, &cache) {
                             tracing::warn!(
@@ -555,6 +772,7 @@ mod tests {
                 samples: 1,
                 backend: "metal".to_string(),
                 model_file_mtime_secs: Some(1_747_640_000),
+                logit_fingerprint: None,
             },
         );
 
@@ -582,6 +800,7 @@ mod tests {
             samples: 1,
             backend: "metal".to_string(),
             model_file_mtime_secs: Some(1_000_000),
+            logit_fingerprint: None,
         };
         // Same mtime → fresh.
         assert!(is_fresh(&entry, Some(1_000_000)));
@@ -595,6 +814,7 @@ mod tests {
             native_ttft_ms_p50: ttft,
             backend: "metal".to_string(),
             measured_at_unix_secs: 0,
+            logit_fingerprint: None,
         }
     }
 
@@ -634,7 +854,130 @@ mod tests {
             samples: 1,
             backend: "metal".to_string(),
             model_file_mtime_secs: Some(1_000_000),
+            logit_fingerprint: None,
         };
         assert!(!is_fresh(&entry, Some(1_000_000)));
+    }
+
+    #[test]
+    fn fingerprint_is_stable_and_separates_different_output() {
+        let toks_a = vec!["Hello".to_string(), " world".to_string()];
+        let a1 = build_fingerprint(&toks_a, "Hello world");
+        let a2 = build_fingerprint(&toks_a, "Hello world");
+        // Deterministic: same input → identical fingerprint.
+        assert_eq!(a1, a2);
+        assert_eq!(a1.token_count, 2);
+        assert_eq!(a1.prefix_tokens[0], "Hello");
+        assert_eq!(a1.prefix_tokens[1], " world");
+
+        // A wrong/smaller model returning different text → different hash.
+        let b = build_fingerprint(&toks_a, "Hola mundo");
+        assert_ne!(a1.output_sha256, b.output_sha256);
+    }
+
+    #[test]
+    fn fingerprint_prefix_is_bounded() {
+        let toks: Vec<String> = (0..100).map(|i| format!("t{i}")).collect();
+        let fp = build_fingerprint(&toks, "irrelevant");
+        // Full count recorded, prefix capped at FINGERPRINT_PREFIX_LEN.
+        assert_eq!(fp.token_count, 100);
+        assert_eq!(fp.prefix_tokens.len(), FINGERPRINT_PREFIX_LEN);
+    }
+
+    #[test]
+    fn parse_sse_recovers_text_and_tokens() {
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"logprobs\":{\"content\":[{\"token\":\"Hi\",\"logprob\":-0.2}]}}]}\n\
+                    data: {\"choices\":[{\"delta\":{\"content\":\" there\"},\"logprobs\":{\"content\":[{\"token\":\" there\",\"logprob\":-1.5}]}}]}\n\
+                    data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"completion_tokens\":2}}\n\
+                    data: [DONE]\n";
+        let (text, toks) = parse_output_and_tokens_from_sse(body.as_bytes());
+        assert_eq!(text, "Hi there");
+        assert_eq!(toks, vec!["Hi".to_string(), " there".to_string()]);
+    }
+
+    #[test]
+    fn parse_sse_recovers_text_when_logprobs_absent() {
+        // A backend that ignores `logprobs` still yields a usable output
+        // hash from the deltas; the prefix is just empty.
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}]}\n\
+                    data: [DONE]\n";
+        let (text, toks) = parse_output_and_tokens_from_sse(body.as_bytes());
+        assert_eq!(text, "hello");
+        assert!(toks.is_empty());
+        let fp = build_fingerprint(&toks, &text);
+        assert_eq!(fp.token_count, 0);
+        assert!(fp.prefix_tokens.is_empty());
+        assert!(!fp.output_sha256.is_empty());
+    }
+
+    #[test]
+    fn cache_roundtrips_logit_fingerprint() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("native-baselines.json");
+        let mut cache = NativeBaselineCache::default();
+        cache.entries.insert(
+            "m".to_string(),
+            CachedNativeBaseline {
+                model: "m".to_string(),
+                native_tps_p50: 10.0,
+                native_ttft_ms_p50: 100,
+                measured_at_unix_secs: 1,
+                samples: 1,
+                backend: "metal".to_string(),
+                model_file_mtime_secs: None,
+                logit_fingerprint: Some(LogitFingerprint {
+                    token_count: 1,
+                    output_sha256: "abc".to_string(),
+                    prefix_tokens: vec!["hi".to_string()],
+                }),
+            },
+        );
+        save_cache(&path, &cache).unwrap();
+        let loaded = load_cache(&path);
+        let fp = loaded
+            .entries
+            .get("m")
+            .unwrap()
+            .logit_fingerprint
+            .clone()
+            .unwrap();
+        assert_eq!(fp.token_count, 1);
+        assert_eq!(fp.output_sha256, "abc");
+        assert_eq!(fp.prefix_tokens, vec!["hi".to_string()]);
+    }
+
+    #[test]
+    fn fingerprint_from_completion_json_matches_sse_path() {
+        // The non-streaming verifier path must produce the same fingerprint
+        // as the streaming baseline path for the same tokens + text.
+        let json = serde_json::json!({
+            "choices": [{
+                "message": {"content": "Hi there"},
+                "logprobs": {"content": [
+                    {"token": "Hi", "logprob": -0.2},
+                    {"token": " there", "logprob": -1.5}
+                ]}
+            }]
+        });
+        let from_json = fingerprint_from_completion_json(&json).unwrap();
+
+        let toks = vec!["Hi".to_string(), " there".to_string()];
+        let from_stream = build_fingerprint(&toks, "Hi there");
+        assert_eq!(from_json, from_stream);
+    }
+
+    #[test]
+    fn fingerprint_from_completion_json_none_when_empty() {
+        let json = serde_json::json!({"choices": [{"message": {"content": ""}}]});
+        assert!(fingerprint_from_completion_json(&json).is_none());
+    }
+
+    #[test]
+    fn legacy_cache_without_fingerprint_deserializes() {
+        // Caches written before the field existed must still load.
+        let raw = r#"{"version":1,"entries":{"m":{"model":"m","native_tps_p50":10.0,"native_ttft_ms_p50":100,"measured_at_unix_secs":1,"samples":1,"backend":"metal","model_file_mtime_secs":null}}}"#;
+        let cache: NativeBaselineCache = serde_json::from_str(raw).unwrap();
+        let entry = cache.entries.get("m").unwrap();
+        assert!(entry.logit_fingerprint.is_none());
     }
 }

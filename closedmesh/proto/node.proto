@@ -80,6 +80,22 @@ message NativeBaseline {
   uint64 measured_at_unix_secs = 4;  // Wall-clock at which the baseline was measured. Lets the UI label stale baselines.
   uint32 samples = 5;                // Number of synthetic runs that contributed (currently always 1; the field exists so we can raise sample count later without a schema change).
   string backend = 6;                // metal / cuda / rocm / vulkan / cpu — disambiguates which llama-server flavor produced the number.
+  LogitFingerprint logit_fingerprint = 7;  // v0.66.x verification v1: model-identity fingerprint from the same deterministic (temp=0/seed=42) probe. Absent for legacy peers and peers whose backend returned no output. Self-reported; the verifier still re-probes — this is the consensus substrate + cheap pre-screen, not a trusted claim on its own.
+}
+
+// v0.66.x verification v1 — deterministic model-identity fingerprint.
+// Captured from the same temp=0/seed=42 probe that produces the timing
+// baseline. A peer serving a different/smaller model, or returning canned
+// text, produces a different greedy decode for the fixed prompt. Stored as
+// the full-output hash + a bounded prefix of decoded token strings so a
+// verifier can compare with tolerance (prefix agreement) rather than
+// demanding an exact cross-backend byte match. (Per-token logprobs were
+// dropped: at temp=0 the chosen token's logprob is definitionally 0 and
+// backends return no alternatives, so they carried no signal.)
+message LogitFingerprint {
+  uint32 token_count = 1;            // Decoded tokens observed (0 when the backend returned no per-token data).
+  string output_sha256 = 2;          // Lowercase-hex SHA-256 of the full greedy-decoded output text.
+  repeated string prefix_tokens = 3; // First N decoded token strings; empty when the backend returned no per-token data (the output hash still fingerprints the model).
 }
 
 // NodeCapability is the canonical, normalized advertisement used by the mesh

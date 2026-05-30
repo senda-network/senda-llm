@@ -519,6 +519,13 @@ pub(crate) fn local_ann_to_proto_ann(
                 measured_at_unix_secs: b.measured_at_unix_secs,
                 samples: b.samples,
                 backend: b.backend.clone(),
+                logit_fingerprint: b.logit_fingerprint.as_ref().map(|fp| {
+                    crate::proto::node::LogitFingerprint {
+                        token_count: fp.token_count,
+                        output_sha256: fp.output_sha256.clone(),
+                        prefix_tokens: fp.prefix_tokens.clone(),
+                    }
+                }),
             })
             .collect(),
     }
@@ -711,6 +718,13 @@ pub(crate) fn proto_ann_to_local(
                 measured_at_unix_secs: b.measured_at_unix_secs,
                 samples: b.samples,
                 backend: b.backend.clone(),
+                logit_fingerprint: b.logit_fingerprint.as_ref().map(|fp| {
+                    crate::inference::native_baseline::LogitFingerprint {
+                        token_count: fp.token_count,
+                        output_sha256: fp.output_sha256.clone(),
+                        prefix_tokens: fp.prefix_tokens.clone(),
+                    }
+                }),
             })
             .collect(),
         capability: pa

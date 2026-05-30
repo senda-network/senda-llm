@@ -1,0 +1,40 @@
+{
+  "Qwen3-8B-Q4_K_M": {
+    "token_count": 116,
+    "output_sha256": "676fd78f122809d3edda880759e53c4a9dcfdafb3d151163a7f0c8b26b93ea85",
+    "prefix_tokens": [
+      "<think>",
+      "</think>",
+      "\n\n",
+      "Direct",
+      " measurement",
+      " provides",
+      " objective",
+      ",",
+      " ver",
+      "ifiable",
+      " data",
+      " about",
+      " a",
+      " system",
+      "'s",
+      " actual",
+      " performance",
+      ",",
+      " eliminating",
+      " subjective",
+      " or",
+      " exaggerated",
+      " marketing",
+      " claims",
+      ".",
+      " Bench",
+      "marks",
+      " and",
+      " real",
+      "-world",
+      " tests",
+      " capture"
+    ]
+  }
+}

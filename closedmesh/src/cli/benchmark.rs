@@ -88,6 +88,19 @@ pub(crate) enum BenchmarkCommand {
         #[arg(long)]
         output: Option<PathBuf>,
     },
+    /// Capture an auditor *reference* logit fingerprint (verification v1) by
+    /// probing a local llama-server, and write it to
+    /// `~/.closedmesh/reference-fingerprints.json`.
+    #[command(name = "capture-reference")]
+    CaptureReference {
+        /// Model name as served by the target llama-server (e.g. Qwen3-8B-Q4_K_M).
+        #[arg(long)]
+        model: String,
+        /// Local llama-server HTTP port to probe (e.g. the port from the
+        /// running `llama-server` process).
+        #[arg(long)]
+        port: u16,
+    },
     /// Run the full offline MoE benchmark suite across several models.
     #[command(name = "moe-model-matrix")]
     MoeModelMatrix {

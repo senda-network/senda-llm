@@ -767,6 +767,11 @@ pub struct NativeBaselineEntry {
     pub measured_at_unix_secs: u64,
     pub samples: u32,
     pub backend: String,
+    /// Proof-of-Logits reference from the same deterministic probe. `None`
+    /// for legacy peers and peers whose backend returned no output. Self-
+    /// reported — the verifier still re-probes; this is the consensus
+    /// substrate + cheap pre-screen, not a trusted claim on its own.
+    pub logit_fingerprint: Option<crate::inference::native_baseline::LogitFingerprint>,
 }
 
 #[derive(Debug, Clone)]

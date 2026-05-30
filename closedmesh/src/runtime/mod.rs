@@ -3106,6 +3106,14 @@ async fn run_auto(
         .await;
     });
 
+    // Verification v1 (observe-only): periodically re-probe peers and compare
+    // their logit fingerprint against a reference. Logs verdicts; never
+    // demotes. Safe to run on any node that proxies inference.
+    crate::inference::verify::spawn_verifier(
+        node.clone(),
+        crate::inference::verify::VerifierConfig::default(),
+    );
+
     // Console (optional)
     let model_name_for_console = model_name.clone();
     let mut console_server_handle = None;
@@ -4182,6 +4190,14 @@ async fn run_passive(
             }
         });
     }
+
+    // Verification v1 (observe-only): a client/entry router re-probes peers it
+    // routes to and compares their logit fingerprint against a reference.
+    // Logs verdicts; never demotes (enforcement is a later, flagged increment).
+    crate::inference::verify::spawn_verifier(
+        node.clone(),
+        crate::inference::verify::VerifierConfig::default(),
+    );
 
     loop {
         tokio::select! {

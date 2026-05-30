@@ -1105,6 +1105,7 @@ mod tests {
             measured_at_unix_secs: 1,
             samples: 1,
             backend: "metal".to_string(),
+            logit_fingerprint: None,
         }];
 
         let mut ann = test_announcement(Some(100));
@@ -1115,6 +1116,7 @@ mod tests {
             measured_at_unix_secs: 1_747_700_000,
             samples: 1,
             backend: "metal".to_string(),
+            logit_fingerprint: None,
         }];
 
         apply_transitive_ann(&mut existing, &test_addr(0x33), &ann);

@@ -5,4 +5,5 @@ pub(crate) mod loading_watchdog;
 pub(crate) mod moe;
 pub(crate) mod native_baseline;
 pub(crate) mod pipeline;
+pub(crate) mod verify;
 pub(crate) mod virtual_llm;
