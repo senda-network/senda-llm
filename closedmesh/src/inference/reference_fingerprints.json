@@ -1,11 +1,8 @@
 {
   "Qwen3-8B-Q4_K_M": {
-    "token_count": 116,
-    "output_sha256": "676fd78f122809d3edda880759e53c4a9dcfdafb3d151163a7f0c8b26b93ea85",
+    "token_count": 111,
+    "output_sha256": "5b9a15a7ac15d36bd788798f9ef4715f49d329cb421afb776d6f8ae74c5b7a22",
     "prefix_tokens": [
-      "<think>",
-      "</think>",
-      "\n\n",
       "Direct",
       " measurement",
       " provides",
@@ -22,19 +19,22 @@
       " performance",
       ",",
       " eliminating",
-      " subjective",
-      " or",
-      " exaggerated",
+      " the",
+      " bias",
+      " and",
+      " exagger",
+      "ation",
+      " often",
+      " found",
+      " in",
       " marketing",
       " claims",
       ".",
-      " Bench",
-      "marks",
-      " and",
-      " real",
-      "-world",
-      " tests",
-      " capture"
+      " Marketing",
+      " materials",
+      " may",
+      " highlight",
+      " ideal"
     ]
   }
 }

@@ -68,7 +68,22 @@ pub struct VerifyThresholds {
 impl Default for VerifyThresholds {
     fn default() -> Self {
         Self {
-            min_prefix_agreement: 0.9,
+            // Calibrated against measured honest behavior, not a guess. The
+            // daily driver serves with speculative decoding (`-md` draft +
+            // continuous batching), which is not bit-reproducible run-to-run:
+            // the deterministic *opening* of the answer (~the first sentence)
+            // is rock-solid, but the model can branch at a later sentence
+            // boundary, and a cold first request after boot sometimes takes a
+            // different branch than the warm steady state. Measured over 8
+            // captures of the same `(model, probe)`: the first 27/32 prefix
+            // tokens were identical every time; one cold capture diverged for
+            // the final 5, i.e. 0.844 agreement. A genuinely wrong/smaller
+            // model or canned text diverges from the first token (agreement
+            // ~0), so 0.75 cleanly separates honest (>=0.84) from dishonest
+            // (~0) with margin for an even shorter deterministic opening
+            // (24/32) on other backends. Raising this back toward 1.0 would
+            // false-flag honest, freshly-booted peers.
+            min_prefix_agreement: 0.75,
             min_compared_tokens: 8,
         }
     }
@@ -514,6 +529,11 @@ async fn remote_probe_fingerprint(
         "logprobs": true,
         // Don't let the peer recurse into its own consultation hooks.
         "mesh_hooks": false,
+        // Pin thinking off on both sides of the comparison so the audit is
+        // apples-to-apples regardless of the suspect's server launch flags
+        // (matches the baseline/reference probes; honest llama.cpp peers honor
+        // it, and a peer that ignores it diverging is itself a signal).
+        "chat_template_kwargs": {"enable_thinking": false},
     });
     let body_bytes = serde_json::to_vec(&body)?;
     let http_request = format!(
@@ -658,24 +678,26 @@ mod tests {
     }
 
     #[test]
-    fn one_token_off_is_within_budget() {
-        let r = fp(&ten(), "h1");
-        let mut toks = ten();
-        toks[5] = " rug"; // 9/10 agree = 0.9 >= threshold
-        let c = fp(&toks, "h2");
-        let v = compare_fingerprints(&r, &c, &VerifyThresholds::default());
-        assert!(is_match(&v), "9/10 agreement should pass the 0.9 gate");
-    }
-
-    #[test]
-    fn two_tokens_off_breaks_budget() {
+    fn two_tokens_off_is_within_budget() {
         let r = fp(&ten(), "h1");
         let mut toks = ten();
         toks[5] = " rug";
-        toks[7] = " later"; // 8/10 = 0.8 < 0.9
+        toks[7] = " later"; // 8/10 agree = 0.8 >= 0.75 threshold
         let c = fp(&toks, "h2");
         let v = compare_fingerprints(&r, &c, &VerifyThresholds::default());
-        assert!(is_mismatch(&v), "8/10 agreement should fail the 0.9 gate");
+        assert!(is_match(&v), "8/10 agreement should pass the 0.75 gate");
+    }
+
+    #[test]
+    fn three_tokens_off_breaks_budget() {
+        let r = fp(&ten(), "h1");
+        let mut toks = ten();
+        toks[5] = " rug";
+        toks[7] = " later";
+        toks[9] = " nope"; // 7/10 = 0.7 < 0.75
+        let c = fp(&toks, "h2");
+        let v = compare_fingerprints(&r, &c, &VerifyThresholds::default());
+        assert!(is_mismatch(&v), "7/10 agreement should fail the 0.75 gate");
     }
 
     #[test]

@@ -298,6 +298,9 @@ pub(crate) async fn local_probe_fingerprint(
         "seed": seed,
         "stream": false,
         "logprobs": true,
+        // Same no-think pin as the streaming probe so the reference fingerprint
+        // matches what the daily driver gossips (see measure_baseline).
+        "chat_template_kwargs": {"enable_thinking": false},
     });
     let resp = client
         .post(&url)
@@ -476,6 +479,12 @@ pub async fn measure_baseline(
         // prefix. Backends that don't return it just leave the prefix empty
         // (the output hash still fingerprints the model).
         "logprobs": true,
+        // Pin thinking off so the timing baseline and the gossiped fingerprint
+        // reflect the same no-think path the daily driver actually serves
+        // (launch.rs sets this server-wide; we also send it per-request so the
+        // fingerprint is identical regardless of a peer's server launch flags,
+        // and the timing samples don't pay the empty-`<think>` scaffold tax).
+        "chat_template_kwargs": {"enable_thinking": false},
     });
 
     let request_started = Instant::now();
