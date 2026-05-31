@@ -3843,6 +3843,77 @@ mod tests {
         assert_eq!(parse_completion_tokens_from_sse_tail(&body), Some(33));
     }
 
+    /// v0.66.55 regression guard for the split-host (pipeline) metric path.
+    /// `record_pipeline_completion` must land its sample in the *same*
+    /// `RoutingMetrics` store that gossip snapshots via
+    /// `Node::model_timings_snapshot` and `/api/status` reads — there is no
+    /// separate pipeline store. If a refactor ever points the pipeline hook
+    /// at a different sink, a split-host serve becomes invisible to the
+    /// public Catalog even though it actually served the request. We assert
+    /// the recorded sample shows up in that snapshot (the exact per-model map
+    /// `collect_announcements` ships to peers), and that the two documented
+    /// skip branches — missing `usage` chunk and a degenerate zero-token
+    /// completion — record nothing.
+    #[tokio::test]
+    async fn record_pipeline_completion_feeds_gossiped_timing_snapshot() {
+        let node = crate::mesh::tests::make_test_node(crate::mesh::NodeRole::Host { http_port: 0 })
+            .await
+            .unwrap();
+
+        // Successful split-host serve with a parsed usage chunk.
+        record_pipeline_completion(
+            &node,
+            "Qwen3-32B-split",
+            200,
+            Duration::from_millis(800),
+            Duration::from_millis(2_000),
+            Some(120),
+            "streaming",
+        );
+
+        let snapshot = node.model_timings_snapshot();
+        let entry = snapshot.get("Qwen3-32B-split").expect(
+            "pipeline serve must populate the gossiped timing snapshot — a \
+             split-host model would be invisible to the Catalog otherwise",
+        );
+        assert_eq!(entry.samples_in_window, 1);
+        assert!(
+            entry.measured_tps_p50 > 0.0,
+            "p50 t/s should be positive: {entry:?}"
+        );
+
+        // No `usage` chunk in the SSE tail (completion_tokens == None) and a
+        // degenerate zero-token completion must both record nothing.
+        record_pipeline_completion(
+            &node,
+            "missing-usage-model",
+            200,
+            Duration::from_millis(800),
+            Duration::from_millis(2_000),
+            None,
+            "streaming",
+        );
+        record_pipeline_completion(
+            &node,
+            "zero-token-model",
+            200,
+            Duration::from_millis(800),
+            Duration::from_millis(2_000),
+            Some(0),
+            "non_streaming",
+        );
+
+        let snapshot = node.model_timings_snapshot();
+        assert!(
+            snapshot.get("missing-usage-model").is_none(),
+            "usage_chunk_missing must record no sample"
+        );
+        assert!(
+            snapshot.get("zero-token-model").is_none(),
+            "zero_completion_tokens must record no sample"
+        );
+    }
+
     #[test]
     fn test_route_attempt_result_label_values() {
         assert_eq!(
