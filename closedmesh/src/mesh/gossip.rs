@@ -263,12 +263,19 @@ impl Node {
                         };
                         let path_type = if path_info.is_ip() { "direct" } else { "relay" };
                         if path_rtt_ms > 0 && path_rtt_ms < rtt_ms {
-                            super::emit_mesh_info(format!(
-                                "📡 Peer {} RTT: {}ms ({}) [path info]",
+                            // Per-cycle path telemetry: keep at debug so it does
+                            // not flood the default (info) log stream — this
+                            // fires on every gossip tick per peer and, under
+                            // `--log-format json` to a file, grew stdout.log to
+                            // multiple GB. The user-visible signal is the
+                            // change-gated "RTT improved — re-electing" line
+                            // emitted from `update_peer_rtt`.
+                            tracing::debug!(
+                                "Peer {} RTT: {}ms ({}) [path info]",
                                 remote.fmt_short(),
                                 path_rtt_ms,
                                 path_type
-                            ));
+                            );
                             self.update_peer_rtt(remote, path_rtt_ms).await;
                         }
                         break;
@@ -362,12 +369,15 @@ impl Node {
                         };
                         let path_type = if path_info.is_ip() { "direct" } else { "relay" };
                         if rtt_ms > 0 {
-                            super::emit_mesh_info(format!(
-                                "📡 Peer {} RTT: {}ms ({})",
+                            // Per-cycle path telemetry — debug only (see the
+                            // matching note in `merge_gossip`). update_peer_rtt
+                            // still carries the change-gated, user-visible logs.
+                            tracing::debug!(
+                                "Peer {} RTT: {}ms ({})",
                                 remote.fmt_short(),
                                 rtt_ms,
                                 path_type
-                            ));
+                            );
                             self.update_peer_rtt(remote, rtt_ms).await;
                         }
                         break;

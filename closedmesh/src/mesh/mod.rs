@@ -2622,13 +2622,17 @@ impl Node {
             let mut state = self.state.lock().await;
             if let Some(peer) = state.peers.get_mut(&id) {
                 let prev = peer.rtt_ms;
-                // Only accept equal-or-lower RTT. Gossip round-trip timing
-                // can inflate the value when routed via relay, overwriting a
-                // good direct-path measurement. The RTT gate only cares about
-                // "fast enough for split", so keeping the best-seen value is
-                // correct — if the path truly degrades the peer will be
-                // unreachable and removed via the normal liveness path.
-                if prev.is_some_and(|p| rtt_ms > p) {
+                // Only act on a strict improvement (or the first-ever reading).
+                // Gossip round-trip timing can inflate the value when routed via
+                // relay, overwriting a good direct-path measurement; the RTT gate
+                // only cares about "fast enough for split", so keeping the
+                // best-seen value is correct — if the path truly degrades the
+                // peer becomes unreachable and is removed via the normal liveness
+                // path. Bailing on an equal reading (not just a higher one) is
+                // what stops the steady-state firehose: this is called on every
+                // gossip tick per peer, and re-logging / re-emitting a PeerUpdated
+                // plugin event for an unchanged RTT was pure noise.
+                if prev.is_some_and(|p| rtt_ms >= p) {
                     return;
                 }
                 peer.rtt_ms = Some(rtt_ms);
