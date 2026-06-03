@@ -1,7 +1,7 @@
 {
   "Qwen3-8B-Q4_K_M": {
-    "token_count": 111,
-    "output_sha256": "5b9a15a7ac15d36bd788798f9ef4715f49d329cb421afb776d6f8ae74c5b7a22",
+    "token_count": 113,
+    "output_sha256": "0e2f3d85b7e52c6e276451ce5411b75a61a080c60fcb82bb35e86b36899c731e",
     "prefix_tokens": [
       "Direct",
       " measurement",
@@ -13,28 +13,254 @@
       " data",
       " about",
       " a",
+      " distributed",
       " system",
       "'s",
-      " actual",
       " performance",
       ",",
       " eliminating",
-      " the",
-      " bias",
-      " and",
-      " exagger",
-      "ation",
-      " often",
-      " found",
-      " in",
+      " subjective",
       " marketing",
       " claims",
-      ".",
-      " Marketing",
-      " materials",
+      " that",
       " may",
-      " highlight",
-      " ideal"
+      " be",
+      " exaggerated",
+      " or",
+      " misleading",
+      ".",
+      " By",
+      " using",
+      " standardized",
+      " benchmarks",
+      " and",
+      " real"
+    ],
+    "top_k_tokens": [
+      [
+        "Direct",
+        " Direct",
+        ".Direct",
+        "In",
+        "direct"
+      ],
+      [
+        " measurement",
+        " measurements",
+        " performance",
+        "测量",
+        " Measurement"
+      ],
+      [
+        " provides",
+        " of",
+        " surpass",
+        " offers",
+        " beats"
+      ],
+      [
+        " objective",
+        " an",
+        "客观",
+        " concrete",
+        " unbiased"
+      ],
+      [
+        ",",
+        " data",
+        " evidence",
+        " and",
+        " insights"
+      ],
+      [
+        " ver",
+        " quant",
+        " factual",
+        " empirical",
+        " real"
+      ],
+      [
+        "ifiable",
+        "ifi",
+        "itable",
+        "IFI",
+        "iable"
+      ],
+      [
+        " data",
+        " insights",
+        " results",
+        " evidence",
+        " performance"
+      ],
+      [
+        " about",
+        " on",
+        " that",
+        " when",
+        " reflecting"
+      ],
+      [
+        " a",
+        " system",
+        " distributed",
+        " the",
+        " actual"
+      ],
+      [
+        " distributed",
+        " system",
+        "分布式",
+        "distributed",
+        "系统"
+      ],
+      [
+        " system",
+        "系统",
+        "系统的",
+        " systems",
+        "系統"
+      ],
+      [
+        "'s",
+        "’s",
+        "`s",
+        "ﾒ",
+        "&apos"
+      ],
+      [
+        " performance",
+        " actual",
+        " true",
+        " real",
+        "性能"
+      ],
+      [
+        ",",
+        " by",
+        " under",
+        " metrics",
+        " without"
+      ],
+      [
+        " eliminating",
+        " free",
+        " avoiding",
+        " ensuring",
+        " bypass"
+      ],
+      [
+        " subjective",
+        " the",
+        " biases",
+        " ambigu",
+        " bias"
+      ],
+      [
+        " marketing",
+        " or",
+        " biases",
+        " interpretations",
+        " claims"
+      ],
+      [
+        " claims",
+        " exagger",
+        " hype",
+        " language",
+        " rhetoric"
+      ],
+      [
+        " that",
+        ".",
+        " which",
+        " and",
+        " or"
+      ],
+      [
+        " may",
+        " can",
+        " often",
+        " are",
+        " lack"
+      ],
+      [
+        " be",
+        " exagger",
+        " lack",
+        "夸大",
+        " over"
+      ],
+      [
+        " exaggerated",
+        " overst",
+        " misleading",
+        " overly",
+        " inflated"
+      ],
+      [
+        " or",
+        ",",
+        "或",
+        " или",
+        "."
+      ],
+      [
+        " misleading",
+        " incomplete",
+        " mis",
+        " generalized",
+        " context"
+      ],
+      [
+        ".",
+        "。",
+        ".\n",
+        "..",
+        ".\""
+      ],
+      [
+        " By",
+        " Bench",
+        " Metrics",
+        " Real",
+        " While"
+      ],
+      [
+        " using",
+        " analyzing",
+        " measuring",
+        " capturing",
+        " testing"
+      ],
+      [
+        " standardized",
+        " real",
+        " controlled",
+        " tools",
+        " standard"
+      ],
+      [
+        " benchmarks",
+        " tools",
+        " tests",
+        " testing",
+        " benchmark"
+      ],
+      [
+        " and",
+        ",",
+        " under",
+        " like",
+        " or"
+      ],
+      [
+        " real",
+        " actual",
+        " controlled",
+        " realistic",
+        " empirical"
+      ]
     ]
   }
 }

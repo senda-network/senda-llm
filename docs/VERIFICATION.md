@@ -26,25 +26,45 @@ single deterministic probe (`temperature=0`, fixed seed) directly to its own
 - `output_sha256` — SHA-256 of the full greedy-decoded output text.
 - `token_count` — number of decoded tokens.
 - `prefix_tokens` — the first N decoded token strings (`FINGERPRINT_PREFIX_LEN`).
+- `top_k_tokens` — the per-position top-k candidate token sets
+  (`top_logprobs`), aligned 1:1 with `prefix_tokens`.
 
 A different or smaller model, or canned text, produces a different greedy decode
 for the same fixed prompt and diverges within the first few tokens. The
 fingerprint is cached on disk alongside the timing baseline and gossiped to the
 mesh.
 
-> **No logprobs.** Earlier versions also stored per-token logprobs. At
-> `temperature=0` the chosen token's logprob is definitionally 0 and `llama.cpp`
-> returns no alternatives, so they carried no signal and were removed. The token
-> sequence and output hash are the discriminators.
+> **Top-k candidates, not logprob values.** `top_logprobs` is requested at
+> `temperature=0` purely to capture the per-position candidate *token sets*; the
+> logprob magnitudes are not stored or compared. Token identity within the
+> top-k is what lets the oracle tell an honest cross-backend near-tie flip from a
+> wrong model (see below). Older fingerprints that predate this field still
+> deserialize (the field defaults empty) and fall back to exact prefix matching.
 
 ## The comparison oracle
 
 A verifier compares a *reference* fingerprint against a *candidate* fingerprint
-produced by the suspect peer. The oracle compares a **bounded token prefix and
-allows a small disagreement budget** rather than requiring an exact hash match:
-even greedy decoding can diverge in the tail across Metal / CUDA / Vulkan because
-of floating-point differences in near-tie argmaxes. The prefix is stable; the
-tail is not. The verdict is one of `Match`, `Mismatch`, or `Inconclusive`.
+produced by the suspect peer. Naively comparing token prefixes is unsound across
+a heterogeneous mesh: even greedy `temperature=0` decoding diverges across
+Metal / CUDA / Vulkan when an early token sits on a near-tie and two backends'
+floating-point logits break it the other way — and because greedy decoding then
+conditions on a different prefix, that single flip **cascades** the rest of the
+sequence apart. A live observe-mode review found this false-flagged a genuinely
+honest peer roughly half the time.
+
+The oracle therefore **classifies the first divergence distributionally** rather
+than counting prefix agreement:
+
+1. Walk the prefix to the first token where the two decodes disagree. Up to
+   there both sides decoded from a byte-identical prefix, so that position's
+   candidate distributions are directly comparable; past it nothing is.
+2. An honest **near-tie flip** keeps each side's chosen token inside the *other*
+   side's top-k at that position → `Match`. A wrong/smaller model's token is
+   **absent** from the real model's top-k → `Mismatch`.
+3. When one side's fingerprint predates top-k capture, the oracle falls back to
+   the original bounded-prefix agreement gate.
+
+The verdict is one of `Match`, `Mismatch`, or `Inconclusive`.
 
 ## Two probe modes
 
@@ -105,7 +125,11 @@ known-good local server:
 closedmesh benchmark capture-reference --model <model-id>
 ```
 
-The embedded defaults live in `closedmesh/src/inference/reference_fingerprints.json`.
+The embedded defaults live in `closedmesh/src/inference/reference_fingerprints.json`
+and now carry `top_k_tokens` so the fixed-reference path (used by CPU-only entry
+nodes) gets the distributional classifier rather than the legacy prefix gate.
+Recapture them against the current production server config when the bundled
+decode drifts from what honest peers produce.
 
 ## Limits and deferred work
 

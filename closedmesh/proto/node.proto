@@ -88,14 +88,24 @@ message NativeBaseline {
 // baseline. A peer serving a different/smaller model, or returning canned
 // text, produces a different greedy decode for the fixed prompt. Stored as
 // the full-output hash + a bounded prefix of decoded token strings so a
-// verifier can compare with tolerance (prefix agreement) rather than
-// demanding an exact cross-backend byte match. (Per-token logprobs were
-// dropped: at temp=0 the chosen token's logprob is definitionally 0 and
-// backends return no alternatives, so they carried no signal.)
+// verifier can compare with tolerance rather than demanding an exact
+// cross-backend byte match. The verifier classifies the first divergence
+// distributionally: an honest cross-backend near-tie flip keeps each side's
+// chosen token inside the other side's per-position top-k candidate set
+// (`top_k_tokens`), whereas a different/smaller model's token is absent from
+// it. (`top_logprobs` is requested at temp=0 purely for these candidate sets;
+// the logprob *values* are not stored — only token identity matters.)
 message LogitFingerprint {
   uint32 token_count = 1;            // Decoded tokens observed (0 when the backend returned no per-token data).
   string output_sha256 = 2;          // Lowercase-hex SHA-256 of the full greedy-decoded output text.
   repeated string prefix_tokens = 3; // First N decoded token strings; empty when the backend returned no per-token data (the output hash still fingerprints the model).
+  repeated TopKTokens top_k_tokens = 4; // Per-position top-k candidate tokens, aligned 1:1 with prefix_tokens. Empty for fingerprints captured before this field existed (verifier then falls back to exact prefix matching).
+}
+
+// One position's top-k candidate token strings (proto3 has no repeated-of-
+// repeated, so the inner list is wrapped).
+message TopKTokens {
+  repeated string tokens = 1;
 }
 
 // NodeCapability is the canonical, normalized advertisement used by the mesh

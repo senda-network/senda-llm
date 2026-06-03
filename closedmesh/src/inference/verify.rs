@@ -7,19 +7,27 @@
 //! whether the candidate is plausibly that model run honestly.
 //!
 //! Why this shape:
-//! - **Prefix agreement is the gate.** The greedy decode of a fixed
-//!   `temp=0 / seed=42` prompt is a strong model-identity signal: a different
-//!   or smaller model, or canned text, diverges within the first few tokens.
-//!   We compare only a bounded prefix and allow a small disagreement budget,
-//!   because even greedy decoding can diverge in the tail across
-//!   Metal / CUDA / Vulkan from floating-point differences in near-tie
-//!   argmaxes.
-//! - **No logprob signal.** At `temp=0` the chosen token's logprob is
-//!   definitionally 0 and llama.cpp returns no alternatives, so per-token
-//!   logprobs carried no information; a nonzero temperature would recover
-//!   them but make the *token* sequence far less stable across backends,
-//!   which is the opposite of what we want. The token sequence and output
-//!   hash are the discriminators.
+//! - **Distributional classification of the first divergence.** The greedy
+//!   decode of a fixed `temp=0 / seed=42` prompt is a strong model-identity
+//!   signal: a different/smaller model, or canned text, diverges within the
+//!   first few tokens. But even *honest* greedy decoding can diverge across
+//!   Metal / CUDA / Vulkan when an early token sits on a near-tie and the
+//!   backends' floating-point logits break it the other way — and because
+//!   greedy decoding then conditions on a different prefix, that single flip
+//!   *cascades* the rest of the sequence apart. Naive prefix-agreement
+//!   therefore false-flagged honest peers ~half the time (see
+//!   internal/RESILIENCE.md). Instead we walk to the *first* token divergence
+//!   — up to which both sides decoded from an identical prefix, so the
+//!   distributions are comparable — and classify it: an honest near-tie flip
+//!   keeps each side's chosen token inside the *other* side's top-k candidate
+//!   set, while a wrong model's token is absent from it. Past the first
+//!   divergence nothing is comparable, so that one position is the verdict.
+//! - **Top-k candidates, not logprob values.** `top_logprobs` is requested at
+//!   `temp=0` purely to capture the per-position candidate *token sets*; the
+//!   logprob magnitudes are not stored or compared (raising temperature to get
+//!   richer values would make the token sequence itself less stable across
+//!   backends, the opposite of what we want). Token identity within the top-k
+//!   is the discriminator; the output hash backs it up when no prefix exists.
 //!
 //! Two probe modes (see `run_one_audit`):
 //! - **Self-oracle (preferred).** When this node serves the model, each audit
@@ -58,7 +66,11 @@ use std::time::Duration;
 #[derive(Debug, Clone)]
 pub struct VerifyThresholds {
     /// Minimum fraction of compared prefix tokens that must match for a
-    /// `Match`. Below 1.0 to tolerate cross-backend tail divergence.
+    /// `Match`. **Legacy fallback only** — used when one side's fingerprint
+    /// predates top-k capture (old bundled reference or pre-upgrade gossiped
+    /// baseline). Fingerprints with top-k use the distributional first-
+    /// divergence classifier, which ignores this. Below 1.0 to tolerate
+    /// cross-backend tail divergence.
     pub min_prefix_agreement: f64,
     /// Need at least this many overlapping tokens to render a token verdict;
     /// fewer → `Inconclusive` (not enough signal).
@@ -118,7 +130,8 @@ pub fn compare_fingerprints(
     // An exact hash match is a clean positive; a mismatch with no prefix is
     // ambiguous (expected across backends), so we decline to judge.
     if reference.prefix_tokens.is_empty() || candidate.prefix_tokens.is_empty() {
-        if !reference.output_sha256.is_empty() && reference.output_sha256 == candidate.output_sha256
+        if !reference.output_sha256.is_empty()
+            && reference.output_sha256 == candidate.output_sha256
         {
             return FingerprintVerdict::Match {
                 prefix_agreement: 1.0,
@@ -141,22 +154,71 @@ pub fn compare_fingerprints(
         };
     }
 
+    // Find the first position where the greedy decodes diverge. Up to here both
+    // sides decoded from a byte-identical prefix, so position `d`'s next-token
+    // distributions are directly comparable; *past* `d` the prefixes differ and
+    // nothing downstream is comparable (this is the cascade that made naive
+    // prefix-agreement false-flag honest peers — see internal/RESILIENCE.md).
+    let first_div = (0..compared).find(|&i| reference.prefix_tokens[i] != candidate.prefix_tokens[i]);
+
+    let Some(d) = first_div else {
+        // Whole compared window agrees token-for-token — unambiguous match.
+        return FingerprintVerdict::Match {
+            prefix_agreement: 1.0,
+            compared_tokens: compared,
+        };
+    };
+
+    let prefix_agreement = d as f64 / compared as f64;
+
+    // Distributional classification of the single comparable divergence. An
+    // honest cross-backend near-tie flip keeps each side's chosen token inside
+    // the *other* side's top-k at position `d` (both tokens were near the top
+    // of both backends' logits; the FP tie just broke the other way). A
+    // genuinely wrong/smaller model — or canned text — picks a token the real
+    // model assigns negligible mass, so it's absent from the top-k. Needs top-k
+    // on both sides; older fingerprints (no top-k) take the legacy gate below.
+    if let (Some(ref_topk), Some(cand_topk)) =
+        (reference.top_k_tokens.get(d), candidate.top_k_tokens.get(d))
+    {
+        if !ref_topk.is_empty() && !cand_topk.is_empty() {
+            let ref_tok = &reference.prefix_tokens[d];
+            let cand_tok = &candidate.prefix_tokens[d];
+            let mutual_near_tie =
+                cand_topk.iter().any(|t| t == ref_tok) && ref_topk.iter().any(|t| t == cand_tok);
+            if mutual_near_tie {
+                return FingerprintVerdict::Match {
+                    prefix_agreement,
+                    compared_tokens: compared,
+                };
+            }
+            return FingerprintVerdict::Mismatch {
+                prefix_agreement,
+                compared_tokens: compared,
+                reason: "greedy decode diverges and the divergent token is absent \
+                         from the model's own top-k — a different/smaller model or \
+                         canned output, not a cross-backend near-tie flip",
+            };
+        }
+    }
+
+    // Legacy fallback: at least one side predates top-k capture (old bundled
+    // reference or pre-upgrade gossiped baseline). Fall back to the original
+    // tolerant prefix-agreement gate over the whole window.
     let token_matches = (0..compared)
         .filter(|&i| reference.prefix_tokens[i] == candidate.prefix_tokens[i])
         .count();
-    let prefix_agreement = token_matches as f64 / compared as f64;
-
-    if prefix_agreement < thresholds.min_prefix_agreement {
+    let legacy_agreement = token_matches as f64 / compared as f64;
+    if legacy_agreement < thresholds.min_prefix_agreement {
         return FingerprintVerdict::Mismatch {
-            prefix_agreement,
+            prefix_agreement: legacy_agreement,
             compared_tokens: compared,
             reason: "greedy decode diverges from reference — likely a \
                      different/smaller model or canned output",
         };
     }
-
     FingerprintVerdict::Match {
-        prefix_agreement,
+        prefix_agreement: legacy_agreement,
         compared_tokens: compared,
     }
 }
@@ -212,12 +274,7 @@ impl Default for VerifierConfig {
 
 fn enforce_from_env() -> bool {
     std::env::var(ENFORCE_ENV)
-        .map(|v| {
-            matches!(
-                v.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
         .unwrap_or(false)
 }
 
@@ -527,6 +584,11 @@ async fn remote_probe_fingerprint(
         "seed": seed,
         "stream": false,
         "logprobs": true,
+        // Per-position candidate sets so the oracle can classify the first
+        // divergence as an honest cross-backend near-tie flip vs a wrong model.
+        // Driven by our request, so an honest peer on any backend returns them
+        // even if its own baseline predates top-k capture.
+        "top_logprobs": native_baseline::TOP_K_PER_POSITION,
         // Don't let the peer recurse into its own consultation hooks.
         "mesh_hooks": false,
         // Pin thinking off on both sides of the comparison so the audit is
@@ -621,11 +683,27 @@ fn log_verdict(peer_id: EndpointId, model: &str, mode: &str, verdict: &Fingerpri
 mod tests {
     use super::*;
 
+    /// Legacy fingerprint (no top-k) — exercises the prefix-agreement fallback.
     fn fp(tokens: &[&str], hash: &str) -> LogitFingerprint {
         LogitFingerprint {
             token_count: tokens.len() as u32,
             output_sha256: hash.to_string(),
             prefix_tokens: tokens.iter().map(|t| t.to_string()).collect(),
+            top_k_tokens: Vec::new(),
+        }
+    }
+
+    /// Fingerprint with per-position top-k candidate sets — exercises the
+    /// distributional first-divergence classifier.
+    fn fp_tk(tokens: &[&str], top_k: &[&[&str]], hash: &str) -> LogitFingerprint {
+        LogitFingerprint {
+            token_count: tokens.len() as u32,
+            output_sha256: hash.to_string(),
+            prefix_tokens: tokens.iter().map(|t| t.to_string()).collect(),
+            top_k_tokens: top_k
+                .iter()
+                .map(|row| row.iter().map(|t| t.to_string()).collect())
+                .collect(),
         }
     }
 
@@ -660,15 +738,7 @@ mod tests {
         let r = fp(&ten(), "h1");
         let wrong = fp(
             &[
-                "Hola",
-                " mundo",
-                " esto",
-                " es",
-                " otro",
-                " modelo",
-                " muy",
-                " distinto",
-                " aqui",
+                "Hola", " mundo", " esto", " es", " otro", " modelo", " muy", " distinto", " aqui",
                 " vale",
             ],
             "h2",
@@ -698,6 +768,88 @@ mod tests {
         let c = fp(&toks, "h2");
         let v = compare_fingerprints(&r, &c, &VerifyThresholds::default());
         assert!(is_mismatch(&v), "7/10 agreement should fail the 0.75 gate");
+    }
+
+    // ── distributional (top-k) first-divergence classifier ───────────────
+    //
+    // These exercise the actual cross-hardware fix: a single early divergence
+    // that is a near-tie flip (the other side's token is in this position's
+    // top-k) is honest; one whose token is absent from the top-k is a wrong
+    // model. Regression guard for the ~52% false-positive bug documented in
+    // internal/RESILIENCE.md.
+
+    #[test]
+    fn early_near_tie_flip_matches_despite_low_prefix_agreement() {
+        // Honest cross-backend: diverges at token 1 (so naive prefix agreement
+        // is ~0.1 and the old gate would FALSE-FLAG), but the flipped tokens are
+        // mutually in each other's top-k → near-tie → Match.
+        let ref_toks = ten();
+        let mut cand = ten();
+        cand[1] = " kitten"; // flip at position 1
+        // Both honest backends rank " cat" and " kitten" near the top at the
+        // tie position; every other position is confident on its single token.
+        let mut rows: Vec<Vec<&str>> = ref_toks.iter().map(|t| vec![*t]).collect();
+        rows[1] = vec![" cat", " kitten", "_pad"];
+        let rrows: Vec<&[&str]> = rows.iter().map(|r| r.as_slice()).collect();
+        let r = fp_tk(&ref_toks, &rrows, "h1");
+        let c = fp_tk(&cand, &rrows, "h2");
+        let v = compare_fingerprints(&r, &c, &VerifyThresholds::default());
+        assert!(
+            is_match(&v),
+            "an early near-tie flip must NOT demote an honest peer: {v:?}"
+        );
+    }
+
+    #[test]
+    fn early_divergence_not_in_topk_mismatches() {
+        // Wrong model: diverges at token 1 with a token the real model never
+        // ranks (not in top-k) → Mismatch even though only one token differs.
+        let ref_toks = ten();
+        let mut cand = ten();
+        cand[1] = " perro"; // wrong-model token, absent from the real top-k
+        // top-k rows: the real model's candidates never include " perro".
+        let rows: Vec<Vec<&str>> = ref_toks
+            .iter()
+            .map(|t| vec![*t, "_alt1", "_alt2", "_alt3", "_alt4"])
+            .collect();
+        let rrows: Vec<&[&str]> = rows.iter().map(|r| r.as_slice()).collect();
+        let r = fp_tk(&ref_toks, &rrows, "h1");
+        let c = fp_tk(&cand, &rrows, "h2");
+        let v = compare_fingerprints(&r, &c, &VerifyThresholds::default());
+        assert!(
+            is_mismatch(&v),
+            "a divergent token absent from top-k is a wrong model: {v:?}"
+        );
+    }
+
+    #[test]
+    fn topk_full_agreement_matches() {
+        let toks = ten();
+        let rows: Vec<Vec<&str>> = toks
+            .iter()
+            .map(|t| vec![*t, "_alt1", "_alt2"])
+            .collect();
+        let rrows: Vec<&[&str]> = rows.iter().map(|r| r.as_slice()).collect();
+        let r = fp_tk(&toks, &rrows, "h1");
+        let v = compare_fingerprints(&r, &r, &VerifyThresholds::default());
+        assert!(is_match(&v));
+    }
+
+    #[test]
+    fn one_sided_topk_falls_back_to_prefix_gate() {
+        // Candidate has top-k but reference predates it: must not crash or use
+        // the near-tie path; falls back to the prefix-agreement gate. 7/10
+        // agreement < 0.75 → Mismatch.
+        let r = fp(&ten(), "h1"); // legacy, no top-k
+        let mut toks = ten();
+        toks[5] = " rug";
+        toks[7] = " later";
+        toks[9] = " nope"; // 7/10 = 0.7
+        let rows: Vec<Vec<&str>> = toks.iter().map(|t| vec![*t, "_x"]).collect();
+        let rrows: Vec<&[&str]> = rows.iter().map(|r| r.as_slice()).collect();
+        let c = fp_tk(&toks, &rrows, "h2");
+        let v = compare_fingerprints(&r, &c, &VerifyThresholds::default());
+        assert!(is_mismatch(&v), "one-sided top-k must use the legacy gate");
     }
 
     #[test]
@@ -733,6 +885,11 @@ mod tests {
             .expect("embedded references must include the canonical daily driver");
         assert!(!fp.output_sha256.is_empty());
         assert_eq!(fp.prefix_tokens.len(), 32);
+        // Embedded reference must carry per-position top-k so the entry-node
+        // verifier (fixed_reference mode) uses the distributional classifier
+        // rather than falling back to the legacy prefix gate.
+        assert_eq!(fp.top_k_tokens.len(), 32);
+        assert!(fp.top_k_tokens.iter().all(|row| !row.is_empty()));
     }
 
     // ── conviction / enforcement state machine ────────────────────────────

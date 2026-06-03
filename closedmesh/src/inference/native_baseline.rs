@@ -88,6 +88,12 @@ const INTER_SAMPLE_DELAY: Duration = Duration::from_secs(1);
 /// verifier compare with tolerance instead of demanding an exact
 /// cross-backend match.
 const FINGERPRINT_PREFIX_LEN: usize = 32;
+/// Per-position candidate set size captured from `top_logprobs`. The oracle
+/// uses it to tell an honest cross-backend near-tie flip (the flipped token is
+/// in both sides' top-k) from a genuinely wrong model (its token isn't). `5`
+/// is what `logprobs` clients conventionally request and is plenty to contain
+/// a near-tie pair while staying tight enough that a wrong model falls out.
+pub(crate) const TOP_K_PER_POSITION: usize = 5;
 
 /// The exact prompt + sampling params the deterministic probe sends.
 /// Shared by the local baseline collector and the remote verifier so
@@ -234,16 +240,30 @@ pub struct LogitFingerprint {
     /// backend returned no per-token data — the output hash still
     /// fingerprints the model in that case.
     pub prefix_tokens: Vec<String>,
+    /// Per-position top-k candidate token strings (`top_logprobs[].token`),
+    /// aligned 1:1 with `prefix_tokens`, each inner vec ≤ `TOP_K_PER_POSITION`.
+    /// Lets the oracle distinguish an honest cross-backend near-tie flip (the
+    /// other side's token sits in this position's top-k) from a wrong model.
+    /// Empty when the backend returned no `top_logprobs`; `#[serde(default)]`
+    /// so older gossiped/bundled fingerprints (which lack the field) still
+    /// deserialize and the oracle falls back to exact prefix matching.
+    #[serde(default)]
+    pub top_k_tokens: Vec<Vec<String>>,
 }
 
 /// Build a [`LogitFingerprint`] from the decoded token stream and the
 /// concatenated output text. Pure + deterministic so it is unit-testable
 /// without an llama-server.
-pub(crate) fn build_fingerprint(tokens: &[String], full_text: &str) -> LogitFingerprint {
+pub(crate) fn build_fingerprint(
+    tokens: &[String],
+    top_k_tokens: &[Vec<String>],
+    full_text: &str,
+) -> LogitFingerprint {
     let mut hasher = Sha256::new();
     hasher.update(full_text.as_bytes());
     let output_sha256 = hex::encode(hasher.finalize());
-    let prefix_tokens = tokens
+    let prefix_tokens = tokens.iter().take(FINGERPRINT_PREFIX_LEN).cloned().collect();
+    let top_k_tokens = top_k_tokens
         .iter()
         .take(FINGERPRINT_PREFIX_LEN)
         .cloned()
@@ -252,7 +272,33 @@ pub(crate) fn build_fingerprint(tokens: &[String], full_text: &str) -> LogitFing
         token_count: tokens.len() as u32,
         output_sha256,
         prefix_tokens,
+        top_k_tokens,
     }
+}
+
+/// Pull the chosen-token stream and the per-position top-k candidate sets out
+/// of an OpenAI `logprobs.content` array (`[{token, top_logprobs:[{token}]}]`).
+/// A backend that omits `top_logprobs` yields empty inner vecs, which makes the
+/// oracle fall back to exact prefix matching for that fingerprint.
+fn extract_token_stream(content: &[serde_json::Value]) -> (Vec<String>, Vec<Vec<String>>) {
+    let mut tokens = Vec::new();
+    let mut top_k = Vec::new();
+    for entry in content {
+        let Some(tok) = entry.get("token").and_then(|t| t.as_str()) else {
+            continue;
+        };
+        tokens.push(tok.to_string());
+        let mut candidates = Vec::new();
+        if let Some(arr) = entry.get("top_logprobs").and_then(|a| a.as_array()) {
+            for c in arr {
+                if let Some(t) = c.get("token").and_then(|t| t.as_str()) {
+                    candidates.push(t.to_string());
+                }
+            }
+        }
+        top_k.push(candidates);
+    }
+    (tokens, top_k)
 }
 
 /// Build a fingerprint from a *non-streaming* chat-completion JSON value —
@@ -271,19 +317,13 @@ pub(crate) fn fingerprint_from_completion_json(v: &serde_json::Value) -> Option<
     if text.is_empty() {
         return None;
     }
-    let mut tokens: Vec<String> = Vec::new();
-    if let Some(content) = choice
+    let (tokens, top_k) = choice
         .get("logprobs")
         .and_then(|l| l.get("content"))
         .and_then(|c| c.as_array())
-    {
-        for entry in content {
-            if let Some(tok) = entry.get("token").and_then(|t| t.as_str()) {
-                tokens.push(tok.to_string());
-            }
-        }
-    }
-    Some(build_fingerprint(&tokens, &text))
+        .map(|content| extract_token_stream(content))
+        .unwrap_or_default();
+    Some(build_fingerprint(&tokens, &top_k, &text))
 }
 
 /// Issue a probe to a *local* llama-server (non-streaming) and build the
@@ -312,6 +352,10 @@ pub(crate) async fn local_probe_fingerprint(
         "seed": seed,
         "stream": false,
         "logprobs": true,
+        // Per-position candidate sets for the distributional oracle (see
+        // verify::compare_fingerprints). Lets it accept an honest cross-backend
+        // near-tie flip while still rejecting a wrong model.
+        "top_logprobs": TOP_K_PER_POSITION,
         // Same no-think pin as the streaming probe so the reference fingerprint
         // matches what the daily driver gossips (see measure_baseline).
         "chat_template_kwargs": {"enable_thinking": false},
@@ -578,8 +622,11 @@ pub async fn measure_baseline(
         {
             Ok(fp) => Some(fp),
             Err(_) => {
+                // Streaming logprobs are lossy under speculative decoding, so
+                // this fallback carries no top-k — the oracle then falls back
+                // to exact prefix matching for this (rare) fingerprint.
                 let (output_text, tokens) = parse_output_and_tokens_from_sse(&buf);
-                (!output_text.is_empty()).then(|| build_fingerprint(&tokens, &output_text))
+                (!output_text.is_empty()).then(|| build_fingerprint(&tokens, &[], &output_text))
             }
         }
     } else {
@@ -845,17 +892,17 @@ pub fn spawn_collector(
                         let mut cache = load_cache(cp);
                         cache.entries.insert(
                             model.clone(),
-                            CachedNativeBaseline {
-                                model: entry.model.clone(),
-                                native_tps_p50: entry.native_tps_p50,
-                                native_ttft_ms_p50: entry.native_ttft_ms_p50,
-                                measured_at_unix_secs: entry.measured_at_unix_secs,
-                                samples: entry.samples,
-                                backend: entry.backend.clone(),
-                                model_file_mtime_secs: live_mtime,
-                                logit_fingerprint: meas.logit_fingerprint.clone(),
-                                runtime_version: Some(RUNTIME_VERSION.to_string()),
-                            },
+                        CachedNativeBaseline {
+                            model: entry.model.clone(),
+                            native_tps_p50: entry.native_tps_p50,
+                            native_ttft_ms_p50: entry.native_ttft_ms_p50,
+                            measured_at_unix_secs: entry.measured_at_unix_secs,
+                            samples: entry.samples,
+                            backend: entry.backend.clone(),
+                            model_file_mtime_secs: live_mtime,
+                            logit_fingerprint: meas.logit_fingerprint.clone(),
+                            runtime_version: Some(RUNTIME_VERSION.to_string()),
+                        },
                         );
                         if let Err(err) = save_cache(cp, &cache) {
                             tracing::warn!(
@@ -1060,8 +1107,8 @@ mod tests {
     #[test]
     fn fingerprint_is_stable_and_separates_different_output() {
         let toks_a = vec!["Hello".to_string(), " world".to_string()];
-        let a1 = build_fingerprint(&toks_a, "Hello world");
-        let a2 = build_fingerprint(&toks_a, "Hello world");
+        let a1 = build_fingerprint(&toks_a, &[], "Hello world");
+        let a2 = build_fingerprint(&toks_a, &[], "Hello world");
         // Deterministic: same input → identical fingerprint.
         assert_eq!(a1, a2);
         assert_eq!(a1.token_count, 2);
@@ -1069,7 +1116,7 @@ mod tests {
         assert_eq!(a1.prefix_tokens[1], " world");
 
         // A wrong/smaller model returning different text → different hash.
-        let b = build_fingerprint(&toks_a, "Hola mundo");
+        let b = build_fingerprint(&toks_a, &[], "Hola mundo");
         assert_ne!(a1.output_sha256, b.output_sha256);
     }
 
@@ -1121,10 +1168,12 @@ mod tests {
     #[test]
     fn fingerprint_prefix_is_bounded() {
         let toks: Vec<String> = (0..100).map(|i| format!("t{i}")).collect();
-        let fp = build_fingerprint(&toks, "irrelevant");
-        // Full count recorded, prefix capped at FINGERPRINT_PREFIX_LEN.
+        let top_k: Vec<Vec<String>> = (0..100).map(|i| vec![format!("t{i}")]).collect();
+        let fp = build_fingerprint(&toks, &top_k, "irrelevant");
+        // Full count recorded, prefix + top-k both capped at FINGERPRINT_PREFIX_LEN.
         assert_eq!(fp.token_count, 100);
         assert_eq!(fp.prefix_tokens.len(), FINGERPRINT_PREFIX_LEN);
+        assert_eq!(fp.top_k_tokens.len(), FINGERPRINT_PREFIX_LEN);
     }
 
     #[test]
@@ -1147,9 +1196,10 @@ mod tests {
         let (text, toks) = parse_output_and_tokens_from_sse(body.as_bytes());
         assert_eq!(text, "hello");
         assert!(toks.is_empty());
-        let fp = build_fingerprint(&toks, &text);
+        let fp = build_fingerprint(&toks, &[], &text);
         assert_eq!(fp.token_count, 0);
         assert!(fp.prefix_tokens.is_empty());
+        assert!(fp.top_k_tokens.is_empty());
         assert!(!fp.output_sha256.is_empty());
     }
 
@@ -1172,6 +1222,7 @@ mod tests {
                     token_count: 1,
                     output_sha256: "abc".to_string(),
                     prefix_tokens: vec!["hi".to_string()],
+                    top_k_tokens: vec![vec!["hi".to_string(), "hey".to_string()]],
                 }),
                 runtime_version: Some(RUNTIME_VERSION.to_string()),
             },
@@ -1188,6 +1239,10 @@ mod tests {
         assert_eq!(fp.token_count, 1);
         assert_eq!(fp.output_sha256, "abc");
         assert_eq!(fp.prefix_tokens, vec!["hi".to_string()]);
+        assert_eq!(
+            fp.top_k_tokens,
+            vec![vec!["hi".to_string(), "hey".to_string()]]
+        );
     }
 
     #[test]
@@ -1198,15 +1253,33 @@ mod tests {
             "choices": [{
                 "message": {"content": "Hi there"},
                 "logprobs": {"content": [
-                    {"token": "Hi", "logprob": -0.2},
-                    {"token": " there", "logprob": -1.5}
+                    {"token": "Hi", "logprob": -0.2, "top_logprobs": [
+                        {"token": "Hi", "logprob": -0.2},
+                        {"token": "Hey", "logprob": -1.1}
+                    ]},
+                    {"token": " there", "logprob": -1.5, "top_logprobs": [
+                        {"token": " there", "logprob": -1.5},
+                        {"token": " world", "logprob": -2.0}
+                    ]}
                 ]}
             }]
         });
         let from_json = fingerprint_from_completion_json(&json).unwrap();
+        // Per-position top-k is captured from `top_logprobs[].token`.
+        assert_eq!(
+            from_json.top_k_tokens,
+            vec![
+                vec!["Hi".to_string(), "Hey".to_string()],
+                vec![" there".to_string(), " world".to_string()],
+            ]
+        );
 
         let toks = vec!["Hi".to_string(), " there".to_string()];
-        let from_stream = build_fingerprint(&toks, "Hi there");
+        let top_k = vec![
+            vec!["Hi".to_string(), "Hey".to_string()],
+            vec![" there".to_string(), " world".to_string()],
+        ];
+        let from_stream = build_fingerprint(&toks, &top_k, "Hi there");
         assert_eq!(from_json, from_stream);
     }
 
