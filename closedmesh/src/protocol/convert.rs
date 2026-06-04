@@ -730,11 +730,7 @@ pub(crate) fn proto_ann_to_local(
                         token_count: fp.token_count,
                         output_sha256: fp.output_sha256.clone(),
                         prefix_tokens: fp.prefix_tokens.clone(),
-                        top_k_tokens: fp
-                            .top_k_tokens
-                            .iter()
-                            .map(|t| t.tokens.clone())
-                            .collect(),
+                        top_k_tokens: fp.top_k_tokens.iter().map(|t| t.tokens.clone()).collect(),
                     }
                 }),
             })

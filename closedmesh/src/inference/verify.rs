@@ -130,8 +130,7 @@ pub fn compare_fingerprints(
     // An exact hash match is a clean positive; a mismatch with no prefix is
     // ambiguous (expected across backends), so we decline to judge.
     if reference.prefix_tokens.is_empty() || candidate.prefix_tokens.is_empty() {
-        if !reference.output_sha256.is_empty()
-            && reference.output_sha256 == candidate.output_sha256
+        if !reference.output_sha256.is_empty() && reference.output_sha256 == candidate.output_sha256
         {
             return FingerprintVerdict::Match {
                 prefix_agreement: 1.0,
@@ -159,7 +158,8 @@ pub fn compare_fingerprints(
     // distributions are directly comparable; *past* `d` the prefixes differ and
     // nothing downstream is comparable (this is the cascade that made naive
     // prefix-agreement false-flag honest peers — see internal/RESILIENCE.md).
-    let first_div = (0..compared).find(|&i| reference.prefix_tokens[i] != candidate.prefix_tokens[i]);
+    let first_div =
+        (0..compared).find(|&i| reference.prefix_tokens[i] != candidate.prefix_tokens[i]);
 
     let Some(d) = first_div else {
         // Whole compared window agrees token-for-token — unambiguous match.
@@ -274,7 +274,12 @@ impl Default for VerifierConfig {
 
 fn enforce_from_env() -> bool {
     std::env::var(ENFORCE_ENV)
-        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+        .map(|v| {
+            matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -738,7 +743,15 @@ mod tests {
         let r = fp(&ten(), "h1");
         let wrong = fp(
             &[
-                "Hola", " mundo", " esto", " es", " otro", " modelo", " muy", " distinto", " aqui",
+                "Hola",
+                " mundo",
+                " esto",
+                " es",
+                " otro",
+                " modelo",
+                " muy",
+                " distinto",
+                " aqui",
                 " vale",
             ],
             "h2",
@@ -786,8 +799,8 @@ mod tests {
         let ref_toks = ten();
         let mut cand = ten();
         cand[1] = " kitten"; // flip at position 1
-        // Both honest backends rank " cat" and " kitten" near the top at the
-        // tie position; every other position is confident on its single token.
+                             // Both honest backends rank " cat" and " kitten" near the top at the
+                             // tie position; every other position is confident on its single token.
         let mut rows: Vec<Vec<&str>> = ref_toks.iter().map(|t| vec![*t]).collect();
         rows[1] = vec![" cat", " kitten", "_pad"];
         let rrows: Vec<&[&str]> = rows.iter().map(|r| r.as_slice()).collect();
@@ -807,7 +820,7 @@ mod tests {
         let ref_toks = ten();
         let mut cand = ten();
         cand[1] = " perro"; // wrong-model token, absent from the real top-k
-        // top-k rows: the real model's candidates never include " perro".
+                            // top-k rows: the real model's candidates never include " perro".
         let rows: Vec<Vec<&str>> = ref_toks
             .iter()
             .map(|t| vec![*t, "_alt1", "_alt2", "_alt3", "_alt4"])
@@ -825,10 +838,7 @@ mod tests {
     #[test]
     fn topk_full_agreement_matches() {
         let toks = ten();
-        let rows: Vec<Vec<&str>> = toks
-            .iter()
-            .map(|t| vec![*t, "_alt1", "_alt2"])
-            .collect();
+        let rows: Vec<Vec<&str>> = toks.iter().map(|t| vec![*t, "_alt1", "_alt2"]).collect();
         let rrows: Vec<&[&str]> = rows.iter().map(|r| r.as_slice()).collect();
         let r = fp_tk(&toks, &rrows, "h1");
         let v = compare_fingerprints(&r, &r, &VerifyThresholds::default());

@@ -262,7 +262,11 @@ pub(crate) fn build_fingerprint(
     let mut hasher = Sha256::new();
     hasher.update(full_text.as_bytes());
     let output_sha256 = hex::encode(hasher.finalize());
-    let prefix_tokens = tokens.iter().take(FINGERPRINT_PREFIX_LEN).cloned().collect();
+    let prefix_tokens = tokens
+        .iter()
+        .take(FINGERPRINT_PREFIX_LEN)
+        .cloned()
+        .collect();
     let top_k_tokens = top_k_tokens
         .iter()
         .take(FINGERPRINT_PREFIX_LEN)
@@ -892,17 +896,17 @@ pub fn spawn_collector(
                         let mut cache = load_cache(cp);
                         cache.entries.insert(
                             model.clone(),
-                        CachedNativeBaseline {
-                            model: entry.model.clone(),
-                            native_tps_p50: entry.native_tps_p50,
-                            native_ttft_ms_p50: entry.native_ttft_ms_p50,
-                            measured_at_unix_secs: entry.measured_at_unix_secs,
-                            samples: entry.samples,
-                            backend: entry.backend.clone(),
-                            model_file_mtime_secs: live_mtime,
-                            logit_fingerprint: meas.logit_fingerprint.clone(),
-                            runtime_version: Some(RUNTIME_VERSION.to_string()),
-                        },
+                            CachedNativeBaseline {
+                                model: entry.model.clone(),
+                                native_tps_p50: entry.native_tps_p50,
+                                native_ttft_ms_p50: entry.native_ttft_ms_p50,
+                                measured_at_unix_secs: entry.measured_at_unix_secs,
+                                samples: entry.samples,
+                                backend: entry.backend.clone(),
+                                model_file_mtime_secs: live_mtime,
+                                logit_fingerprint: meas.logit_fingerprint.clone(),
+                                runtime_version: Some(RUNTIME_VERSION.to_string()),
+                            },
                         );
                         if let Err(err) = save_cache(cp, &cache) {
                             tracing::warn!(
