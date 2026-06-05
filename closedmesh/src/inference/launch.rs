@@ -1466,6 +1466,34 @@ async fn terminate_process_with_wait(
     let _ = send_signal_if_matches(pid, expected_comm, expected_start_time, ProcessSignal::Kill);
 }
 
+/// Speculative decoding (attaching a draft model via `-md`) is **disabled by
+/// default**.
+///
+/// Measured 2026-06-05, controlled thermally-paired A/B (alternating
+/// draft/no-draft requests, unique prompts) on the catalog's canonical pairing
+/// `Qwen3-0.6B → Qwen3-8B`, at a healthy ~68% draft acceptance:
+///   - Apple Silicon M3 Pro:        −12% decode tok/s, draft slower 0/8 rounds
+///   - discrete RTX 4080 SUPER/CUDA: −5.4% decode tok/s, draft slower 0/8 rounds
+/// On a fast (≤8B) target the draft's serial forward passes cost more than the
+/// accepted tokens save on *every* backend tested — there is no backend where it
+/// wins, so a per-backend gate is pointless. See internal/RESILIENCE.md.
+///
+/// Set `CLOSEDMESH_ENABLE_DRAFT=1` (or `true`/`yes`/`on`) to opt back in — e.g.
+/// for Phase 4.D speculative-decoding work, which must prove a net win on its
+/// big/slow target class before this default is reconsidered.
+pub fn speculative_decoding_enabled() -> bool {
+    parse_enable_draft(std::env::var("CLOSEDMESH_ENABLE_DRAFT").ok().as_deref())
+}
+
+/// Pure parse of the `CLOSEDMESH_ENABLE_DRAFT` value — truthy only on an
+/// explicit affirmative; absent/empty/anything else is `false` (the default).
+fn parse_enable_draft(value: Option<&str>) -> bool {
+    matches!(
+        value.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1" | "true" | "yes" | "on")
+    )
+}
+
 /// Start llama-server with the given model, HTTP port, and RPC tunnel ports.
 /// Returns a oneshot receiver that fires when the process exits.
 /// `model_bytes` is the total GGUF file size, used to select KV cache quantization:
@@ -1737,7 +1765,15 @@ pub async fn start_llama_server(
         args.push(local_device.clone());
     }
     if let Some(draft_path) = draft {
-        if draft_path.exists() {
+        if !speculative_decoding_enabled() {
+            // Disabled by default — measured net throughput loss on every
+            // backend tested (see `speculative_decoding_enabled` / RESILIENCE.md).
+            tracing::info!(
+                "Speculative decoding disabled by default; ignoring draft {} \
+                 (set CLOSEDMESH_ENABLE_DRAFT=1 to opt back in).",
+                draft_path.display()
+            );
+        } else if draft_path.exists() {
             // Always honor explicit --draft: the user opted in, even on CPU.
             // GPU-specific offload flags (`-ngld`, `--device-draft`) only get
             // emitted when we actually have a GPU; the speculative-decoding
@@ -2107,13 +2143,30 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 mod tests {
     use super::{
         compute_context_size, flash_attention_args, health_timeout_secs, is_safe_kill_target,
-        mmap_args, model_label, parse_available_devices, preferred_device, terminate_process,
-        wait_for_exit, BinaryFlavor, KvCacheQuant, KvCacheWarning, KvType, RpcServerHandle,
-        SplitMode, GB, HEALTH_TIMEOUT_CEIL_SECS, HEALTH_TIMEOUT_FLOOR_SECS,
+        mmap_args, model_label, parse_available_devices, parse_enable_draft, preferred_device,
+        terminate_process, wait_for_exit, BinaryFlavor, KvCacheQuant, KvCacheWarning, KvType,
+        RpcServerHandle, SplitMode, GB, HEALTH_TIMEOUT_CEIL_SECS, HEALTH_TIMEOUT_FLOOR_SECS,
     };
     use std::path::Path;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
+
+    #[test]
+    fn speculative_decoding_off_by_default_opt_in_only() {
+        // Default (env absent) and every non-affirmative value must be false:
+        // the draft is a measured net throughput loss on all tested backends.
+        assert!(!parse_enable_draft(None));
+        assert!(!parse_enable_draft(Some("")));
+        assert!(!parse_enable_draft(Some("0")));
+        assert!(!parse_enable_draft(Some("false")));
+        assert!(!parse_enable_draft(Some("off")));
+        assert!(!parse_enable_draft(Some("nope")));
+        // Only an explicit affirmative opts back in (case/space-insensitive).
+        assert!(parse_enable_draft(Some("1")));
+        assert!(parse_enable_draft(Some("true")));
+        assert!(parse_enable_draft(Some(" YES ")));
+        assert!(parse_enable_draft(Some("On")));
+    }
 
     #[test]
     fn mmap_enabled_for_rpc_split_launches() {

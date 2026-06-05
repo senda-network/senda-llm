@@ -3026,8 +3026,14 @@ async fn run_auto(
 
     // Ensure draft model is available (downloads if needed, <1GB)
     // `--no-draft` disables automatic draft detection, but should not
-    // override an explicitly supplied `--draft` value.
-    if !cli.no_draft && cli.draft.is_none() {
+    // override an explicitly supplied `--draft` value. Speculative decoding is
+    // off by default (measured net throughput loss on every backend tested —
+    // see `launch::speculative_decoding_enabled` / RESILIENCE.md), so skip the
+    // auto-download entirely unless it has been explicitly re-enabled.
+    if !cli.no_draft
+        && cli.draft.is_none()
+        && crate::inference::launch::speculative_decoding_enabled()
+    {
         if let Some(draft_path) = ensure_draft(&model).await {
             let _ = emit_event(OutputEvent::Info {
                 message: format!("Auto-detected draft model: {}", draft_path.display()),
