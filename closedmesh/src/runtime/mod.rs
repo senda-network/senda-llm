@@ -3128,6 +3128,11 @@ async fn run_auto(
         crate::inference::verify::VerifierConfig::default(),
     );
 
+    // Keep-warm: hold local llama-server GPU residency hot during/after active
+    // use so follow-up requests skip the ~2 s cold-start. No-op when not
+    // serving locally or after a long idle (see module docs).
+    crate::inference::keepwarm::spawn_keepwarm(node.clone());
+
     // Console (optional)
     let model_name_for_console = model_name.clone();
     let mut console_server_handle = None;
@@ -4213,6 +4218,11 @@ async fn run_passive(
         node.clone(),
         crate::inference::verify::VerifierConfig::default(),
     );
+
+    // Keep-warm: hold local llama-server GPU residency hot during/after active
+    // use so follow-up requests skip the ~2 s cold-start. No-op when not
+    // serving locally or after a long idle (see module docs).
+    crate::inference::keepwarm::spawn_keepwarm(node.clone());
 
     loop {
         tokio::select! {

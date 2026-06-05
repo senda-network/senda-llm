@@ -1227,6 +1227,10 @@ pub struct Node {
     pub peer_change_rx: watch::Receiver<usize>,
     inflight_requests: Arc<std::sync::atomic::AtomicUsize>,
     inflight_change_tx: watch::Sender<u64>,
+    /// Unix-seconds of the last locally-served request (0 = never). Updated on
+    /// every `begin_inflight_request`. Read by the keep-warm loop to decide
+    /// whether to ping the local llama-server and hold its GPU residency hot.
+    last_local_request_at: Arc<std::sync::atomic::AtomicU64>,
     routing_metrics: crate::network::metrics::RoutingMetrics,
     local_request_metrics: Arc<LocalRequestMetricsSampler>,
     tunnel_tx: tokio::sync::mpsc::Sender<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)>,
@@ -1659,6 +1663,8 @@ impl Node {
 
     pub fn begin_inflight_request(&self) -> InflightRequestGuard {
         self.local_request_metrics.record_request_accepted();
+        self.last_local_request_at
+            .store(now_secs(), std::sync::atomic::Ordering::Relaxed);
         self.inflight_requests
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let current = self
@@ -1677,6 +1683,20 @@ impl Node {
     pub fn inflight_requests(&self) -> u64 {
         self.inflight_requests
             .load(std::sync::atomic::Ordering::Relaxed) as u64
+    }
+
+    /// Seconds since the last locally-served request, or `None` if this node has
+    /// never served one. Used by the keep-warm loop to bound GPU pinging to a
+    /// window after real activity (so truly-idle contributor GPUs can sleep).
+    pub fn seconds_since_last_local_request(&self) -> Option<u64> {
+        let last = self
+            .last_local_request_at
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if last == 0 {
+            None
+        } else {
+            Some(now_secs().saturating_sub(last))
+        }
     }
 
     pub fn inflight_change_rx(&self) -> watch::Receiver<u64> {
@@ -2064,6 +2084,7 @@ impl Node {
             peer_change_rx,
             inflight_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             inflight_change_tx,
+            last_local_request_at: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             routing_metrics: crate::network::metrics::RoutingMetrics::default(),
             local_request_metrics: Arc::new(LocalRequestMetricsSampler::default()),
             tunnel_tx,
@@ -2171,6 +2192,7 @@ impl Node {
             peer_change_rx,
             inflight_requests: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             inflight_change_tx,
+            last_local_request_at: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             routing_metrics: crate::network::metrics::RoutingMetrics::default(),
             local_request_metrics: Arc::new(LocalRequestMetricsSampler::default()),
             tunnel_tx,
