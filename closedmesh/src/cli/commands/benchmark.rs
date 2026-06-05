@@ -110,6 +110,18 @@ pub(crate) async fn dispatch_benchmark_command(command: &BenchmarkCommand) -> Re
             println!("wrote {}", path.display());
             Ok(())
         }
+        BenchmarkCommand::CaptureReferenceBattery { model, port } => {
+            let battery =
+                crate::inference::native_baseline::capture_reference_battery(*port).await?;
+            let path = crate::inference::verify::upsert_reference_battery(model, &battery)?;
+            let with_topk = battery.iter().filter(|p| !p.top_k.is_empty()).count();
+            println!(
+                "captured reference battery for {model}: {} probes, {with_topk} with top-k",
+                battery.len()
+            );
+            println!("wrote {}", path.display());
+            Ok(())
+        }
     }
 }
 

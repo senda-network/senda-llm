@@ -54,7 +54,7 @@
 //! Deferred: multi-peer consensus (proof-of-sampling) for models *no* verifier
 //! serves locally, so the self-oracle's coverage isn't limited to served models.
 
-use super::native_baseline::{self, LogitFingerprint};
+use super::native_baseline::{self, FirstTokenProbe, LogitFingerprint};
 use crate::mesh;
 use iroh::EndpointId;
 use std::collections::HashMap;
@@ -75,6 +75,17 @@ pub struct VerifyThresholds {
     /// Need at least this many overlapping tokens to render a token verdict;
     /// fewer → `Inconclusive` (not enough signal).
     pub min_compared_tokens: usize,
+    /// **Layer 1 gross-fraud gate.** Minimum fraction of battery probes whose
+    /// first token is a *mutual near-tie* with the reference (each side's token
+    /// sits in the other's top-k) for a `Match`. Calibrated honest peers score
+    /// ~1.0 across backends and under load; canned output and wrong/much-smaller
+    /// models score far below. Deliberately loose — Layer 1 catches only GROSS
+    /// substitution; same-family downgrades (e.g. 4B-as-8B) are out of scope and
+    /// left to the performance-profile layer (L4). See internal/RESILIENCE.md.
+    pub min_battery_agreement: f64,
+    /// Minimum battery probes that must return a usable first-token top-k on
+    /// *both* sides to render a battery verdict; fewer → `Inconclusive`.
+    pub min_battery_probes: usize,
 }
 
 impl Default for VerifyThresholds {
@@ -97,6 +108,17 @@ impl Default for VerifyThresholds {
             // false-flag honest, freshly-booted peers.
             min_prefix_agreement: 0.75,
             min_compared_tokens: 8,
+            // Honest first-token near-tie is 1.000 (idle, under load, and
+            // cross-backend Metal/CUDA — measured, see RESILIENCE.md). A gross
+            // substitution (different family / much smaller / canned) collapses
+            // well below 0.5. 0.5 leaves a wide safety margin on the honest side
+            // while still firing on anything genuinely fraudulent; it
+            // intentionally does NOT try to separate a same-family 4B (which
+            // also scores ~1.0 here — that is L4's job).
+            min_battery_agreement: 0.5,
+            // ~2/3 of the 16-probe battery must come back usable. Below that the
+            // sample is too thin to convict; the audit is just inconclusive.
+            min_battery_probes: 10,
         }
     }
 }
@@ -223,6 +245,63 @@ pub fn compare_fingerprints(
     }
 }
 
+// ── Layer 1 — first-token top-k battery oracle (gross-fraud) ─────────────────
+//
+// The preferred verdict path. Instead of comparing a long greedy-decode prefix
+// (which on the bundled b9109 stack reads cross-backend drift + load jitter as
+// divergence — see `compare_fingerprints` and RESILIENCE.md), it compares the
+// *first token's top-k candidate set* over a battery of short prompts, captured
+// via native `/completion` where first-token top-k is always present. Honest
+// peers are a ~100 % mutual near-tie idle, under load, and across backends;
+// gross fraud collapses far below the gate. Scoped to GROSS substitution by
+// design — see `VerifyThresholds::min_battery_agreement`.
+
+/// Compare a candidate's per-prompt first-token probes against the reference
+/// battery, index-aligned (`reference[i]` and `candidate[i]` are the same
+/// `VERIFY_BATTERY` prompt; `None` candidate entries are dropped probes). A
+/// position counts toward agreement when it is a *mutual near-tie*: the
+/// candidate's first token is in the reference's top-k AND vice versa. Pure +
+/// deterministic so it is unit-testable without a network.
+pub fn battery_verdict(
+    reference: &[FirstTokenProbe],
+    candidate: &[Option<FirstTokenProbe>],
+    thresholds: &VerifyThresholds,
+) -> FingerprintVerdict {
+    let mut compared = 0usize;
+    let mut near_tie = 0usize;
+    for (r, c) in reference.iter().zip(candidate.iter()) {
+        let Some(c) = c else { continue };
+        if r.top_k.is_empty() || c.top_k.is_empty() {
+            continue; // no candidate set on one side — not comparable
+        }
+        compared += 1;
+        let mutual = c.top_k.iter().any(|t| t == &r.token) && r.top_k.iter().any(|t| t == &c.token);
+        if mutual {
+            near_tie += 1;
+        }
+    }
+
+    if compared < thresholds.min_battery_probes {
+        return FingerprintVerdict::Inconclusive {
+            reason: "too few battery probes returned usable first-token top-k to judge",
+        };
+    }
+
+    let agreement = near_tie as f64 / compared as f64;
+    if agreement < thresholds.min_battery_agreement {
+        return FingerprintVerdict::Mismatch {
+            prefix_agreement: agreement,
+            compared_tokens: compared,
+            reason: "first-token top-k battery agreement far below the honest floor — \
+                     gross substitution (wrong/much-smaller model or canned output)",
+        };
+    }
+    FingerprintVerdict::Match {
+        prefix_agreement: agreement,
+        compared_tokens: compared,
+    }
+}
+
 // ── Verifier loop ────────────────────────────────────────────────────────────
 //
 // Observe by default, enforce only when explicitly enabled. The loop probes
@@ -326,6 +405,67 @@ impl ReferenceStore {
     }
 }
 
+/// Layer-1 reference batteries (first-token top-k per `VERIFY_BATTERY` prompt),
+/// keyed by model name. Same two-layer shape as [`ReferenceStore`]: embedded in
+/// the binary so a GPU-less entry router has them with zero config, plus an
+/// on-disk override at `~/.closedmesh/reference-batteries.json` (what
+/// `benchmark capture-reference-battery` writes) that extends/replaces the
+/// shipped set without a rebuild. Entries are index-aligned to `VERIFY_BATTERY`,
+/// so the battery list and the captures must be regenerated together.
+#[derive(Debug, Clone, Default)]
+pub struct ReferenceBatteryStore {
+    refs: HashMap<String, Vec<FirstTokenProbe>>,
+}
+
+/// Reference batteries baked into the binary at build time.
+const EMBEDDED_BATTERIES: &str = include_str!("reference_batteries.json");
+
+impl ReferenceBatteryStore {
+    pub fn load() -> Self {
+        let mut refs: HashMap<String, Vec<FirstTokenProbe>> =
+            serde_json::from_str(EMBEDDED_BATTERIES).unwrap_or_default();
+        if let Some(path) = battery_reference_path() {
+            if let Ok(raw) = std::fs::read_to_string(&path) {
+                if let Ok(disk) =
+                    serde_json::from_str::<HashMap<String, Vec<FirstTokenProbe>>>(&raw)
+                {
+                    refs.extend(disk);
+                }
+            }
+        }
+        Self { refs }
+    }
+
+    pub fn get(&self, model: &str) -> Option<&Vec<FirstTokenProbe>> {
+        self.refs.get(model)
+    }
+}
+
+pub(crate) fn battery_reference_path() -> Option<std::path::PathBuf> {
+    if let Ok(custom) = std::env::var("CLOSEDMESH_HOME") {
+        return Some(std::path::PathBuf::from(custom).join("reference-batteries.json"));
+    }
+    dirs::home_dir().map(|h| h.join(".closedmesh").join("reference-batteries.json"))
+}
+
+/// Insert or replace one model's reference battery in the on-disk store and
+/// persist it (pretty JSON). Returns the path written. Used by
+/// `benchmark capture-reference-battery`.
+pub(crate) fn upsert_reference_battery(
+    model: &str,
+    battery: &[FirstTokenProbe],
+) -> anyhow::Result<std::path::PathBuf> {
+    let path = battery_reference_path()
+        .ok_or_else(|| anyhow::anyhow!("could not resolve reference-batteries.json path"))?;
+    let mut store = ReferenceBatteryStore::load();
+    store.refs.insert(model.to_string(), battery.to_vec());
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, serde_json::to_string_pretty(&store.refs)?)?;
+    Ok(path)
+}
+
 pub(crate) fn reference_path() -> Option<std::path::PathBuf> {
     if let Ok(custom) = std::env::var("CLOSEDMESH_HOME") {
         return Some(std::path::PathBuf::from(custom).join("reference-fingerprints.json"));
@@ -362,9 +502,11 @@ pub fn spawn_verifier(node: mesh::Node, mut config: VerifierConfig) {
     tokio::spawn(async move {
         tokio::time::sleep(config.settle).await;
         let store = ReferenceStore::load();
+        let battery_store = ReferenceBatteryStore::load();
         tracing::info!(
             target: "closedmesh::verify",
             shipped_refs = store.refs.len(),
+            shipped_batteries = battery_store.refs.len(),
             interval_secs = config.interval.as_secs(),
             enforce = config.enforce,
             min_consecutive_mismatches = config.min_consecutive_mismatches,
@@ -377,7 +519,9 @@ pub fn spawn_verifier(node: mesh::Node, mut config: VerifierConfig) {
         let mut streaks: HashMap<(EndpointId, String), u32> = HashMap::new();
         loop {
             tokio::time::sleep(config.interval).await;
-            if let Err(e) = run_one_audit(&node, &store, &config, &mut streaks).await {
+            if let Err(e) =
+                run_one_audit(&node, &store, &battery_store, &config, &mut streaks).await
+            {
                 tracing::debug!(target: "closedmesh::verify", "audit tick skipped: {e}");
             }
         }
@@ -411,6 +555,7 @@ async fn self_baseline_fingerprints(node: &mesh::Node) -> HashMap<String, LogitF
 async fn run_one_audit(
     node: &mesh::Node,
     store: &ReferenceStore,
+    battery_store: &ReferenceBatteryStore,
     config: &VerifierConfig,
     streaks: &mut HashMap<(EndpointId, String), u32>,
 ) -> anyhow::Result<()> {
@@ -419,7 +564,8 @@ async fn run_one_audit(
     let local_ports = node.local_model_ports_snapshot().await;
 
     // (peer, model) pairs we can establish ground truth for — either we serve
-    // the model (self-oracle) or we hold a fixed reference for it.
+    // the model (self-oracle) or we hold a fixed reference for it. A battery
+    // reference (Layer 1) or a fingerprint reference (legacy) both qualify.
     let mut candidates: Vec<(EndpointId, String)> = Vec::new();
     for p in node.peers().await {
         if p.id == local_id {
@@ -431,6 +577,7 @@ async fn run_one_audit(
         for model in p.http_routable_models() {
             let auditable = local_ports.contains_key(&model)
                 || store.get(&model).is_some()
+                || battery_store.get(&model).is_some()
                 || self_refs.contains_key(&model);
             if auditable {
                 candidates.push((p.id, model));
@@ -443,6 +590,36 @@ async fn run_one_audit(
 
     let idx = (rand::random::<u64>() as usize) % candidates.len();
     let (peer_id, model) = candidates.swap_remove(idx);
+
+    // ── Layer 1 (preferred): first-token top-k battery, gross-fraud scoped. ──
+    // Ground truth is our own model when we serve it (same-hardware capture),
+    // else the embedded/on-disk reference battery. A decisive verdict short-
+    // circuits; an `Inconclusive` (peer returned too few probes) falls through
+    // to the legacy fingerprint oracle below.
+    let ref_battery: Option<(Vec<FirstTokenProbe>, &'static str)> =
+        if let Some(&port) = local_ports.get(&model) {
+            native_baseline::capture_reference_battery(port)
+                .await
+                .ok()
+                .map(|b| (b, "battery_self"))
+        } else {
+            battery_store
+                .get(&model)
+                .cloned()
+                .map(|b| (b, "battery_fixed"))
+        };
+    if let Some((reference, mode)) = ref_battery {
+        // Cap per-probe wait so a stalled peer can't drag one tick across the
+        // whole battery; a single decoded token is fast on a live server.
+        let per_probe = config.probe_timeout.min(Duration::from_secs(20));
+        let candidate = remote_first_token_battery(node, peer_id, per_probe).await;
+        let verdict = battery_verdict(&reference, &candidate, &config.thresholds);
+        if !matches!(verdict, FingerprintVerdict::Inconclusive { .. }) {
+            log_verdict(peer_id, &model, mode, &verdict);
+            apply_enforcement(node, peer_id, &model, &verdict, config, streaks).await;
+            return Ok(());
+        }
+    }
 
     let (reference, candidate, mode) = if let Some(&port) = local_ports.get(&model) {
         // Self-oracle: fresh unpredictable probe, ground truth from our own model.
@@ -639,6 +816,74 @@ async fn remote_probe_fingerprint(
         .ok_or_else(|| anyhow::anyhow!("peer probe response had no usable output"))
 }
 
+/// Capture a peer's first-token battery over the mesh QUIC tunnel: one native
+/// `/completion` probe per `VERIFY_BATTERY` prompt, index-aligned with the
+/// reference (`None` for a dropped/failed probe). The peer's inbound HTTP
+/// tunnel forwards to its elected-model backend proxy regardless of path, so
+/// `/completion` reaches the same llama-server the chat probe would.
+async fn remote_first_token_battery(
+    node: &mesh::Node,
+    peer_id: EndpointId,
+    per_probe_timeout: Duration,
+) -> Vec<Option<FirstTokenProbe>> {
+    let mut out = Vec::with_capacity(native_baseline::VERIFY_BATTERY.len());
+    for prompt in native_baseline::VERIFY_BATTERY {
+        let probe =
+            tokio::time::timeout(per_probe_timeout, remote_first_token(node, peer_id, prompt))
+                .await
+                .ok()
+                .and_then(|r| r.ok());
+        out.push(probe);
+    }
+    out
+}
+
+/// Send one battery prompt to a peer's native `/completion` over the tunnel and
+/// parse its first-token top-k. Mirrors [`remote_probe_fingerprint`]'s raw-HTTP
+/// framing; the body is the shared [`native_baseline::first_token_request_body`]
+/// so both sides issue a byte-identical request.
+async fn remote_first_token(
+    node: &mesh::Node,
+    peer_id: EndpointId,
+    prompt: &str,
+) -> anyhow::Result<FirstTokenProbe> {
+    let body_bytes = serde_json::to_vec(&native_baseline::first_token_request_body(prompt))?;
+    let http_request = format!(
+        "POST /completion HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         \r\n",
+        body_bytes.len()
+    );
+    let mut raw = http_request.into_bytes();
+    raw.extend_from_slice(&body_bytes);
+
+    let (mut send, mut recv) = node.open_http_tunnel(peer_id).await?;
+    send.write_all(&raw).await?;
+    send.finish()?;
+
+    let response_bytes = recv.read_to_end(256 * 1024).await?;
+    let response_str = String::from_utf8_lossy(&response_bytes);
+    let header_end = response_str
+        .find("\r\n\r\n")
+        .ok_or_else(|| anyhow::anyhow!("malformed HTTP response: no header terminator"))?;
+    let status_code: u16 = response_str[..header_end]
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if status_code != 200 {
+        anyhow::bail!("peer returned HTTP {status_code}");
+    }
+    let body = &response_str[header_end + 4..];
+    let parsed: serde_json::Value = serde_json::from_str(body)
+        .map_err(|e| anyhow::anyhow!("failed to parse peer first-token response: {e}"))?;
+    native_baseline::first_token_from_completion_json(&parsed)
+        .ok_or_else(|| anyhow::anyhow!("peer first-token response had no usable output"))
+}
+
 fn log_verdict(peer_id: EndpointId, model: &str, mode: &str, verdict: &FingerprintVerdict) {
     match verdict {
         FingerprintVerdict::Match {
@@ -723,6 +968,118 @@ mod tests {
     }
     fn is_mismatch(v: &FingerprintVerdict) -> bool {
         matches!(v, FingerprintVerdict::Mismatch { .. })
+    }
+    fn is_inconclusive(v: &FingerprintVerdict) -> bool {
+        matches!(v, FingerprintVerdict::Inconclusive { .. })
+    }
+
+    fn probe(token: &str, top_k: &[&str]) -> FirstTokenProbe {
+        FirstTokenProbe {
+            token: token.to_string(),
+            top_k: top_k.iter().map(|t| t.to_string()).collect(),
+        }
+    }
+
+    /// A 12-prompt honest reference: each first token sits at the top of its
+    /// own top-k.
+    fn honest_reference() -> Vec<FirstTokenProbe> {
+        (0..12)
+            .map(|i| {
+                let t = format!(" t{i}");
+                FirstTokenProbe {
+                    token: t.clone(),
+                    top_k: vec![t, format!(" alt{i}"), " __".to_string()],
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn battery_identical_is_a_clean_match() {
+        let r = honest_reference();
+        let cand: Vec<Option<FirstTokenProbe>> = r.iter().cloned().map(Some).collect();
+        let v = battery_verdict(&r, &cand, &VerifyThresholds::default());
+        assert!(is_match(&v));
+        if let FingerprintVerdict::Match {
+            prefix_agreement, ..
+        } = v
+        {
+            assert!((prefix_agreement - 1.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn battery_tolerates_cross_backend_near_tie_flips() {
+        // Every position flips to the reference's *second* candidate, but the
+        // reference token is still in the candidate's top-k and vice versa — a
+        // mutual near-tie, exactly the honest cross-backend case.
+        let r = honest_reference();
+        let cand: Vec<Option<FirstTokenProbe>> = r
+            .iter()
+            .map(|p| {
+                let flipped = p.top_k[1].clone();
+                Some(FirstTokenProbe {
+                    token: flipped,
+                    top_k: p.top_k.clone(), // shares the reference token, so mutual
+                })
+            })
+            .collect();
+        let v = battery_verdict(&r, &cand, &VerifyThresholds::default());
+        assert!(
+            is_match(&v),
+            "honest near-tie flips must not convict: {v:?}"
+        );
+    }
+
+    #[test]
+    fn battery_catches_gross_substitution() {
+        // A wrong model: every chosen token is absent from the reference's
+        // top-k and its own top-k excludes the reference token.
+        let r = honest_reference();
+        let cand: Vec<Option<FirstTokenProbe>> = (0..12)
+            .map(|i| Some(probe(&format!(" x{i}"), &[&format!(" x{i}"), " y", " z"])))
+            .collect();
+        let v = battery_verdict(&r, &cand, &VerifyThresholds::default());
+        assert!(is_mismatch(&v), "gross substitution must convict: {v:?}");
+    }
+
+    #[test]
+    fn battery_too_few_probes_is_inconclusive() {
+        // Only 5 probes returned (< min_battery_probes default 10) → no verdict,
+        // never a demotion.
+        let r = honest_reference();
+        let mut cand: Vec<Option<FirstTokenProbe>> = r.iter().cloned().map(Some).collect();
+        for slot in cand.iter_mut().skip(5) {
+            *slot = None;
+        }
+        let v = battery_verdict(&r, &cand, &VerifyThresholds::default());
+        assert!(is_inconclusive(&v));
+    }
+
+    #[test]
+    fn battery_empty_top_k_positions_are_skipped_not_counted() {
+        // A position with no candidate set on the suspect side is not
+        // comparable and must not count toward the total — otherwise a backend
+        // that drops some top-k would dilute agreement.
+        let r = honest_reference();
+        let cand: Vec<Option<FirstTokenProbe>> = r
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                if i % 2 == 0 {
+                    Some(p.clone())
+                } else {
+                    Some(probe(&p.token, &[])) // present token, empty top-k
+                }
+            })
+            .collect();
+        // 6 comparable positions, all matching → still inconclusive (< 10), and
+        // crucially not a mismatch from diluted agreement.
+        let v = battery_verdict(&r, &cand, &VerifyThresholds::default());
+        assert!(
+            is_inconclusive(&v),
+            "empty-top-k positions must be skipped: {v:?}"
+        );
     }
 
     #[test]
@@ -900,6 +1257,28 @@ mod tests {
         // rather than falling back to the legacy prefix gate.
         assert_eq!(fp.top_k_tokens.len(), 32);
         assert!(fp.top_k_tokens.iter().all(|row| !row.is_empty()));
+    }
+
+    #[test]
+    fn embedded_battery_parses_and_aligns_with_the_probe_battery() {
+        let refs: HashMap<String, Vec<FirstTokenProbe>> = serde_json::from_str(EMBEDDED_BATTERIES)
+            .expect("embedded reference_batteries.json must be valid JSON");
+        let battery = refs
+            .get("Qwen3-8B-Q4_K_M")
+            .expect("embedded batteries must include the canonical daily driver");
+        // Index-aligned with VERIFY_BATTERY — a mismatch means the battery was
+        // changed without recapturing the reference.
+        assert_eq!(battery.len(), native_baseline::VERIFY_BATTERY.len());
+        // Every probe must carry a non-empty top-k or the gross-fraud gate has
+        // nothing to compare on that position.
+        assert!(battery
+            .iter()
+            .all(|p| !p.token.is_empty() && !p.top_k.is_empty()));
+        // The reference battery must clear its own gate against itself with a
+        // wide margin (sanity: the embedded data isn't degenerate).
+        let cand: Vec<Option<FirstTokenProbe>> = battery.iter().cloned().map(Some).collect();
+        let v = battery_verdict(battery, &cand, &VerifyThresholds::default());
+        assert!(is_match(&v));
     }
 
     // ── conviction / enforcement state machine ────────────────────────────

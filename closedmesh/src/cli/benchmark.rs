@@ -101,6 +101,18 @@ pub(crate) enum BenchmarkCommand {
         #[arg(long)]
         port: u16,
     },
+    /// Capture an auditor *reference battery* (Layer 1 first-token top-k) by
+    /// probing a local llama-server's native `/completion`, and write it to
+    /// `~/.closedmesh/reference-batteries.json`.
+    #[command(name = "capture-reference-battery")]
+    CaptureReferenceBattery {
+        /// Model name as served by the target llama-server (e.g. Qwen3-8B-Q4_K_M).
+        #[arg(long)]
+        model: String,
+        /// Local llama-server HTTP port to probe.
+        #[arg(long)]
+        port: u16,
+    },
     /// Run the full offline MoE benchmark suite across several models.
     #[command(name = "moe-model-matrix")]
     MoeModelMatrix {

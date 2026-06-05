@@ -1,0 +1,164 @@
+{
+  "Qwen3-8B-Q4_K_M": [
+    {
+      "token": " ",
+      "top_k": [
+        " ",
+        " I",
+        "4",
+        " The",
+        " ("
+      ]
+    },
+    {
+      "token": " Au",
+      "top_k": [
+        " Au",
+        " __",
+        " '",
+        " \"",
+        ":\n"
+      ]
+    },
+    {
+      "token": "...",
+      "top_k": [
+        " '",
+        "...",
+        " not",
+        " __",
+        ":\n"
+      ]
+    },
+    {
+      "token": " np",
+      "top_k": [
+        " np",
+        " numpy",
+        " n",
+        " ",
+        " num"
+      ]
+    },
+    {
+      "token": " a",
+      "top_k": [
+        " a",
+        " int",
+        " (",
+        "(a",
+        " "
+      ]
+    },
+    {
+      "token": " Tokyo",
+      "top_k": [
+        " Tokyo",
+        " a",
+        " __",
+        " ______",
+        " the"
+      ]
+    },
+    {
+      "token": " blue",
+      "top_k": [
+        " blue",
+        " purple",
+        " Blue",
+        "blue",
+        " the"
+      ]
+    },
+    {
+      "token": " ",
+      "top_k": [
+        " ",
+        " some",
+        " X",
+        " a",
+        " -"
+      ]
+    },
+    {
+      "token": " what",
+      "top_k": [
+        " print",
+        " what",
+        " __",
+        " `",
+        " ______"
+      ]
+    },
+    {
+      "token": " Jupiter",
+      "top_k": [
+        " Jupiter",
+        " __",
+        " ______",
+        ":\n",
+        "\n"
+      ]
+    },
+    {
+      "token": " checkout",
+      "top_k": [
+        " branch",
+        " checkout",
+        " br",
+        " switch",
+        " clone"
+      ]
+    },
+    {
+      "token": " ",
+      "top_k": [
+        " ",
+        " a",
+        " -",
+        "...",
+        " what"
+      ]
+    },
+    {
+      "token": " Language",
+      "top_k": [
+        " Language",
+        " language",
+        "Language",
+        ".",
+        ","
+      ]
+    },
+    {
+      "token": " Shakespeare",
+      "top_k": [
+        " Shakespeare",
+        " Sh",
+        " Shak",
+        " Words",
+        "\n"
+      ]
+    },
+    {
+      "token": " ",
+      "top_k": [
+        " ",
+        " ...",
+        " etc",
+        " and",
+        " ...\n"
+      ]
+    },
+    {
+      "token": " oxygen",
+      "top_k": [
+        " oxygen",
+        " what",
+        " which",
+        " __",
+        "\u6c27"
+      ]
+    }
+  ]
+}

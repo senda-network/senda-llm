@@ -155,6 +155,135 @@ pub(crate) fn probe_messages_for(nonce: u64) -> Vec<serde_json::Value> {
     ]
 }
 
+// ── Layer 1 — first-token top-k battery (gross-fraud verifier) ───────────────
+//
+// The deterministic *output-prefix* fingerprint above can only distinguish a
+// GROSS substitution on this stack: the bundled llama.cpp (b9109) attaches
+// `top_logprobs` to only the first generated token in chat completions, and
+// greedy decode is reproducible only on an idle server, so a multi-token
+// prefix compare reads cross-backend drift + load jitter as divergence (see
+// internal/RESILIENCE.md, 2026-06-04). The robust, calibrated signal is the
+// *first token's top-k candidate set*, captured over a battery of short prompts
+// via the native `/completion` endpoint (`n_predict:1`, which always carries
+// first-token top-k, even on b9109). A genuine peer is a mutual near-tie with
+// the reference on ~100 % of the battery — idle, under load, and across
+// Metal/CUDA backends — while canned output or a wrong/much-smaller model falls
+// far below. Same-family downgrades (e.g. 4B-as-8B) are deliberately NOT in
+// scope here; they are left to the performance-profile layer (L4).
+
+/// A battery of short, discriminative completion prompts. Each one has a
+/// confident, specific first token for the genuine model, so a wrong/much-
+/// smaller model or canned text diverges out of the top-k. Sent verbatim as a
+/// native `/completion` prompt (no chat template) so the first token is a raw
+/// continuation, matching how the reference battery is captured. Changing this
+/// list requires recapturing the embedded reference battery (see
+/// `verify::ReferenceBatteryStore`); entries are paired by index.
+pub(crate) const VERIFY_BATTERY: &[&str] = &[
+    "Q: 2+2? A:",
+    "The chemical symbol for gold is",
+    "The opposite of 'hot' is",
+    "import numpy as",
+    "def add(a, b):\n    return",
+    "The capital of Japan is",
+    "Roses are red, violets are",
+    "The first three prime numbers are 2, 3, and",
+    "In Python, to print to the console you use the function named",
+    "The largest planet in our solar system is",
+    "To create a new git branch you run: git",
+    "The square root of 144 is",
+    "HTML stands for HyperText Markup",
+    "The author of 'Romeo and Juliet' is William",
+    "1, 1, 2, 3, 5, 8, 13,",
+    "Water is made of hydrogen and",
+];
+
+/// A single battery probe's result: the genuine first token and its top-k
+/// candidate set (`top_logprobs[].token`, includes the chosen token). The
+/// verifier compares these by *mutual top-k membership* (a near-tie), which is
+/// robust to the cross-backend argmax flips that broke exact matching.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FirstTokenProbe {
+    pub token: String,
+    pub top_k: Vec<String>,
+}
+
+/// The native `/completion` request body for one battery probe. Shared by the
+/// local reference capture and the remote verifier so both sides issue a
+/// byte-identical request — `cache_prompt:false` is load-bearing: it forces a
+/// real prefill so the first-token logits are deterministic instead of replayed
+/// from a KV-cache hit (see RESILIENCE.md).
+pub(crate) fn first_token_request_body(prompt: &str) -> serde_json::Value {
+    serde_json::json!({
+        "prompt": prompt,
+        "n_predict": 1,
+        "temperature": 0,
+        "seed": PROBE_SEED,
+        "n_probs": TOP_K_PER_POSITION,
+        "cache_prompt": false,
+        "stream": false,
+    })
+}
+
+/// Parse a native `/completion` response into the first token + its top-k. The
+/// native endpoint reports per-token candidates under
+/// `completion_probabilities[].top_logprobs[].token`; we only need position 0.
+pub(crate) fn first_token_from_completion_json(v: &serde_json::Value) -> Option<FirstTokenProbe> {
+    let first = v.get("completion_probabilities")?.as_array()?.first()?;
+    let token = first.get("token")?.as_str()?.to_string();
+    let top_k = first
+        .get("top_logprobs")
+        .and_then(|a| a.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| c.get("token").and_then(|t| t.as_str()).map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    Some(FirstTokenProbe { token, top_k })
+}
+
+/// Capture one battery probe against a local llama-server's native
+/// `/completion` endpoint. Used for the self-oracle reference and for the
+/// `benchmark capture-reference-battery` subcommand.
+pub(crate) async fn local_first_token(
+    http_port: u16,
+    prompt: &str,
+) -> anyhow::Result<FirstTokenProbe> {
+    let client = reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+        .map_err(|e| anyhow::anyhow!("build reqwest client: {e}"))?;
+    let url = format!("http://127.0.0.1:{http_port}/completion");
+    let resp = client
+        .post(&url)
+        .json(&first_token_request_body(prompt))
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("local first-token probe failed: {e}"))?;
+    let status = resp.status();
+    if !status.is_success() {
+        anyhow::bail!("local first-token probe returned {status}");
+    }
+    let parsed: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| anyhow::anyhow!("parse local first-token probe: {e}"))?;
+    first_token_from_completion_json(&parsed)
+        .ok_or_else(|| anyhow::anyhow!("local first-token probe had no usable output"))
+}
+
+/// Capture the full reference battery from a local llama-server. Returns the
+/// per-prompt first-token probes in `VERIFY_BATTERY` order (index-aligned).
+pub(crate) async fn capture_reference_battery(
+    http_port: u16,
+) -> anyhow::Result<Vec<FirstTokenProbe>> {
+    let mut out = Vec::with_capacity(VERIFY_BATTERY.len());
+    for prompt in VERIFY_BATTERY {
+        out.push(local_first_token(http_port, prompt).await?);
+    }
+    Ok(out)
+}
+
 /// On-disk cache shape. Keyed by model name; the entry stores
 /// `model_file_mtime_secs` so reinstalling/requantizing the model
 /// invalidates the cache without us needing to hash GBs of weights.
