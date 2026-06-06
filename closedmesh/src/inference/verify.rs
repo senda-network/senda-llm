@@ -519,6 +519,10 @@ pub fn spawn_verifier(node: mesh::Node, mut config: VerifierConfig) {
         let mut streaks: HashMap<(EndpointId, String), u32> = HashMap::new();
         loop {
             tokio::time::sleep(config.interval).await;
+            // L4 (observe-only): cheap, probe-free perf-profile consistency over
+            // all peers' gossiped telemetry. Runs every tick regardless of
+            // whether L1 has an auditable reference for any peer.
+            super::perf_profile::observe_peers(&node).await;
             if let Err(e) =
                 run_one_audit(&node, &store, &battery_store, &config, &mut streaks).await
             {
