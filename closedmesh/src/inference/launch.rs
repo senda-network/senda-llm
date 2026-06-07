@@ -618,6 +618,12 @@ impl KvCacheQuant {
     pub const MEDIUM_TIER_MIN_BYTES: u64 = 5 * GB;
     pub const LARGE_TIER_MIN_BYTES: u64 = 50 * GB;
 
+    /// Fraction of the post-weights VRAM headroom we let an f16 KV cache occupy
+    /// before falling back to quantization. The remaining ~25% covers compute
+    /// buffers, activations, and the `-fitt` free-memory margin so keeping f16
+    /// never pushes `-fit` into CPU offload. See `for_model_size_and_vram`.
+    const F16_KV_VRAM_FRACTION: f64 = 0.75;
+
     /// Choose a KV cache quantization pair for the given model size.
     ///
     /// The small and large tiers are safe on all supported backends without
@@ -655,8 +661,55 @@ impl KvCacheQuant {
         }
     }
 
+    /// Keep the full-precision (f16) KV cache whenever it demonstrably fits the
+    /// VRAM left after the weights, otherwise fall back to the size-based tier.
+    ///
+    /// Quantized KV is a *memory* optimization, not a speed one — on CUDA it
+    /// forces the slower `FA_ALL_QUANTS` flash-attention kernels (mismatched
+    /// pairs especially), measured at ~3x slower decode on an RTX 4080 serving
+    /// Qwen3-8B (37 tok/s quantized vs ~120 tok/s f16). So quantizing when the
+    /// device has ample headroom trades throughput for memory we don't need.
+    ///
+    /// `f16_kv_bytes` is the *total* f16 KV cache for the launch context
+    /// (`ctx_size x per-token`, computed from GGUF metadata); `None` means we
+    /// couldn't size it (scan failed / shard) and must not guess. We keep f16
+    /// only when it fits `vram_after_model x F16_KV_VRAM_FRACTION`, leaving the
+    /// remaining headroom for compute buffers, activations, and the `-fitt`
+    /// margin. Falling back to quantized is the safe direction: an over-large
+    /// f16 cache would make `-fit` spill layers to CPU — far worse than the
+    /// quant penalty.
+    pub fn for_model_size_and_vram(
+        model_bytes: u64,
+        f16_kv_bytes: Option<u64>,
+        vram_after_model: u64,
+    ) -> Self {
+        let tier = Self::for_model_size(model_bytes);
+        // Small models already run f16; nothing to reconsider.
+        if !tier.k_type.is_quantized() && !tier.v_type.is_quantized() {
+            return tier;
+        }
+        let Some(kv) = f16_kv_bytes else {
+            return tier; // can't size the cache → keep the conservative tier
+        };
+        let budget = (vram_after_model as f64 * Self::F16_KV_VRAM_FRACTION) as u64;
+        if kv <= budget {
+            Self {
+                k_type: KvType::F16,
+                v_type: KvType::F16,
+            }
+        } else {
+            tier
+        }
+    }
+
     /// Tier-specific human-readable label used in the startup log line.
     pub fn label(&self, model_bytes: u64) -> String {
+        // f16/f16 can be either a small model (default) or a larger model whose
+        // cache fit VRAM headroom (see `for_model_size_and_vram`); either way
+        // the precision is what matters, so don't claim a quantized tier.
+        if self.k_type == KvType::F16 && self.v_type == KvType::F16 {
+            return "F16 K + F16 V (full precision)".to_string();
+        }
         let tier = if model_bytes >= Self::LARGE_TIER_MIN_BYTES {
             "model > 50GB"
         } else if model_bytes >= Self::MEDIUM_TIER_MIN_BYTES {
@@ -1731,7 +1784,16 @@ pub async fn start_llama_server(
     // corresponding KvCacheWarning variants, the build assertion, and this
     // caveat block.
     if !is_rpc_split {
-        KvCacheQuant::for_model_size(model_bytes).append_args(&mut args, model_bytes);
+        // Prefer f16 KV (fastest) when it fits VRAM headroom; quantize only
+        // under real memory pressure. Size the f16 cache from GGUF metadata at
+        // the chosen context — None (scan failed/shard) keeps the size tier.
+        let f16_kv_bytes = crate::models::gguf::scan_gguf_compact_meta(model).and_then(|meta| {
+            let k = meta.k_cache_bytes_per_token_f16()?;
+            let v = meta.v_cache_bytes_per_token_f16()?;
+            Some((k + v).saturating_mul(ctx_size as u64))
+        });
+        KvCacheQuant::for_model_size_and_vram(model_bytes, f16_kv_bytes, vram_after_model)
+            .append_args(&mut args, model_bytes);
     }
     if let Some(ts) = tensor_split {
         args.push("--tensor-split".to_string());
@@ -2383,6 +2445,58 @@ mod tests {
         let at_large = KvCacheQuant::for_model_size(KvCacheQuant::LARGE_TIER_MIN_BYTES);
         assert_eq!(at_large.k_type, KvType::Q4_0);
         assert_eq!(at_large.v_type, KvType::Q4_0);
+    }
+
+    #[test]
+    fn kv_quant_keeps_f16_for_medium_model_when_cache_fits_vram() {
+        // Qwen3-8B (~5GB) on a 16GB card: f16 KV for 32k ctx ≈ 4.8GB, headroom
+        // after weights ≈ 10GB. Must stay f16 — quantizing it is the LYU
+        // regression (37 tok/s vs ~120). 0.75 * 10GB = 7.5GB budget > 4.8GB.
+        let f16_kv = Some(4_800_000_000u64);
+        let vram_after_model = 10_000_000_000u64;
+        let quant = KvCacheQuant::for_model_size_and_vram(5 * GB, f16_kv, vram_after_model);
+        assert_eq!(quant.k_type, KvType::F16);
+        assert_eq!(quant.v_type, KvType::F16);
+    }
+
+    #[test]
+    fn kv_quant_falls_back_to_quantized_when_f16_cache_too_large() {
+        // Same model, but f16 KV would eat almost all the headroom (e.g. a
+        // full-attention model or a very long context). Keeping f16 here would
+        // make `-fit` spill layers to CPU, so fall back to the quantized tier.
+        let f16_kv = Some(9_000_000_000u64);
+        let vram_after_model = 10_000_000_000u64; // 0.75 * 10GB = 7.5GB < 9GB
+        let quant = KvCacheQuant::for_model_size_and_vram(5 * GB, f16_kv, vram_after_model);
+        assert_eq!(quant.k_type, KvType::Q8_0);
+        assert_eq!(quant.v_type, KvType::Q4_0);
+    }
+
+    #[test]
+    fn kv_quant_falls_back_to_quantized_when_cache_size_unknown() {
+        // No GGUF metadata (scan failed / shard): we must not guess f16 fits.
+        let quant = KvCacheQuant::for_model_size_and_vram(20 * GB, None, 100 * GB);
+        assert_eq!(quant.k_type, KvType::Q8_0);
+        assert_eq!(quant.v_type, KvType::Q4_0);
+    }
+
+    #[test]
+    fn kv_quant_small_model_stays_f16_regardless_of_vram() {
+        // Small models never quantize; the VRAM-aware path is a no-op for them
+        // even when we can't size the cache.
+        let quant = KvCacheQuant::for_model_size_and_vram(GB, None, 0);
+        assert_eq!(quant.k_type, KvType::F16);
+        assert_eq!(quant.v_type, KvType::F16);
+    }
+
+    #[test]
+    fn kv_quant_label_reports_full_precision_for_f16() {
+        let f16 = KvCacheQuant {
+            k_type: KvType::F16,
+            v_type: KvType::F16,
+        };
+        // Even for a medium-sized model kept at f16, the label must not claim
+        // the "aggressive asymmetric" quantized tier.
+        assert_eq!(f16.label(20 * GB), "F16 K + F16 V (full precision)");
     }
 
     #[test]

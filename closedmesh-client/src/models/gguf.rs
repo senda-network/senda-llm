@@ -290,11 +290,46 @@ pub struct GgufCompactMeta {
     pub feed_forward_length: u32,
     pub key_length: u32,
     pub value_length: u32,
+    /// Number of KV heads (GQA). `None` when the GGUF omits
+    /// `.attention.head_count_kv`; callers fall back to `head_count`, which is
+    /// the conservative direction for sizing (over-counts KV).
+    pub head_count_kv: Option<u32>,
     pub tokenizer_model_name: String,
     pub rope_scale: f32,
     pub rope_freq_base: f32,
     pub expert_count: u32,
     pub expert_used_count: u32,
+}
+
+impl GgufCompactMeta {
+    /// Bytes the K cache consumes per token across all layers under f16.
+    /// `None` when required structural fields are missing/zero, so callers can
+    /// fall back rather than trust a bogus zero.
+    pub fn k_cache_bytes_per_token_f16(&self) -> Option<u64> {
+        if self.layer_count == 0 || self.key_length == 0 {
+            return None;
+        }
+        // GQA: kv_heads ≤ q_heads. Fall back to the full head count when the
+        // GGUF omits head_count_kv (over-counts KV — the safe direction).
+        let kv_heads = self.head_count_kv.unwrap_or(self.head_count) as u64;
+        if kv_heads == 0 {
+            return None;
+        }
+        Some(kv_heads * self.key_length as u64 * 2 /* f16 */ * self.layer_count as u64)
+    }
+
+    /// Bytes the V cache consumes per token across all layers under f16.
+    /// `None` when required structural fields are missing/zero.
+    pub fn v_cache_bytes_per_token_f16(&self) -> Option<u64> {
+        if self.layer_count == 0 || self.value_length == 0 {
+            return None;
+        }
+        let kv_heads = self.head_count_kv.unwrap_or(self.head_count) as u64;
+        if kv_heads == 0 {
+            return None;
+        }
+        Some(kv_heads * self.value_length as u64 * 2 /* f16 */ * self.layer_count as u64)
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -356,6 +391,7 @@ pub fn scan_gguf_compact_meta(path: &Path) -> Option<GgufCompactMeta> {
         } else if key.ends_with(".attention.head_count_kv") {
             if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
                 kv_head_count = v;
+                meta.head_count_kv = Some(v);
             }
         } else if key.ends_with(".block_count") {
             if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
@@ -730,7 +766,39 @@ mod tests {
         assert_eq!(meta.head_count, 0);
         assert_eq!(meta.key_length, 0);
         assert_eq!(meta.value_length, 512);
+        assert_eq!(meta.head_count_kv, Some(8));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn f16_kv_per_token_uses_gqa_heads_and_handles_missing_metadata() {
+        // Qwen3-8B: 36 layers, GQA 8 KV heads, 128 head dim.
+        let meta = GgufCompactMeta {
+            layer_count: 36,
+            head_count: 32,
+            head_count_kv: Some(8),
+            key_length: 128,
+            value_length: 128,
+            ..Default::default()
+        };
+        // 8 kv_heads * 128 * 2 bytes * 36 layers = 73_728 bytes/token for each
+        // of K and V. Must use the 8 GQA heads, not the 32 query heads.
+        assert_eq!(meta.k_cache_bytes_per_token_f16(), Some(73_728));
+        assert_eq!(meta.v_cache_bytes_per_token_f16(), Some(73_728));
+
+        // Without head_count_kv, fall back to the full head count (over-counts,
+        // the safe direction): 32 * 128 * 2 * 36 = 294_912.
+        let mha = GgufCompactMeta {
+            head_count_kv: None,
+            ..meta.clone()
+        };
+        assert_eq!(mha.k_cache_bytes_per_token_f16(), Some(294_912));
+
+        // Missing structural fields → None, so callers fall back rather than
+        // trust a bogus zero.
+        let empty = GgufCompactMeta::default();
+        assert_eq!(empty.k_cache_bytes_per_token_f16(), None);
+        assert_eq!(empty.v_cache_bytes_per_token_f16(), None);
     }
 
     #[test]
