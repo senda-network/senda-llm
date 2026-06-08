@@ -396,11 +396,7 @@ pub(crate) fn build_fingerprint(
     let mut hasher = Sha256::new();
     hasher.update(full_text.as_bytes());
     let output_sha256 = hex::encode(hasher.finalize());
-    let prefix_tokens = tokens
-        .iter()
-        .take(FINGERPRINT_PREFIX_LEN)
-        .cloned()
-        .collect();
+    let prefix_tokens = tokens.iter().take(FINGERPRINT_PREFIX_LEN).cloned().collect();
     let top_k_tokens = top_k_tokens
         .iter()
         .take(FINGERPRINT_PREFIX_LEN)
@@ -671,10 +667,16 @@ pub async fn measure_baseline(
         "seed": PROBE_SEED,
         "stream": true,
         "stream_options": {"include_usage": true},
-        // `logprobs` gives us per-token segmentation for the fingerprint
-        // prefix. Backends that don't return it just leave the prefix empty
-        // (the output hash still fingerprints the model).
-        "logprobs": true,
+        // NB: deliberately NO `logprobs` here. Requesting logprobs makes
+        // llama.cpp run a per-token full-vocab probability extraction that
+        // ~halves decode throughput (measured on v0.66.70: 110→45 tok/s for
+        // Qwen3-8B on a 4080 SUPER) — the same full-vocab-op defect class as
+        // the v0.66.69 mesh-hook tax. This is the *timing* probe, so it must
+        // measure what real chat traffic — which never asks for logprobs —
+        // actually pays. The gossiped fingerprint is captured separately by the
+        // non-streaming `local_probe_fingerprint` request below (with its own
+        // top_logprobs); the SSE fallback just yields an output-hash-only
+        // fingerprint (empty token prefix), which still fingerprints the model.
         // Pin thinking off so the timing baseline and the gossiped fingerprint
         // reflect the same no-think path the daily driver actually serves
         // (launch.rs sets this server-wide; we also send it per-request so the
@@ -760,9 +762,11 @@ pub async fn measure_baseline(
         {
             Ok(fp) => Some(fp),
             Err(_) => {
-                // Streaming logprobs are lossy under speculative decoding, so
-                // this fallback carries no top-k — the oracle then falls back
-                // to exact prefix matching for this (rare) fingerprint.
+                // The timing probe no longer requests logprobs (it must not pay
+                // the per-token tax — see the request body above), so the SSE
+                // buffer carries no per-token segmentation: `tokens` is empty
+                // and the oracle falls back to exact prefix matching for this
+                // (rare) fingerprint. The output hash still fingerprints the model.
                 let (output_text, tokens) = parse_output_and_tokens_from_sse(&buf);
                 (!output_text.is_empty()).then(|| build_fingerprint(&tokens, &[], &output_text))
             }
@@ -993,9 +997,9 @@ async fn measure_baseline_median(
     if skipped_busy {
         Err(BaselineError::Busy)
     } else {
-        Err(BaselineError::Failed(last_err.unwrap_or_else(|| {
-            anyhow::anyhow!("all native baseline samples failed")
-        })))
+        Err(BaselineError::Failed(
+            last_err.unwrap_or_else(|| anyhow::anyhow!("all native baseline samples failed")),
+        ))
     }
 }
 
@@ -1075,17 +1079,17 @@ pub fn spawn_collector(
                         let mut cache = load_cache(cp);
                         cache.entries.insert(
                             model.clone(),
-                            CachedNativeBaseline {
-                                model: entry.model.clone(),
-                                native_tps_p50: entry.native_tps_p50,
-                                native_ttft_ms_p50: entry.native_ttft_ms_p50,
-                                measured_at_unix_secs: entry.measured_at_unix_secs,
-                                samples: entry.samples,
-                                backend: entry.backend.clone(),
-                                model_file_mtime_secs: live_mtime,
-                                logit_fingerprint: meas.logit_fingerprint.clone(),
-                                runtime_version: Some(RUNTIME_VERSION.to_string()),
-                            },
+                        CachedNativeBaseline {
+                            model: entry.model.clone(),
+                            native_tps_p50: entry.native_tps_p50,
+                            native_ttft_ms_p50: entry.native_ttft_ms_p50,
+                            measured_at_unix_secs: entry.measured_at_unix_secs,
+                            samples: entry.samples,
+                            backend: entry.backend.clone(),
+                            model_file_mtime_secs: live_mtime,
+                            logit_fingerprint: meas.logit_fingerprint.clone(),
+                            runtime_version: Some(RUNTIME_VERSION.to_string()),
+                        },
                         );
                         if let Err(err) = save_cache(cp, &cache) {
                             tracing::warn!(
