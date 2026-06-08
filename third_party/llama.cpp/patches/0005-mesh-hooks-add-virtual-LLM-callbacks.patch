@@ -243,7 +243,7 @@ index 4b28033d9..bad5feb60 100644
  
 +                    // --- Mesh Hook 2: post-prefill ---
 +                    // Check first-token entropy/margin, call mesh-llm if uncertain.
-+                    if (slot.mesh_hook.enabled && slot.mesh_hook.entropy_threshold >= 0) {
++                    if (slot.mesh_hook.enabled && slot.task->params.mesh_hooks && slot.mesh_hook.entropy_threshold >= 0) {
 +                        auto probs = get_token_probabilities(ctx, slot.i_batch - i);
 +                        float entropy = mesh_compute_entropy(probs);
 +                        float margin  = probs.size() >= 2 ? probs[0].p - probs[1].p : 1.0f;
@@ -352,7 +352,7 @@ index 4b28033d9..bad5feb60 100644
                  common_sampler_accept(slot.smpl.get(), id, true);
  
 +                // --- Mesh: update signal window ---
-+                if (slot.mesh_hook.enabled) {
++                if (slot.mesh_hook.enabled && slot.task->params.mesh_hooks) {
 +                    // Per-token entropy + margin — cheap arithmetic, ~1μs.
 +                    // Accumulated here, sent to mesh-llm at Hook 3.
 +                    auto probs = get_token_probabilities(ctx, tok_idx);
