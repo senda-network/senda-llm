@@ -60,7 +60,7 @@ Current-node routing outcome summary for operator and API inspection. These coun
 | `retry_count`, `failover_count` | Local reroute and failover pressure |
 | `attempt_timeout_count`, `attempt_unavailable_count`, `attempt_context_overflow_count`, `attempt_reject_count` | Attempt outcome breakdown observed by this node |
 | `avg_queue_wait_ms`, `avg_attempt_ms` | Bounded timing summary from locally observed attempts |
-| `avg_tokens_per_second`, `completion_tokens_observed`, `throughput_samples` | Throughput summary from locally observed successful attempts |
+| `avg_end_to_end_tps`, `completion_tokens_observed`, `throughput_samples` | **End-to-end** throughput summary (`completion_tokens / full_attempt_duration`) from locally observed successful attempts. Includes prefill + queue + (for remote/endpoint targets) WAN round trip, so it is NOT the raw decode rate. For the decode-only figure the catalog/SLA uses, see the gossiped `measured_tps_p50_by_model` on `/api/status`. The two legitimately differ (e.g. an entry relaying to a remote peer reads ~42 here vs that peer's ~110 decode `measured_tps_p50`). |
 
 ### `/api/status` `routing_metrics.local_node`
 
@@ -72,7 +72,7 @@ Current-node routing pressure and lightweight utilization proxies. These are int
 | --- | --- |
 | `current_inflight_requests`, `peak_inflight_requests` | Live and recent peak request pressure on this node |
 | `local_attempt_count`, `remote_attempt_count`, `endpoint_attempt_count` | Attempt mix by local, remote, and endpoint targets |
-| `avg_queue_wait_ms`, `avg_attempt_ms`, `avg_tokens_per_second`, `completion_tokens_observed`, `throughput_samples` | Current-node latency and throughput proxies for locally observed attempts |
+| `avg_queue_wait_ms`, `avg_attempt_ms`, `avg_end_to_end_tps`, `completion_tokens_observed`, `throughput_samples` | Current-node latency and **end-to-end** throughput proxies for locally observed attempts (see the `avg_end_to_end_tps` note above — not the decode rate) |
 
 ### `/api/status` `routing_metrics.pressure`
 
@@ -96,7 +96,7 @@ Per-model routing outcome summary observed on the current node. These values des
 | `request_count`, `successful_requests`, `success_rate` | Per-model request outcomes observed locally |
 | `retry_count`, `failover_count` | Per-model instability and recovery pressure observed locally |
 | `attempt_timeout_count`, `attempt_unavailable_count`, `attempt_context_overflow_count`, `attempt_reject_count` | Per-model attempt outcome breakdown observed locally |
-| `avg_queue_wait_ms`, `avg_attempt_ms`, `avg_tokens_per_second`, `completion_tokens_observed`, `throughput_samples` | Per-model bounded timing and throughput summary observed locally |
+| `avg_queue_wait_ms`, `avg_attempt_ms`, `avg_end_to_end_tps`, `completion_tokens_observed`, `throughput_samples` | Per-model bounded timing and **end-to-end** throughput summary observed locally (not the decode rate — see the `avg_end_to_end_tps` note above) |
 
 ### `/api/models[]` `routing_metrics.targets[]`
 
@@ -109,7 +109,7 @@ Per-target routing outcome memory observed on the current node. These entries ar
 | `target`, `kind`, `last_updated_secs_ago` | Which target was observed, its kind (local/remote/endpoint), and how recent the memory is |
 | `attempt_count`, `success_count`, `success_rate` | Per-target success history observed locally |
 | `timeout_count`, `timeout_rate`, `unavailable_count`, `context_overflow_count`, `reject_count` | Per-target failure and degradation breakdown observed locally |
-| `avg_queue_wait_ms`, `avg_attempt_ms`, `avg_tokens_per_second`, `completion_tokens_observed`, `throughput_samples` | Per-target latency and throughput summary observed locally |
+| `avg_queue_wait_ms`, `avg_attempt_ms`, `avg_end_to_end_tps`, `completion_tokens_observed`, `throughput_samples` | Per-target latency and **end-to-end** throughput summary observed locally (not the decode rate — see the `avg_end_to_end_tps` note above) |
 
 ## Pre-existing Metrics
 

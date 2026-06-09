@@ -136,8 +136,18 @@ pub struct RoutingMetricsStatusSnapshot {
     pub attempt_reject_count: u64,
     pub avg_queue_wait_ms: f64,
     pub avg_attempt_ms: f64,
+    /// Average **end-to-end** throughput across successful attempts:
+    /// `completion_tokens / full_attempt_duration`. The attempt duration
+    /// spans prefill + queue + (for remote/endpoint targets) the WAN round
+    /// trip + decode, so this is the effective per-attempt serving rate a
+    /// fronting node observes — NOT the raw decode rate. For the decode-only
+    /// figure the catalog/SLA uses, see `measured_tps_p50_by_model` (gossiped
+    /// from each serving peer's local llama-server). The two legitimately
+    /// differ — e.g. an entry relaying to a remote peer reads ~42 here while
+    /// that peer's decode `measured_tps_p50` is ~110 — because this number
+    /// includes the network + prefill overhead and that one doesn't.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub avg_tokens_per_second: Option<f64>,
+    pub avg_end_to_end_tps: Option<f64>,
     pub completion_tokens_observed: u64,
     pub throughput_samples: u64,
     /// Current-node routing pressure and lightweight utilization proxies.
@@ -160,7 +170,7 @@ impl Default for RoutingMetricsStatusSnapshot {
             attempt_reject_count: 0,
             avg_queue_wait_ms: 0.0,
             avg_attempt_ms: 0.0,
-            avg_tokens_per_second: None,
+            avg_end_to_end_tps: None,
             completion_tokens_observed: 0,
             throughput_samples: 0,
             local_node: LocalNodePressureSnapshot::default(),
@@ -183,7 +193,7 @@ pub struct LocalNodePressureSnapshot {
     pub avg_queue_wait_ms: f64,
     pub avg_attempt_ms: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub avg_tokens_per_second: Option<f64>,
+    pub avg_end_to_end_tps: Option<f64>,
     pub completion_tokens_observed: u64,
     pub throughput_samples: u64,
 }
@@ -245,7 +255,7 @@ pub struct ModelRoutingMetricsSnapshot {
     pub avg_queue_wait_ms: f64,
     pub avg_attempt_ms: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub avg_tokens_per_second: Option<f64>,
+    pub avg_end_to_end_tps: Option<f64>,
     pub completion_tokens_observed: u64,
     pub throughput_samples: u64,
     /// Local-only per-target routing outcome memory for this model.
@@ -269,7 +279,7 @@ pub struct TargetRoutingMetricsSnapshot {
     pub avg_queue_wait_ms: f64,
     pub avg_attempt_ms: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub avg_tokens_per_second: Option<f64>,
+    pub avg_end_to_end_tps: Option<f64>,
     pub completion_tokens_observed: u64,
     pub throughput_samples: u64,
     pub last_updated_secs_ago: u64,
@@ -718,7 +728,7 @@ impl GlobalMetrics {
         let throughput_samples = load_u64(&self.throughput_samples);
         let avg_queue_wait_ms = average(load_u64(&self.queue_wait_ms_total), attempt_count);
         let avg_attempt_ms = average(load_u64(&self.attempt_ms_total), attempt_count);
-        let avg_tokens_per_second =
+        let avg_end_to_end_tps =
             average_milli(load_u64(&self.throughput_tps_milli_sum), throughput_samples);
         let local_node = LocalNodePressureSnapshot {
             current_inflight_requests,
@@ -728,7 +738,7 @@ impl GlobalMetrics {
             endpoint_attempt_count: load_u64(&self.endpoint_attempt_count),
             avg_queue_wait_ms,
             avg_attempt_ms,
-            avg_tokens_per_second,
+            avg_end_to_end_tps,
             completion_tokens_observed,
             throughput_samples,
         };
@@ -764,7 +774,7 @@ impl GlobalMetrics {
             attempt_reject_count: load_u64(&self.attempt_reject_count),
             avg_queue_wait_ms,
             avg_attempt_ms,
-            avg_tokens_per_second,
+            avg_end_to_end_tps,
             completion_tokens_observed,
             throughput_samples,
             local_node,
@@ -1062,7 +1072,7 @@ impl ModelMetrics {
                 reject_count: metrics.reject_count,
                 avg_queue_wait_ms: average(metrics.queue_wait_ms_total, metrics.attempt_count),
                 avg_attempt_ms: average(metrics.attempt_ms_total, metrics.attempt_count),
-                avg_tokens_per_second: average_milli(
+                avg_end_to_end_tps: average_milli(
                     metrics.throughput_tps_milli_sum,
                     metrics.throughput_samples,
                 ),
@@ -1090,7 +1100,7 @@ impl ModelMetrics {
             attempt_reject_count: self.attempt_reject_count,
             avg_queue_wait_ms: average(self.queue_wait_ms_total, self.attempt_count),
             avg_attempt_ms: average(self.attempt_ms_total, self.attempt_count),
-            avg_tokens_per_second: average_milli(
+            avg_end_to_end_tps: average_milli(
                 self.throughput_tps_milli_sum,
                 self.throughput_samples,
             ),
@@ -1444,7 +1454,7 @@ mod tests {
         assert_eq!(model.failover_count, 1);
         assert_eq!(model.attempt_timeout_count, 1);
         assert_eq!(model.targets.len(), 2);
-        assert!(model.avg_tokens_per_second.is_some());
+        assert!(model.avg_end_to_end_tps.is_some());
     }
 
     #[test]
