@@ -1830,6 +1830,9 @@ impl MeshApi {
                 .into_iter()
                 .map(|b| (b.model, b.native_ttft_ms_p50))
                 .collect(),
+            // Rolling-7d completion tokens this node served, per model.
+            // Local-only estimate input for the desktop earnings-preview.
+            serving_tokens_7d_by_model: node.serving_tally_snapshot(),
             first_joined_mesh_ts: node.first_joined_mesh_ts().await,
             my_split_role: self_split.role,
             my_split_group: self_split.group,

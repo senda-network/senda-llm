@@ -1249,6 +1249,11 @@ pub struct Node {
     /// whether to ping the local llama-server and hold its GPU residency hot.
     last_local_request_at: Arc<std::sync::atomic::AtomicU64>,
     routing_metrics: crate::network::metrics::RoutingMetrics,
+    /// Disk-persisted rolling 7-day tally of completion tokens this node
+    /// actually served, per model. Local-only (never gossiped); powers the
+    /// desktop "estimated earnings this week" preview. See
+    /// `crate::network::serving_tally`.
+    serving_tally: Arc<crate::network::serving_tally::ServingTally>,
     local_request_metrics: Arc<LocalRequestMetricsSampler>,
     tunnel_tx: tokio::sync::mpsc::Sender<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)>,
     tunnel_http_tx:
@@ -1837,6 +1842,23 @@ impl Node {
     ) {
         self.routing_metrics
             .record_completion(model, ttft, decode_duration, completion_tokens);
+        // Accumulate served tokens into the persisted rolling-7d tally that
+        // backs the desktop earnings-preview. Same serving-only chokepoint,
+        // so a pure contributor (no fronting traffic) still counts.
+        self.serving_tally.record(model, completion_tokens);
+    }
+
+    /// Per-model completion tokens this node served over the rolling 7-day
+    /// window. Local-only estimate input for the desktop earnings-preview;
+    /// empty when nothing has been served. See `network::serving_tally`.
+    pub fn serving_tally_snapshot(&self) -> HashMap<String, u64> {
+        self.serving_tally.snapshot()
+    }
+
+    /// Best-effort persist of the serving tally (called on shutdown so the
+    /// last in-flight minute isn't lost on a clean stop).
+    pub fn flush_serving_tally(&self) {
+        self.serving_tally.flush();
     }
 
     /// v0.66.41 Phase 1: per-model `ModelTimingSnapshot` for every model
@@ -2121,6 +2143,9 @@ impl Node {
             inflight_change_tx,
             last_local_request_at: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             routing_metrics: crate::network::metrics::RoutingMetrics::default(),
+            serving_tally: Arc::new(crate::network::serving_tally::ServingTally::new(
+                crate::network::serving_tally::tally_path(),
+            )),
             local_request_metrics: Arc::new(LocalRequestMetricsSampler::default()),
             tunnel_tx,
             tunnel_http_tx,
@@ -2230,6 +2255,7 @@ impl Node {
             inflight_change_tx,
             last_local_request_at: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             routing_metrics: crate::network::metrics::RoutingMetrics::default(),
+            serving_tally: Arc::new(crate::network::serving_tally::ServingTally::new(None)),
             local_request_metrics: Arc::new(LocalRequestMetricsSampler::default()),
             tunnel_tx,
             tunnel_http_tx,

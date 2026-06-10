@@ -123,6 +123,9 @@ These metrics existed before the formal metrics system but fit the taxonomy. The
 | Routing affinity counters | Runtime | local-only |
 | Peer `rtt_ms` | Runtime | mesh-derived |
 | `inference_perf` / TTFT by target | Runtime | local-only |
+| `serving_tokens_7d_by_model` | Information | local-only |
+
+`serving_tokens_7d_by_model` is a per-model map of completion tokens this node actually served over a rolling 7-day window. It is disk-persisted (`~/.closedmesh/serving-tally.json`) so it survives the silent ~6h auto-upgrade restarts, and is **never gossiped** — it never leaves the local node. It exists to back the desktop dashboard's "estimated earnings this week" preview: an illustrative estimate (tokens × a placeholder per-tier rate card applied client-side), **not** a ledger, a signed receipt, or a payout. Missing key = "served nothing this week", not "served zero".
 
 ### From `/api/models`
 

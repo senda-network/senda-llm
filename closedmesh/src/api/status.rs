@@ -202,6 +202,13 @@ pub(super) struct StatusPayload {
     /// `native_tps_p50_by_model`.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub(super) native_ttft_ms_p50_by_model: std::collections::HashMap<String, u64>,
+    /// Per-model completion tokens THIS node served over a rolling 7-day
+    /// window (local-only, disk-persisted; never gossiped). Empty when
+    /// nothing has been served. Feeds the desktop dashboard's
+    /// "estimated earnings this week" preview — an illustrative estimate
+    /// against a placeholder rate card, not a ledger or a payout.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub(super) serving_tokens_7d_by_model: std::collections::HashMap<String, u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) first_joined_mesh_ts: Option<u64>,
     /// This node's current split-role classification, mirroring the same
@@ -800,6 +807,7 @@ mod tests {
             measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             native_tps_p50_by_model: std::collections::HashMap::new(),
             native_ttft_ms_p50_by_model: std::collections::HashMap::new(),
+            serving_tokens_7d_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             my_split_role: None,
             my_split_group: None,
@@ -856,6 +864,7 @@ mod tests {
             measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             native_tps_p50_by_model: std::collections::HashMap::new(),
             native_ttft_ms_p50_by_model: std::collections::HashMap::new(),
+            serving_tokens_7d_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             my_split_role: None,
             my_split_group: None,
@@ -919,6 +928,7 @@ mod tests {
             measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             native_tps_p50_by_model: std::collections::HashMap::new(),
             native_ttft_ms_p50_by_model: std::collections::HashMap::new(),
+            serving_tokens_7d_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             my_split_role: None,
             my_split_group: None,
@@ -977,6 +987,7 @@ mod tests {
             measured_ttft_ms_p50_by_model: std::collections::HashMap::new(),
             native_tps_p50_by_model: std::collections::HashMap::new(),
             native_ttft_ms_p50_by_model: std::collections::HashMap::new(),
+            serving_tokens_7d_by_model: std::collections::HashMap::new(),
             first_joined_mesh_ts: None,
             my_split_role: None,
             my_split_group: None,

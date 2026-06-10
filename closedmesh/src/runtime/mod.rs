@@ -3692,6 +3692,10 @@ async fn run_auto(
     loop {
         tokio::select! {
             _ = wait_shutdown_signal() => {
+                // Persist the last (sub-flush-interval) serving tokens before
+                // exit so a clean stop doesn't drop the most recent minute of
+                // the earnings-preview tally.
+                node.flush_serving_tally();
                 emit_shutdown(None);
                 break;
             }
