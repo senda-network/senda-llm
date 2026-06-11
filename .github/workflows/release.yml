@@ -614,7 +614,9 @@ jobs:
   build_windows:
     name: Build Windows ${{ matrix.flavor_label }}
     if: ${{ needs.prepare_release.outputs.skip_gpu_bundles != 'true' }}
-    runs-on: windows-latest
+    # Pinned to windows-2022: windows-latest migrated to windows-2025, whose
+    # MSVC toolset is newer than CUDA 12.4.1 accepts (host_config.h C1189).
+    runs-on: windows-2022
     needs: prepare_release
     strategy:
       fail-fast: false
