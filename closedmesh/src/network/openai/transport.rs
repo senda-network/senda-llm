@@ -1010,6 +1010,74 @@ pub(super) fn parse_completion_tokens_from_sse_tail(tail: &[u8]) -> Option<u64> 
     None
 }
 
+/// Fallback completion-token counter for streamed responses that carry no
+/// `usage` chunk — i.e. any OpenAI client that didn't pass
+/// `stream_options: {include_usage: true}`. Authoritative
+/// `usage.completion_tokens` (via `parse_completion_tokens_from_sse_tail`)
+/// is always preferred; this only fires when that is absent.
+///
+/// Why it exists: before this, the marketplace TPS/TTFT sample was
+/// recorded only when the SSE stream ended with a `usage` chunk. The
+/// website chat opts in (`stream_options.include_usage`), but the whole
+/// point of an OpenAI-compatible API is the *other* clients — IDEs,
+/// agents, raw scripts — and those overwhelmingly stream without it, so
+/// they contributed zero per-model telemetry. That is the coverage hole
+/// the May-23 capacity-tier (DeepSeek-70B) serve fell into; it was
+/// mis-attributed to the "split-host" path in STRATEGY.md when in fact
+/// any non-opted-in streaming client on any topology hits it.
+///
+/// llama.cpp's server streams exactly one SSE `data:` event per generated
+/// token, so counting content-bearing delta events approximates
+/// `completion_tokens` closely enough for a rolling p50 TPS metric
+/// (undercounting is the only failure mode — conservative). Handles SSE
+/// events split across read boundaries via `carry`, which holds the
+/// trailing partial line between calls.
+fn count_sse_stream_deltas(new_bytes: &[u8], carry: &mut Vec<u8>, counter: &mut u64) {
+    carry.extend_from_slice(new_bytes);
+    let Some(last_newline) = carry.iter().rposition(|&b| b == b'\n') else {
+        // No complete line yet. Guard against an adversarial newline-free
+        // stream pinning memory: if the partial line is implausibly long
+        // for SSE, drop it (worst case we miss a token in the count).
+        if carry.len() > 64 * 1024 {
+            carry.clear();
+        }
+        return;
+    };
+    let consumed: Vec<u8> = carry.drain(..=last_newline).collect();
+    let text = String::from_utf8_lossy(&consumed);
+    for raw_line in text.split('\n') {
+        let line = raw_line.trim_end_matches('\r').trim_start();
+        let Some(payload) = line.strip_prefix("data:").map(str::trim_start) else {
+            continue;
+        };
+        if payload.is_empty() || payload == "[DONE]" {
+            continue;
+        }
+        let Ok(json) = serde_json::from_str::<serde_json::Value>(payload) else {
+            continue;
+        };
+        // A usage-only chunk has empty `choices`; never count it as a token.
+        let Some(choices) = json.get("choices").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for choice in choices {
+            let delta_has_text = choice
+                .get("delta")
+                .and_then(|d| d.get("content").or_else(|| d.get("reasoning_content")))
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty());
+            // Legacy text-completion streaming shape (`choices[].text`).
+            let legacy_has_text = choice
+                .get("text")
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.is_empty());
+            if delta_has_text || legacy_has_text {
+                *counter += 1;
+            }
+        }
+    }
+}
+
 fn delivered_attempt_outcome(status_code: u16) -> crate::network::metrics::AttemptOutcome {
     match status_code {
         200..=299 => crate::network::metrics::AttemptOutcome::Success,
@@ -1578,6 +1646,19 @@ async fn relay_probed_response<R: AsyncRead + Unpin>(
     } else {
         Vec::new()
     };
+    // Fallback token count for streams without a `usage` chunk. Seeded
+    // from the bytes already buffered during probing, then fed every
+    // subsequent chunk. `delta_carry` holds a partial trailing SSE line
+    // across read boundaries.
+    let mut delta_tokens: u64 = 0;
+    let mut delta_carry: Vec<u8> = Vec::new();
+    if probe.buffered.len() > parsed.header_end {
+        count_sse_stream_deltas(
+            &probe.buffered[parsed.header_end..],
+            &mut delta_carry,
+            &mut delta_tokens,
+        );
+    }
     if tail.len() > SSE_USAGE_TAIL_BYTES * 2 {
         let drop_to = tail.len() - SSE_USAGE_TAIL_BYTES;
         tail.drain(..drop_to);
@@ -1592,6 +1673,7 @@ async fn relay_probed_response<R: AsyncRead + Unpin>(
                     break;
                 }
                 tail.extend_from_slice(&buf[..n]);
+                count_sse_stream_deltas(&buf[..n], &mut delta_carry, &mut delta_tokens);
                 if tail.len() > SSE_USAGE_TAIL_BYTES * 2 {
                     let drop_to = tail.len() - SSE_USAGE_TAIL_BYTES;
                     tail.drain(..drop_to);
@@ -1604,7 +1686,11 @@ async fn relay_probed_response<R: AsyncRead + Unpin>(
         }
     }
     let _ = tcp_stream.shutdown().await;
-    let completion_tokens = parse_completion_tokens_from_sse_tail(&tail);
+    // Authoritative `usage.completion_tokens` wins; the per-token delta
+    // count is the fallback so non-opted-in streaming clients still
+    // record a marketplace sample instead of silently dropping it.
+    let completion_tokens =
+        parse_completion_tokens_from_sse_tail(&tail).or((delta_tokens > 0).then_some(delta_tokens));
     Ok(RouteAttemptResult::Delivered {
         status_code: probe.status_code,
         completion_tokens,
@@ -3513,6 +3599,11 @@ pub async fn pipeline_proxy_local(
                 let mut stream = resp.bytes_stream();
                 let mut first_byte_at: Option<std::time::Instant> = None;
                 let mut tail: Vec<u8> = Vec::with_capacity(SSE_USAGE_TAIL_BYTES);
+                // Fallback token count for streams without a `usage` chunk
+                // (clients that didn't pass `include_usage`). See
+                // `count_sse_stream_deltas`.
+                let mut delta_tokens: u64 = 0;
+                let mut delta_carry: Vec<u8> = Vec::new();
                 let mut client_disconnected = false;
 
                 while let Some(chunk) = stream.next().await {
@@ -3527,6 +3618,11 @@ pub async fn pipeline_proxy_local(
                             // whole response.
                             if !bytes.is_empty() {
                                 tail.extend_from_slice(&bytes);
+                                count_sse_stream_deltas(
+                                    &bytes,
+                                    &mut delta_carry,
+                                    &mut delta_tokens,
+                                );
                                 if tail.len() > SSE_USAGE_TAIL_BYTES {
                                     let drop = tail.len() - SSE_USAGE_TAIL_BYTES;
                                     tail.drain(..drop);
@@ -3568,7 +3664,8 @@ pub async fn pipeline_proxy_local(
                 } else if let Some(first) = first_byte_at {
                     let ttft = first.duration_since(request_committed_at);
                     let decode_duration = first.elapsed();
-                    let tokens = parse_completion_tokens_from_sse_tail(&tail);
+                    let tokens = parse_completion_tokens_from_sse_tail(&tail)
+                        .or((delta_tokens > 0).then_some(delta_tokens));
                     record_pipeline_completion(
                         node,
                         strong_model,
@@ -3841,6 +3938,80 @@ mod tests {
             b"\ndata: {\"usage\":{\"completion_tokens\":33}}\n\ndata: [DONE]\n\n",
         );
         assert_eq!(parse_completion_tokens_from_sse_tail(&body), Some(33));
+    }
+
+    /// Helper: feed an entire SSE body to the streaming delta counter in
+    /// one shot and return the count.
+    fn count_deltas_oneshot(body: &[u8]) -> u64 {
+        let mut carry = Vec::new();
+        let mut n = 0u64;
+        count_sse_stream_deltas(body, &mut carry, &mut n);
+        n
+    }
+
+    /// A streamed chat completion with no `usage` chunk (client didn't opt
+    /// into `include_usage`): each content-bearing delta is one token. The
+    /// role-priming chunk (empty content) and the finish chunk (no content)
+    /// must not count.
+    #[test]
+    fn test_count_sse_stream_deltas_counts_content_deltas() {
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" world\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        assert_eq!(count_deltas_oneshot(body.as_bytes()), 3);
+    }
+
+    /// A usage-only chunk has empty `choices` and must never be counted as
+    /// a token by the fallback.
+    #[test]
+    fn test_count_sse_stream_deltas_ignores_usage_only_chunk() {
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n",
+            "data: {\"choices\":[],\"usage\":{\"completion_tokens\":42}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        assert_eq!(count_deltas_oneshot(body.as_bytes()), 1);
+    }
+
+    /// reasoning_content deltas (thinking models) count too; legacy
+    /// text-completion `choices[].text` deltas also count.
+    #[test]
+    fn test_count_sse_stream_deltas_counts_reasoning_and_legacy_text() {
+        let reasoning = concat!(
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"think\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"answer\"}}]}\n\n",
+        );
+        assert_eq!(count_deltas_oneshot(reasoning.as_bytes()), 2);
+        let legacy = concat!(
+            "data: {\"choices\":[{\"text\":\"foo\"}]}\n\n",
+            "data: {\"choices\":[{\"text\":\"bar\"}]}\n\n",
+        );
+        assert_eq!(count_deltas_oneshot(legacy.as_bytes()), 2);
+    }
+
+    /// Counting must be invariant to how the byte stream is chunked across
+    /// read boundaries — including a split in the middle of an SSE line.
+    #[test]
+    fn test_count_sse_stream_deltas_handles_split_boundaries() {
+        let body = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"b\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"c\"}}]}\n\n",
+        )
+        .as_bytes();
+        // Sweep every possible split point; the total must always be 3.
+        for split in 0..body.len() {
+            let mut carry = Vec::new();
+            let mut n = 0u64;
+            count_sse_stream_deltas(&body[..split], &mut carry, &mut n);
+            count_sse_stream_deltas(&body[split..], &mut carry, &mut n);
+            assert_eq!(n, 3, "split at {split} miscounted");
+        }
     }
 
     /// v0.66.55 regression guard for the split-host (pipeline) metric path.
