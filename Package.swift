@@ -6,8 +6,8 @@ let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let swiftSDKRelativePath = "sdk/swift"
 let ffiXCFrameworkRelativePath = "\(swiftSDKRelativePath)/Generated/ClosedMeshFFI.xcframework"
 let ffiXCFrameworkPath = "\(repoRoot)/\(ffiXCFrameworkRelativePath)"
-let remoteFFIXCFrameworkURL = "https://github.com/closedmesh/closedmesh-llm/releases/download/v0.66.77/ClosedMeshFFI.xcframework.zip"
-let remoteFFIXCFrameworkChecksum = "ebd701c935d46aa41a4d5c05764c9ad1b55a855d156280927a568cd15a1c493f"
+let remoteFFIXCFrameworkURL = "https://github.com/closedmesh/closedmesh-llm/releases/download/__MESH_SWIFT_RELEASE_TAG__/ClosedMeshFFI.xcframework.zip"
+let remoteFFIXCFrameworkChecksum = "__MESH_SWIFT_RELEASE_CHECKSUM__"
 let forceStubFFI = ProcessInfo.processInfo.environment["MESH_SWIFT_FORCE_STUB"] == "1"
 let hasLocalFFIXCFramework = FileManager.default.fileExists(atPath: ffiXCFrameworkPath)
 let hasRemoteFFIXCFramework = !forceStubFFI
