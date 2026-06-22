@@ -1591,10 +1591,7 @@ impl MeshApi {
                         .iter()
                         .filter(|((pid, _), _)| *pid == p.id)
                         .map(|((_, model), rec)| {
-                            (
-                                model.clone(),
-                                crate::api::status::build_verify_payload(rec),
-                            )
+                            (model.clone(), crate::api::status::build_verify_payload(rec))
                         })
                         .collect(),
                     role: match p.role {

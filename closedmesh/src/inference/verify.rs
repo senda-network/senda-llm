@@ -736,7 +736,12 @@ async fn apply_enforcement(
             prefix_agreement,
             compared_tokens,
             reason,
-        } => ("mismatch", *prefix_agreement, *compared_tokens, Some(*reason)),
+        } => (
+            "mismatch",
+            *prefix_agreement,
+            *compared_tokens,
+            Some(*reason),
+        ),
         FingerprintVerdict::Inconclusive { reason } => ("inconclusive", 0.0, 0, Some(*reason)),
     };
     node.record_verify_verdict(peer_id, model, vk, agreement, compared, mode, reason)

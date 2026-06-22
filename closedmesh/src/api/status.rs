@@ -263,10 +263,7 @@ pub(super) struct PeerPayload {
     /// `mismatch` means they diverged. Empty for peers nobody has probed yet
     /// (only the entry node runs the verifier). Observe-only — present
     /// regardless of whether enforcement is enabled.
-    #[serde(
-        default,
-        skip_serializing_if = "std::collections::HashMap::is_empty"
-    )]
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub(super) verify_by_model: std::collections::HashMap<String, VerifyPayload>,
     pub(super) role: String,
     pub(super) state: NodeState,
