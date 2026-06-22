@@ -1562,6 +1562,7 @@ impl MeshApi {
         let my_models = node.models().await;
         let my_available_models = node.available_models().await;
         let my_requested_models = node.requested_models().await;
+        let verify_snapshot = node.verify_verdicts_snapshot().await;
         let peers: Vec<PeerPayload> = all_peers
             .iter()
             .map(|p| {
@@ -1586,6 +1587,16 @@ impl MeshApi {
                     id: p.id.fmt_short().to_string(),
                     owner: build_ownership_payload(&p.owner_summary),
                     model_ad: crate::api::status::build_model_ad_payload(&p.model_ad.summary),
+                    verify_by_model: verify_snapshot
+                        .iter()
+                        .filter(|((pid, _), _)| *pid == p.id)
+                        .map(|((_, model), rec)| {
+                            (
+                                model.clone(),
+                                crate::api::status::build_verify_payload(rec),
+                            )
+                        })
+                        .collect(),
                     role: match p.role {
                         mesh::NodeRole::Worker => "Worker".into(),
                         mesh::NodeRole::Host { .. } => "Host".into(),

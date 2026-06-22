@@ -1406,6 +1406,22 @@ impl LocalRequestMetricsWindow {
     }
 }
 
+/// Latest verification verdict the local verifier loop produced for a
+/// `(peer, model)` pair. Observe-only telemetry: the verifier in
+/// [`crate::inference::verify`] writes one of these every audit tick so the
+/// status API can surface "independently verified" / "failed verification"
+/// instead of the verdict only living in the entry node's tracing log.
+/// `verdict` is the lowercase string `match` | `mismatch` | `inconclusive`.
+#[derive(Debug, Clone)]
+pub struct VerifyVerdictRecord {
+    pub verdict: String,
+    pub agreement: f64,
+    pub compared_tokens: usize,
+    pub mode: String,
+    pub reason: Option<String>,
+    pub checked_at_unix_secs: u64,
+}
+
 struct MeshState {
     peers: HashMap<EndpointId, PeerInfo>,
     connections: HashMap<EndpointId, Connection>,
@@ -1436,6 +1452,10 @@ struct MeshState {
     /// here, and only when enforcement is explicitly enabled; with
     /// enforcement off the map stays empty and every filter is a no-op.
     verifier_demotions: HashMap<(EndpointId, String), std::time::Instant>,
+    /// Latest sample-and-verify verdict per `(peer, model)`. Written by the
+    /// verifier loop every audit tick (regardless of enforcement), read by the
+    /// status API. Stale entries are pruned on read.
+    verify_verdicts: HashMap<(EndpointId, String), VerifyVerdictRecord>,
 }
 
 /// Sliding window over which routing-layer failures to a single remote
@@ -1703,6 +1723,50 @@ impl Node {
         let mut state = self.state.lock().await;
         state.verifier_demotions.retain(|_, until| *until > now);
         state.verifier_demotions.keys().cloned().collect()
+    }
+
+    /// Record the latest sample-and-verify verdict for `(peer, model)`.
+    /// Observe-only telemetry written by the verifier loop every audit tick,
+    /// independent of whether enforcement is enabled, so the status API can
+    /// surface it. `verdict` is `match` | `mismatch` | `inconclusive`.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn record_verify_verdict(
+        &self,
+        peer_id: EndpointId,
+        model: &str,
+        verdict: &str,
+        agreement: f64,
+        compared_tokens: usize,
+        mode: &str,
+        reason: Option<&str>,
+    ) {
+        let rec = VerifyVerdictRecord {
+            verdict: verdict.to_string(),
+            agreement,
+            compared_tokens,
+            mode: mode.to_string(),
+            reason: reason.map(|s| s.to_string()),
+            checked_at_unix_secs: now_secs(),
+        };
+        let mut state = self.state.lock().await;
+        state
+            .verify_verdicts
+            .insert((peer_id, model.to_string()), rec);
+    }
+
+    /// Snapshot of recent verify verdicts, pruning entries older than one hour
+    /// so the status API never shows a stale verdict for a peer that has since
+    /// gone quiet. Read by the entry `/api/status` peer payload builder.
+    pub async fn verify_verdicts_snapshot(
+        &self,
+    ) -> HashMap<(EndpointId, String), VerifyVerdictRecord> {
+        const MAX_AGE_SECS: u64 = 3600;
+        let now = now_secs();
+        let mut state = self.state.lock().await;
+        state
+            .verify_verdicts
+            .retain(|_, r| now.saturating_sub(r.checked_at_unix_secs) <= MAX_AGE_SECS);
+        state.verify_verdicts.clone()
     }
 
     #[cfg(test)]
@@ -2136,6 +2200,7 @@ impl Node {
                 policy_rejected_peers: HashMap::new(),
                 target_failures: HashMap::new(),
                 verifier_demotions: HashMap::new(),
+                verify_verdicts: HashMap::new(),
             })),
             local_model_ports: Arc::new(Mutex::new(HashMap::new())),
             role: Arc::new(Mutex::new(role)),
@@ -2263,6 +2328,7 @@ impl Node {
                 policy_rejected_peers: HashMap::new(),
                 target_failures: HashMap::new(),
                 verifier_demotions: HashMap::new(),
+                verify_verdicts: HashMap::new(),
             })),
             local_model_ports: Arc::new(Mutex::new(HashMap::new())),
             role: Arc::new(Mutex::new(role)),

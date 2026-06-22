@@ -620,7 +620,7 @@ async fn run_one_audit(
         let verdict = battery_verdict(&reference, &candidate, &config.thresholds);
         if !matches!(verdict, FingerprintVerdict::Inconclusive { .. }) {
             log_verdict(peer_id, &model, mode, &verdict);
-            apply_enforcement(node, peer_id, &model, &verdict, config, streaks).await;
+            apply_enforcement(node, peer_id, &model, mode, &verdict, config, streaks).await;
             return Ok(());
         }
     }
@@ -662,7 +662,7 @@ async fn run_one_audit(
 
     let verdict = compare_fingerprints(&reference, &candidate, &config.thresholds);
     log_verdict(peer_id, &model, mode, &verdict);
-    apply_enforcement(node, peer_id, &model, &verdict, config, streaks).await;
+    apply_enforcement(node, peer_id, &model, mode, &verdict, config, streaks).await;
     Ok(())
 }
 
@@ -719,10 +719,29 @@ async fn apply_enforcement(
     node: &mesh::Node,
     peer_id: EndpointId,
     model: &str,
+    mode: &str,
     verdict: &FingerprintVerdict,
     config: &VerifierConfig,
     streaks: &mut HashMap<(EndpointId, String), u32>,
 ) {
+    // Record the verdict for the status API on every tick, independent of
+    // enforcement, so observe-only meshes still surface "independently
+    // verified" / "failed verification".
+    let (vk, agreement, compared, reason): (&str, f64, usize, Option<&str>) = match verdict {
+        FingerprintVerdict::Match {
+            prefix_agreement,
+            compared_tokens,
+        } => ("match", *prefix_agreement, *compared_tokens, None),
+        FingerprintVerdict::Mismatch {
+            prefix_agreement,
+            compared_tokens,
+            reason,
+        } => ("mismatch", *prefix_agreement, *compared_tokens, Some(*reason)),
+        FingerprintVerdict::Inconclusive { reason } => ("inconclusive", 0.0, 0, Some(*reason)),
+    };
+    node.record_verify_verdict(peer_id, model, vk, agreement, compared, mode, reason)
+        .await;
+
     let key = (peer_id, model.to_string());
     let current = streaks.get(&key).copied().unwrap_or(0);
     let (new_streak, action) = next_streak_and_action(verdict, current, config);

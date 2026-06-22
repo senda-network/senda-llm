@@ -257,6 +257,17 @@ pub(super) struct PeerPayload {
     /// against the local trust store. `verified=false` with `status=unsigned`
     /// for legacy peers and peers with no owner key.
     pub(super) model_ad: ModelAdPayload,
+    /// v0.66.x Phase 3.2: latest sample-and-verify verdict per model the local
+    /// verifier probed on this peer, keyed by model id. `match` means the
+    /// peer's live logits reproduced an independently-generated reference;
+    /// `mismatch` means they diverged. Empty for peers nobody has probed yet
+    /// (only the entry node runs the verifier). Observe-only — present
+    /// regardless of whether enforcement is enabled.
+    #[serde(
+        default,
+        skip_serializing_if = "std::collections::HashMap::is_empty"
+    )]
+    pub(super) verify_by_model: std::collections::HashMap<String, VerifyPayload>,
     pub(super) role: String,
     pub(super) state: NodeState,
     pub(super) models: Vec<String>,
@@ -462,6 +473,32 @@ pub(super) struct ModelAdPayload {
     pub(super) issued_at_unix_ms: Option<u64>,
     #[serde(default)]
     pub(super) model_count: usize,
+}
+
+/// v0.66.x Phase 3.2: serialized sample-and-verify verdict for one `(peer,
+/// model)`. `verdict` is `match` | `mismatch` | `inconclusive`; the UI keys on
+/// `match` for the "independently verified" badge and `mismatch` for a
+/// warning. `agreement` is the prefix-token agreement fraction [0,1].
+#[derive(Serialize)]
+pub(super) struct VerifyPayload {
+    pub(super) verdict: String,
+    pub(super) agreement: f64,
+    pub(super) compared_tokens: usize,
+    pub(super) mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) reason: Option<String>,
+    pub(super) checked_at_unix_secs: u64,
+}
+
+pub(super) fn build_verify_payload(rec: &crate::mesh::VerifyVerdictRecord) -> VerifyPayload {
+    VerifyPayload {
+        verdict: rec.verdict.clone(),
+        agreement: rec.agreement,
+        compared_tokens: rec.compared_tokens,
+        mode: rec.mode.clone(),
+        reason: rec.reason.clone(),
+        checked_at_unix_secs: rec.checked_at_unix_secs,
+    }
 }
 
 pub(super) fn build_model_ad_payload(summary: &ModelAdSummary) -> ModelAdPayload {
@@ -728,6 +765,7 @@ mod tests {
             id: "test-id".to_string(),
             owner: test_owner_payload(),
             model_ad: Default::default(),
+            verify_by_model: Default::default(),
             role: "Worker".to_string(),
             state: NodeState::Standby,
             models: vec![],
@@ -766,6 +804,7 @@ mod tests {
             id: "test-id".to_string(),
             owner: test_owner_payload(),
             model_ad: Default::default(),
+            verify_by_model: Default::default(),
             role: "Worker".to_string(),
             state: NodeState::Standby,
             models: vec![],
@@ -1048,6 +1087,7 @@ mod tests {
             id: "test-id".to_string(),
             owner: test_owner_payload(),
             model_ad: Default::default(),
+            verify_by_model: Default::default(),
             role: "Host".to_string(),
             state: NodeState::Serving,
             models: vec![],
@@ -1093,6 +1133,7 @@ mod tests {
             id: "test-id".to_string(),
             owner: test_owner_payload(),
             model_ad: Default::default(),
+            verify_by_model: Default::default(),
             role: "Host".to_string(),
             state: NodeState::Serving,
             models: vec![],
@@ -1152,6 +1193,7 @@ mod tests {
             id: "test-id".to_string(),
             owner: test_owner_payload(),
             model_ad: Default::default(),
+            verify_by_model: Default::default(),
             role: "Host".to_string(),
             state: NodeState::Serving,
             models: vec![],
