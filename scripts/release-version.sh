@@ -67,7 +67,7 @@ update_mesh_client_dependency_version() {
     local before
     local after
     before="$(cat "$file")"
-    after="$(perl -0777 -pe 's/(mesh-client\s*=\s*\{[^}]*package\s*=\s*"closedmesh-client"[^}]*version\s*=\s*")[^"]+(")/${1}'"$next"'$2/s' "$file")"
+    after="$(perl -0777 -pe 's/(mesh-client\s*=\s*\{[^}]*package\s*=\s*"senda-client"[^}]*version\s*=\s*")[^"]+(")/${1}'"$next"'$2/s' "$file")"
     if [[ "$before" == "$after" ]]; then
         return
     fi
@@ -97,21 +97,21 @@ while IFS= read -r manifest; do
 done < <(
     cd "$REPO_ROOT"
     git ls-files \
-        'closedmesh/Cargo.toml' \
-        'closedmesh/**/Cargo.toml' \
+        'senda/Cargo.toml' \
+        'senda/**/Cargo.toml' \
         'mesh-api/Cargo.toml' \
-        'closedmesh-client/Cargo.toml' \
+        'senda-client/Cargo.toml' \
         | sort -u
 )
 
 if [[ "${#manifests[@]}" -eq 0 ]]; then
-    echo "no Cargo.toml manifests found under closedmesh/" >&2
+    echo "no Cargo.toml manifests found under senda/" >&2
     exit 1
 fi
 
 versioned_files=()
 
-lib_file="$REPO_ROOT/closedmesh/src/lib.rs"
+lib_file="$REPO_ROOT/senda/src/lib.rs"
 require_file "$lib_file"
 update_lib_version "$lib_file" "$version"
 versioned_files+=("$lib_file")

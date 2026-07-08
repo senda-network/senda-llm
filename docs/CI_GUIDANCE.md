@@ -31,7 +31,7 @@ PR CI is the fast validation path.
 Smoke testing should consume previously built Linux inference binaries instead of rebuilding them.
 
 - Download the uploaded artifact from the producer job.
-- Stage `closedmesh`, `rpc-server`, `llama-server`, `llama-moe-analyze`, and `llama-moe-split` into the expected paths.
+- Stage `senda`, `rpc-server`, `llama-server`, `llama-moe-analyze`, and `llama-moe-split` into the expected paths.
 - Own the heavier inference checks, including real inference, OpenAI compatibility, split-mode, and MoE smokes.
 
 ### `.github/workflows/warm-caches.yml`
@@ -74,9 +74,9 @@ Do not widen a producer lane from debug or slim CI shape to release or fat shape
 
 For Linux inference smoke reuse in PR CI:
 
-- the producer job should upload the already-validated `closedmesh` binary and required llama.cpp executables
+- the producer job should upload the already-validated `senda` binary and required llama.cpp executables
 - the downstream smoke job should download and stage those files
-- the smoke job should not perform a meaningful rebuild of `closedmesh` or llama.cpp
+- the smoke job should not perform a meaningful rebuild of `senda` or llama.cpp
 
 ## Cache boundaries
 
@@ -107,7 +107,7 @@ Keep CI validation shape separate from release shape.
 
 ## Docker publish contract
 
-`.github/workflows/docker.yml` publishes to `ghcr.io/<owner>/closedmesh` with two classes of tags:
+`.github/workflows/docker.yml` publishes to `ghcr.io/<owner>/senda` with two classes of tags:
 
 - **Public tags** are the stable tags users pull: `latest`, `client`, `<version>`, `sha-<short>`, `cpu`, `<version>-cpu`, `sha-<short>-cpu`, `vulkan`, `<version>-vulkan`, `sha-<short>-vulkan`, `cuda`, `<version>-cuda`, `sha-<short>-cuda`, `rocm`, `<version>-rocm`, and `sha-<short>-rocm`.
 - **Merge-source tags** are internal per-architecture tags used only so the merge jobs can assemble multi-arch manifests.

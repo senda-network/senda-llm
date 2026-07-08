@@ -1,8 +1,8 @@
 import XCTest
-@testable import ClosedMesh
+@testable import Senda
 
 func makeOwnerKeypairBytesHex() -> String {
-    #if canImport(ClosedMeshFFI)
+    #if canImport(SendaFFI)
     return generateOwnerKeypairHex()
     #else
     return "test-owner-keypair"

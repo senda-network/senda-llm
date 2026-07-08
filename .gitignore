@@ -10,7 +10,7 @@ private-note.txt
 mesh-bundle.tar.gz
 .idea/
 .DS_Store
-closedmesh/ui/dist/
+senda/ui/dist/
 evals/results/
 .sisyphus/
 .playwright-mcp/
@@ -20,6 +20,6 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
-dist/ClosedMeshFFI.xcframework.zip
-sdk/swift/Generated/ClosedMeshFFI.xcframework/
+dist/SendaFFI.xcframework.zip
+sdk/swift/Generated/SendaFFI.xcframework/
 .impeccable.md

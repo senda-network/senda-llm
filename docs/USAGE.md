@@ -9,13 +9,13 @@ For command-by-command CLI usage, model resolution rules, and JSON automation ex
 Install the latest release bundle:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/closedmesh/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh | bash
 ```
 
 To opt into the latest published prerelease bundle instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/closedmesh/main/install.sh | bash -s -- --pre-release
+curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh | bash -s -- --pre-release
 ```
 
 The installer probes your machine, recommends a flavor, and asks what to install.
@@ -23,7 +23,7 @@ The installer probes your machine, recommends a flavor, and asks what to install
 For a non-interactive install, set the flavor explicitly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/closedmesh/main/install.sh | CLOSEDMESH_INSTALL_FLAVOR=vulkan bash
+curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh | SENDA_INSTALL_FLAVOR=vulkan bash
 ```
 
 Release bundles install flavor-specific llama.cpp binaries:
@@ -37,14 +37,14 @@ Release bundles install flavor-specific llama.cpp binaries:
 If you keep more than one flavor in the same `bin` directory, choose one explicitly:
 
 ```bash
-closedmesh serve --llama-flavor vulkan --model Qwen2.5-32B
+senda serve --llama-flavor vulkan --model Qwen2.5-32B
 ```
 
 Source builds must use `just`:
 
 ```bash
-git clone https://github.com/closedmesh/closedmesh-llm
-cd closedmesh
+git clone https://github.com/senda-network/senda-llm
+cd senda
 just build
 ```
 
@@ -67,50 +67,50 @@ For full build details, see [CONTRIBUTING.md](../CONTRIBUTING.md).
 ## Common commands
 
 ```bash
-closedmesh serve --auto
-closedmesh serve --model Qwen2.5-32B
-closedmesh serve --join <token>
-closedmesh client --auto
-closedmesh gpus
-closedmesh discover
+senda serve --auto
+senda serve --model Qwen2.5-32B
+senda serve --join <token>
+senda client --auto
+senda gpus
+senda discover
 ```
 
-If you run `closedmesh` with no arguments, it prints `--help` and exits. It does not start the console or bind ports until you choose a mode.
-Bare `closedmesh serve` loads startup models from `[[models]]` in `~/.closedmesh/config.toml`.
+If you run `senda` with no arguments, it prints `--help` and exits. It does not start the console or bind ports until you choose a mode.
+Bare `senda serve` loads startup models from `[[models]]` in `~/.senda/config.toml`.
 
 ## Background service
 
 To install Mesh LLM as a per-user background service:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/closedmesh/main/install.sh | bash -s -- --service
+curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh | bash -s -- --service
 ```
 
 Service installs are user-scoped:
 
-- macOS installs a `launchd` agent at `~/Library/LaunchAgents/com.closedmesh.closedmesh.plist`
-- Linux installs a `systemd --user` unit at `~/.config/systemd/user/closedmesh.service`
-- Shared environment config lives in `~/.config/closedmesh/service.env`
-- Startup models live in `~/.closedmesh/config.toml`
+- macOS installs a `launchd` agent at `~/Library/LaunchAgents/network.senda.senda.plist`
+- Linux installs a `systemd --user` unit at `~/.config/systemd/user/senda.service`
+- Shared environment config lives in `~/.config/senda/service.env`
+- Startup models live in `~/.senda/config.toml`
 
 Platform behavior:
 
-- macOS loads `service.env` and then executes `closedmesh serve`
-- Linux writes `closedmesh serve` directly into `ExecStart=`
+- macOS loads `service.env` and then executes `senda serve`
+- Linux writes `senda serve` directly into `ExecStart=`
 
-The background service no longer stores custom startup args. Configure startup models in `~/.closedmesh/config.toml` instead.
+The background service no longer stores custom startup args. Configure startup models in `~/.senda/config.toml` instead.
 
 Optional shared environment file example:
 
 ```text
-CLOSEDMESH_NO_SELF_UPDATE=1
+SENDA_NO_SELF_UPDATE=1
 ```
 
 If you edit the Linux unit manually:
 
 ```bash
 systemctl --user daemon-reload
-systemctl --user restart closedmesh.service
+systemctl --user restart senda.service
 ```
 
 If you want the service to survive reboot before login:
@@ -124,9 +124,9 @@ sudo loginctl enable-linger "$USER"
 List or fetch models from the built-in catalog:
 
 ```bash
-closedmesh download
-closedmesh download 32b
-closedmesh download 72b --draft
+senda download
+senda download 32b
+senda download 72b --draft
 ```
 
 Draft pairings for speculative decoding:
@@ -140,20 +140,20 @@ Draft pairings for speculative decoding:
 
 ## Specifying models
 
-`closedmesh serve --model` accepts several formats. Hugging Face-backed models are cached in the standard Hugging Face cache on first use.
+`senda serve --model` accepts several formats. Hugging Face-backed models are cached in the standard Hugging Face cache on first use.
 
 ```bash
-closedmesh serve --model Qwen3-8B
-closedmesh serve --model Qwen3-8B-Q4_K_M
-closedmesh serve --model https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf
-closedmesh serve --model bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_M.gguf
-closedmesh serve --gguf ~/my-models/custom-model.gguf
-closedmesh serve --gguf ~/my-models/qwen3.5-4b.gguf --mmproj ~/my-models/mmproj-BF16.gguf
+senda serve --model Qwen3-8B
+senda serve --model Qwen3-8B-Q4_K_M
+senda serve --model https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf
+senda serve --model bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_M.gguf
+senda serve --gguf ~/my-models/custom-model.gguf
+senda serve --gguf ~/my-models/qwen3.5-4b.gguf --mmproj ~/my-models/mmproj-BF16.gguf
 ```
 
 ## Startup config
 
-`closedmesh serve` also loads startup models from `~/.closedmesh/config.toml` by default.
+`senda serve` also loads startup models from `~/.senda/config.toml` by default.
 
 ```toml
 version = 1
@@ -177,15 +177,15 @@ enabled = true
 Use the default config:
 
 ```bash
-closedmesh serve
+senda serve
 ```
 
-If no startup models are configured, `closedmesh serve` prints a `⚠️` warning, shows help, and exits.
+If no startup models are configured, `senda serve` prints a `⚠️` warning, shows help, and exits.
 
 Or an explicit path:
 
 ```bash
-closedmesh serve --config /path/to/config.toml
+senda serve --config /path/to/config.toml
 ```
 
 Config precedence:
@@ -197,7 +197,7 @@ Config precedence:
 
 ## Lemonade integration
 
-Use the `openai-endpoint` plugin to route requests to a local [Lemonade Server](https://lemonade-server.ai) through the same `http://localhost:9337/v1` API that closedmesh exposes.
+Use the `openai-endpoint` plugin to route requests to a local [Lemonade Server](https://lemonade-server.ai) through the same `http://localhost:9337/v1` API that senda exposes.
 
 Start Lemonade first, either with the Lemonade Desktop app or with the CLI:
 
@@ -206,7 +206,7 @@ lemonade-server serve
 curl -s http://localhost:8000/api/v1/models | jq '.data[].id'
 ```
 
-Then enable the plugin in `~/.closedmesh/config.toml`:
+Then enable the plugin in `~/.senda/config.toml`:
 
 ```toml
 [[plugin]]
@@ -214,19 +214,19 @@ name = "openai-endpoint"
 url = "http://localhost:8000/api/v1"
 ```
 
-Start closedmesh normally:
+Start senda normally:
 
 ```bash
-closedmesh serve --model Qwen3-8B-Q4_K_M
+senda serve --model Qwen3-8B-Q4_K_M
 ```
 
-After startup, closedmesh should include Lemonade-hosted models in its own model list:
+After startup, senda should include Lemonade-hosted models in its own model list:
 
 ```bash
 curl -s http://localhost:9337/v1/models | jq '.data[].id'
 ```
 
-Requests sent to closedmesh with a Lemonade model ID are forwarded to Lemonade:
+Requests sent to senda with a Lemonade model ID are forwarded to Lemonade:
 
 ```bash
 curl http://localhost:9337/v1/chat/completions \
@@ -241,49 +241,49 @@ curl http://localhost:9337/v1/chat/completions \
 
 Notes:
 
-- closedmesh does not start or supervise Lemonade; run it separately with the Desktop app or CLI.
+- senda does not start or supervise Lemonade; run it separately with the Desktop app or CLI.
 - Use the exact model ID returned by Lemonade's `/api/v1/models`.
-- The URL can also be set via `CLOSEDMESH_OPENAI_ENDPOINT_URL` env var (config takes precedence).
+- The URL can also be set via `SENDA_OPENAI_ENDPOINT_URL` env var (config takes precedence).
 
 Useful model commands:
 
 ```bash
-closedmesh models recommended
-closedmesh models installed
-closedmesh models search qwen 8b
-closedmesh models search --catalog qwen
-closedmesh models show Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
-closedmesh models download Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
-closedmesh models updates --check
-closedmesh models updates --all
-closedmesh models updates Qwen/Qwen3-8B-GGUF
+senda models recommended
+senda models installed
+senda models search qwen 8b
+senda models search --catalog qwen
+senda models show Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
+senda models download Qwen/Qwen3-8B-GGUF/Qwen3-8B-Q4_K_M.gguf
+senda models updates --check
+senda models updates --all
+senda models updates Qwen/Qwen3-8B-GGUF
 ```
 
 ## Model storage
 
 - Hugging Face repo snapshots are the canonical managed model store.
 - Flat `~/.models/` storage is no longer scanned for managed models.
-- Arbitrary local GGUF files still work through `closedmesh serve --gguf`.
-- MoE split artifacts are cached under `~/.cache/closedmesh/splits/`.
+- Arbitrary local GGUF files still work through `senda serve --gguf`.
+- MoE split artifacts are cached under `~/.cache/senda/splits/`.
 
 ## Inspect local GPUs
 
 ```bash
-closedmesh gpus
-closedmesh gpus --json
-closedmesh gpu benchmark --json
+senda gpus
+senda gpus --json
+senda gpu benchmark --json
 ```
 
-This prints the local GPU inventory with stable IDs, backend device names, VRAM, unified-memory status, and cached bandwidth when a benchmark fingerprint is already present. Add `--json` for machine-readable inventory output, or run `closedmesh gpu benchmark --json` to refresh the cached fingerprint and print the benchmark summary as JSON.
+This prints the local GPU inventory with stable IDs, backend device names, VRAM, unified-memory status, and cached bandwidth when a benchmark fingerprint is already present. Add `--json` for machine-readable inventory output, or run `senda gpu benchmark --json` to refresh the cached fingerprint and print the benchmark summary as JSON.
 
 ## Local runtime control
 
 Stage one supports local-only hot load and unload on a running node.
 
 ```bash
-closedmesh load Llama-3.2-1B-Instruct-Q4_K_M
-closedmesh unload Llama-3.2-1B-Instruct-Q4_K_M
-closedmesh status
+senda load Llama-3.2-1B-Instruct-Q4_K_M
+senda unload Llama-3.2-1B-Instruct-Q4_K_M
+senda status
 ```
 
 Management API endpoints:

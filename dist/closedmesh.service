@@ -1,28 +1,28 @@
 [Unit]
-Description=ClosedMesh — private LLM mesh node
+Description=Senda — private LLM mesh node
 After=network-online.target
 Wants=network-online.target
 
-# Reference systemd user unit for ClosedMesh.
+# Reference systemd user unit for Senda.
 #
-# The official installer (`curl closedmesh.com/install | sh -s -- --service`)
+# The official installer (`curl senda.network/install | sh -s -- --service`)
 # generates this file with the right paths for your home directory at
-# ~/.config/systemd/user/closedmesh.service. This copy ships in the release
+# ~/.config/systemd/user/senda.service. This copy ships in the release
 # tarball as a reference.
 #
 # Replace HOME below with your home directory if you copy this manually,
 # then enable with:
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now closedmesh
+#   systemctl --user enable --now senda
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/closedmesh serve --auto --mesh-name closedmesh --headless
+ExecStart=%h/.local/bin/senda serve --auto --mesh-name senda --headless
 WorkingDirectory=%h
 Restart=on-failure
 RestartSec=5
-StandardOutput=append:%h/.local/state/closedmesh/stdout.log
-StandardError=append:%h/.local/state/closedmesh/stderr.log
+StandardOutput=append:%h/.local/state/senda/stdout.log
+StandardError=append:%h/.local/state/senda/stderr.log
 
 [Install]
 WantedBy=default.target

@@ -1,6 +1,6 @@
 # Plugins
 
-This document defines the `closedmesh` plugin architecture.
+This document defines the `senda` plugin architecture.
 
 It describes the target architecture, not just the code as it exists today.
 
@@ -8,7 +8,7 @@ As implementation lands, this document should be updated to match the intended e
 
 The main goals are:
 
-- keep `closedmesh` decoupled from specific plugins
+- keep `senda` decoupled from specific plugins
 - let bundled plugins be auto-registered without special-casing product behavior
 - make MCP and HTTP first-class host projections
 - support large request and response bodies without blocking control traffic
@@ -16,7 +16,7 @@ The main goals are:
 
 ## Design Summary
 
-A plugin is a local service process launched by `closedmesh`.
+A plugin is a local service process launched by `senda`.
 
 The system has three core pieces:
 
@@ -24,7 +24,7 @@ The system has three core pieces:
 - zero or more short-lived negotiated streams for large or streaming data
 - one declarative plugin manifest that the host `stapler` projects into MCP, HTTP, and optional promoted product APIs
 
-`closedmesh` remains the owner of:
+`senda` remains the owner of:
 
 - plugin lifecycle
 - local IPC
@@ -99,19 +99,19 @@ For large or streaming payloads, the host and plugin negotiate a short-lived sid
 
 ### 3. MCP Is A Host Projection
 
-`closedmesh` is the MCP server.
+`senda` is the MCP server.
 
 Plugins do not need to implement MCP JSON-RPC directly. They declare MCP-facing services in the manifest, and the host `stapler` exposes them over MCP.
 
 ### 4. HTTP Is A Host Projection
 
-`closedmesh` owns the HTTP server.
+`senda` owns the HTTP server.
 
 Plugins may declare HTTP bindings, but they do not need to run an HTTP server themselves. The host `stapler` maps HTTP requests onto plugin operations and resources.
 
 ### 5. Capabilities Are Stable Product Contracts
 
-When `closedmesh` wants a stable product API such as `/api/objects`, core should depend on a named capability like `object-store.v1`, not on a specific plugin ID like `blobstore`.
+When `senda` wants a stable product API such as `/api/objects`, core should depend on a named capability like `object-store.v1`, not on a specific plugin ID like `blobstore`.
 
 ## Architecture
 
@@ -212,7 +212,7 @@ Each section is self-contained. If a plugin contributes something to a host surf
 Example:
 
 ```rust
-use closedmesh_plugin::{
+use senda_plugin::{
     capability, plugin_server_info, PluginMetadata,
     http::{get, post},
     inference::openai_http,
@@ -220,7 +220,7 @@ use closedmesh_plugin::{
     PluginStartupPolicy,
 };
 
-let plugin = closedmesh_plugin::plugin! {
+let plugin = senda_plugin::plugin! {
     metadata: PluginMetadata::new(
         "notes",
         "1.0.0",
@@ -241,11 +241,11 @@ let plugin = closedmesh_plugin::plugin! {
     ],
 
     mesh: [
-        closedmesh_plugin::mesh::channel("notes.v1"),
+        senda_plugin::mesh::channel("notes.v1"),
     ],
 
     events: [
-        closedmesh_plugin::events::peer_up(),
+        senda_plugin::events::peer_up(),
     ],
 
     mcp: [
@@ -379,7 +379,7 @@ In practice:
 - attached external MCP servers are declared in the `mcp` section
 - attached or plugin-hosted inference backends are declared in the `inference` section
 
-`closedmesh` then talks to those services directly when appropriate.
+`senda` then talks to those services directly when appropriate.
 
 This keeps heavy data-plane traffic out of plugin IPC.
 
@@ -415,7 +415,7 @@ Preferred forms include:
 
 ### Why Endpoint Registration Exists
 
-Some services already speak a protocol that `closedmesh` knows how to use directly.
+Some services already speak a protocol that `senda` knows how to use directly.
 
 Examples:
 
@@ -430,7 +430,7 @@ In these cases, the plugin should remain the control-plane owner for:
 - readiness
 - availability
 
-But `closedmesh` should own the data plane when possible.
+But `senda` should own the data plane when possible.
 
 ### Health And Availability
 
@@ -559,7 +559,7 @@ This avoids collisions and keeps plugin-specific APIs out of the top-level produ
 
 ### Promoted Product Routes
 
-Some routes may become stable product APIs owned by `closedmesh`, for example:
+Some routes may become stable product APIs owned by `senda`, for example:
 
 - `/api/objects`
 
@@ -646,7 +646,7 @@ Capabilities are used when:
 - multiple plugins could satisfy the same role
 - the host wants to promote a route into the top-level API
 
-Capabilities are not required for every plugin. They are mainly for shared contracts that `closedmesh` itself depends on.
+Capabilities are not required for every plugin. They are mainly for shared contracts that `senda` itself depends on.
 
 Endpoint registration is related but distinct:
 
@@ -696,7 +696,7 @@ The plugin system should not require each plugin to:
 - run its own HTTP server
 - run its own MCP server
 - manually negotiate Unix socket paths in application code
-- hard-code core route registration in `closedmesh`
+- hard-code core route registration in `senda`
 
 The plugin system should also avoid:
 

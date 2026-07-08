@@ -9,7 +9,7 @@ on:
       - '.dockerignore'
       - 'Justfile'
       - 'docker/**'
-      - 'closedmesh/**'
+      - 'senda/**'
       - 'Cargo.toml'
       - 'Cargo.lock'
       - '.github/workflows/docker.yml'
@@ -24,7 +24,7 @@ env:
   # require fully-lowercase image references. Allow forks and renamed repos
   # to override this with a lowercase repo/org Actions variable while keeping
   # the current upstream path as the default.
-  IMAGE_NAME: ${{ vars.IMAGE_NAME || 'closedmesh/closedmesh' }}
+  IMAGE_NAME: ${{ vars.IMAGE_NAME || 'senda-network/senda' }}
 
 permissions:
   contents: read

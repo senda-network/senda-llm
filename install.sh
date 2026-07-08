@@ -2,26 +2,26 @@
 
 set -euo pipefail
 
-REPO="${CLOSEDMESH_INSTALL_REPO:-closedmesh/closedmesh-llm}"
-REPO_REF="${CLOSEDMESH_INSTALL_REF:-main}"
-INSTALL_DIR="${CLOSEDMESH_INSTALL_DIR:-$HOME/.local/bin}"
-INSTALL_FLAVOR="${CLOSEDMESH_INSTALL_FLAVOR:-}"
-INSTALL_PRERELEASE="${CLOSEDMESH_INSTALL_PRERELEASE:-0}"
-INSTALL_SERVICE="${CLOSEDMESH_INSTALL_SERVICE:-0}"
-INSTALL_SERVICE_ARGS="${CLOSEDMESH_INSTALL_SERVICE_ARGS:-}"
-INSTALL_SERVICE_START="${CLOSEDMESH_INSTALL_SERVICE_START:-1}"
+REPO="${SENDA_INSTALL_REPO:-senda-network/senda-llm}"
+REPO_REF="${SENDA_INSTALL_REF:-main}"
+INSTALL_DIR="${SENDA_INSTALL_DIR:-$HOME/.local/bin}"
+INSTALL_FLAVOR="${SENDA_INSTALL_FLAVOR:-}"
+INSTALL_PRERELEASE="${SENDA_INSTALL_PRERELEASE:-0}"
+INSTALL_SERVICE="${SENDA_INSTALL_SERVICE:-0}"
+INSTALL_SERVICE_ARGS="${SENDA_INSTALL_SERVICE_ARGS:-}"
+INSTALL_SERVICE_START="${SENDA_INSTALL_SERVICE_START:-1}"
 
-SERVICE_NAME="closedmesh"
-SERVICE_LABEL="com.closedmesh"
-MESH_CONFIG_FILE="$HOME/.closedmesh/config.toml"
-SERVICE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/closedmesh"
+SERVICE_NAME="senda"
+SERVICE_LABEL="com.senda"
+MESH_CONFIG_FILE="$HOME/.senda/config.toml"
+SERVICE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/senda"
 SERVICE_ENV_FILE="$SERVICE_CONFIG_DIR/service.env"
 SERVICE_RUNNER="$SERVICE_CONFIG_DIR/run-service.sh"
 SYSTEMD_UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 SYSTEMD_UNIT_PATH="$SYSTEMD_UNIT_DIR/$SERVICE_NAME.service"
 LAUNCHD_AGENT_DIR="$HOME/Library/LaunchAgents"
 LAUNCHD_PLIST_PATH="$LAUNCHD_AGENT_DIR/$SERVICE_LABEL.plist"
-LAUNCHD_LOG_DIR="$HOME/Library/Logs/closedmesh"
+LAUNCHD_LOG_DIR="$HOME/Library/Logs/senda"
 LAUNCHD_STDOUT_LOG="$LAUNCHD_LOG_DIR/stdout.log"
 LAUNCHD_STDERR_LOG="$LAUNCHD_LOG_DIR/stderr.log"
 DIST_DIR="dist"
@@ -62,12 +62,12 @@ Options:
   -h, --help                 Show this help text.
 
 Environment overrides:
-  CLOSEDMESH_INSTALL_DIR
-  CLOSEDMESH_INSTALL_FLAVOR
-  CLOSEDMESH_INSTALL_PRERELEASE=1
-  CLOSEDMESH_INSTALL_REF=main
-  CLOSEDMESH_INSTALL_SERVICE=1
-  CLOSEDMESH_INSTALL_SERVICE_START=0
+  SENDA_INSTALL_DIR
+  SENDA_INSTALL_FLAVOR
+  SENDA_INSTALL_PRERELEASE=1
+  SENDA_INSTALL_REF=main
+  SENDA_INSTALL_SERVICE=1
+  SENDA_INSTALL_SERVICE_START=0
 EOF
 }
 
@@ -81,7 +81,7 @@ parse_args() {
                 INSTALL_SERVICE=1
                 ;;
             --service-args)
-                echo "error: background services now run \`closedmesh serve\` and load startup models from $MESH_CONFIG_FILE" >&2
+                echo "error: background services now run \`senda serve\` and load startup models from $MESH_CONFIG_FILE" >&2
                 echo "Add startup models under [[models]] instead of passing custom service args." >&2
                 exit 1
                 ;;
@@ -104,8 +104,8 @@ parse_args() {
 }
 
 platform_os() {
-    if [[ -n "${CLOSEDMESH_TEST_UNAME_S:-}" ]]; then
-        printf '%s\n' "$CLOSEDMESH_TEST_UNAME_S"
+    if [[ -n "${SENDA_TEST_UNAME_S:-}" ]]; then
+        printf '%s\n' "$SENDA_TEST_UNAME_S"
         return 0
     fi
 
@@ -117,8 +117,8 @@ platform_arch() {
     local arch
 
     os="$(platform_os)"
-    if [[ -n "${CLOSEDMESH_TEST_UNAME_M:-}" ]]; then
-        arch="$CLOSEDMESH_TEST_UNAME_M"
+    if [[ -n "${SENDA_TEST_UNAME_M:-}" ]]; then
+        arch="$SENDA_TEST_UNAME_M"
     else
         arch="$(uname -m)"
     fi
@@ -355,17 +355,17 @@ asset_name() {
         supported)
             case "$(platform_id)" in
         Darwin/arm64)
-            echo "closedmesh-darwin-aarch64.tar.gz"
+            echo "senda-darwin-aarch64.tar.gz"
             ;;
         Linux/aarch64)
-            echo "closedmesh-linux-aarch64.tar.gz"
+            echo "senda-linux-aarch64.tar.gz"
             ;;
         Linux/x86_64)
             case "$flavor" in
-                cpu) echo "closedmesh-linux-x86_64.tar.gz" ;;
-                cuda) echo "closedmesh-linux-x86_64-cuda.tar.gz" ;;
-                rocm) echo "closedmesh-linux-x86_64-rocm.tar.gz" ;;
-                vulkan) echo "closedmesh-linux-x86_64-vulkan.tar.gz" ;;
+                cpu) echo "senda-linux-x86_64.tar.gz" ;;
+                cuda) echo "senda-linux-x86_64-cuda.tar.gz" ;;
+                rocm) echo "senda-linux-x86_64-rocm.tar.gz" ;;
+                vulkan) echo "senda-linux-x86_64-vulkan.tar.gz" ;;
                 *)
                     echo "error: unsupported Linux flavor '$flavor'" >&2
                     exit 1
@@ -474,7 +474,7 @@ release_url() {
 
 stale_binary_names() {
     cat <<'EOF'
-closedmesh
+senda
 rpc-server
 llama-server
 llama-moe-split
@@ -608,7 +608,7 @@ ensure_service_env_file() {
 
     mkdir -p "$(dirname "$SERVICE_ENV_FILE")"
     {
-        echo "# Optional environment variables for closedmesh."
+        echo "# Optional environment variables for senda."
         echo "# Use plain KEY=value lines."
         echo "# Example:"
         echo "# RUST_LOG=mesh_inference=debug"
@@ -623,11 +623,11 @@ write_service_runner() {
 
 set -euo pipefail
 
-BIN="$INSTALL_DIR/closedmesh"
+BIN="$INSTALL_DIR/senda"
 ENV_FILE="$SERVICE_ENV_FILE"
 
 if [[ ! -x "\$BIN" ]]; then
-    echo "closedmesh binary not found or not executable: \$BIN" >&2
+    echo "senda binary not found or not executable: \$BIN" >&2
     exit 1
 fi
 
@@ -655,10 +655,10 @@ install_systemd_service() {
     mkdir -p "$SERVICE_CONFIG_DIR" "$SYSTEMD_UNIT_DIR"
     ensure_service_env_file
     local exec_line
-    exec_line="ExecStart=$(systemd_quote_token "$INSTALL_DIR/closedmesh") serve"
+    exec_line="ExecStart=$(systemd_quote_token "$INSTALL_DIR/senda") serve"
 
     render_template_to_file "$SYSTEMD_TEMPLATE_PATH" "$SYSTEMD_UNIT_PATH" \
-        "ARGS_METADATA=# closedmesh serve (startup models come from $MESH_CONFIG_FILE)" \
+        "ARGS_METADATA=# senda serve (startup models come from $MESH_CONFIG_FILE)" \
         "SERVICE_ENV_FILE=$SERVICE_ENV_FILE" \
         "ENV_LINES=" \
         "EXEC_LINE=$exec_line"
@@ -739,8 +739,8 @@ install_service() {
 main() {
     parse_args "$@"
     if [[ -n "$INSTALL_SERVICE_ARGS" ]]; then
-        echo "error: background services now run \`closedmesh serve\` and load startup models from $MESH_CONFIG_FILE" >&2
-        echo "Add startup models under [[models]] instead of using CLOSEDMESH_INSTALL_SERVICE_ARGS." >&2
+        echo "error: background services now run \`senda serve\` and load startup models from $MESH_CONFIG_FILE" >&2
+        echo "Add startup models under [[models]] instead of using SENDA_INSTALL_SERVICE_ARGS." >&2
         exit 1
     fi
     need_cmd curl

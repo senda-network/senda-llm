@@ -4,9 +4,9 @@ import Foundation
 
 let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let swiftSDKRelativePath = "sdk/swift"
-let ffiXCFrameworkRelativePath = "\(swiftSDKRelativePath)/Generated/ClosedMeshFFI.xcframework"
+let ffiXCFrameworkRelativePath = "\(swiftSDKRelativePath)/Generated/SendaFFI.xcframework"
 let ffiXCFrameworkPath = "\(repoRoot)/\(ffiXCFrameworkRelativePath)"
-let remoteFFIXCFrameworkURL = "https://github.com/closedmesh/closedmesh-llm/releases/download/v0.66.79/ClosedMeshFFI.xcframework.zip"
+let remoteFFIXCFrameworkURL = "https://github.com/senda-network/senda-llm/releases/download/v0.66.79/SendaFFI.xcframework.zip"
 let remoteFFIXCFrameworkChecksum = "0824d0174aa6d64f54c1ea5bf15db6994b8f7780e4a4f05a4a1ab2f31cba122c"
 let forceStubFFI = ProcessInfo.processInfo.environment["MESH_SWIFT_FORCE_STUB"] == "1"
 let hasLocalFFIXCFramework = FileManager.default.fileExists(atPath: ffiXCFrameworkPath)
@@ -18,18 +18,18 @@ var meshLLMDependencies: [Target.Dependency] = []
 var packageTargets: [Target] = []
 
 if hasLocalFFIXCFramework {
-    meshLLMDependencies.append("ClosedMeshFFI")
+    meshLLMDependencies.append("SendaFFI")
     packageTargets.append(
         .binaryTarget(
-            name: "ClosedMeshFFI",
+            name: "SendaFFI",
             path: ffiXCFrameworkRelativePath
         )
     )
 } else if hasRemoteFFIXCFramework {
-    meshLLMDependencies.append("ClosedMeshFFI")
+    meshLLMDependencies.append("SendaFFI")
     packageTargets.append(
         .binaryTarget(
-            name: "ClosedMeshFFI",
+            name: "SendaFFI",
             url: remoteFFIXCFrameworkURL,
             checksum: remoteFFIXCFrameworkChecksum
         )
@@ -39,31 +39,31 @@ if hasLocalFFIXCFramework {
 let hasFFIBinaryTarget = hasLocalFFIXCFramework || hasRemoteFFIXCFramework
 
 let package = Package(
-    name: "ClosedMesh",
+    name: "Senda",
     platforms: [
         .iOS(.v16),
         .macOS(.v13),
     ],
     products: [
         .library(
-            name: "ClosedMesh",
-            targets: ["ClosedMesh"]
+            name: "Senda",
+            targets: ["Senda"]
         ),
     ],
     targets: [
         .target(
-            name: "ClosedMesh",
+            name: "Senda",
             dependencies: meshLLMDependencies,
-            path: "sdk/swift/Sources/ClosedMesh",
+            path: "sdk/swift/Sources/Senda",
             exclude: hasFFIBinaryTarget ? [] : ["Generated"],
             linkerSettings: [
                 .linkedFramework("SystemConfiguration"),
             ]
         ),
         .testTarget(
-            name: "ClosedMeshTests",
-            dependencies: ["ClosedMesh"],
-            path: "sdk/swift/Tests/ClosedMeshTests"
+            name: "SendaTests",
+            dependencies: ["Senda"],
+            path: "sdk/swift/Tests/SendaTests"
         ),
     ] + packageTargets
 )

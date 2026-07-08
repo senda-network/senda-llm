@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -ne 3 ]; then
-    echo "Usage: $0 <closedmesh-binary> <bin-dir> <model-path>" >&2
+    echo "Usage: $0 <senda-binary> <bin-dir> <model-path>" >&2
     exit 1
 fi
 

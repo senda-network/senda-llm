@@ -6,8 +6,8 @@ SWIFT_DIR="$REPO_ROOT/sdk/swift"
 FFI_DIR="$SWIFT_DIR/Generated/FFI"
 TARGET_DIR="$REPO_ROOT/target"
 XCFRAMEWORK_DIR="$SWIFT_DIR/Generated"
-FRAMEWORK_NAME="ClosedMeshFFI"
-GENERATED_SWIFT="$SWIFT_DIR/Sources/ClosedMesh/Generated/mesh_ffi.swift"
+FRAMEWORK_NAME="SendaFFI"
+GENERATED_SWIFT="$SWIFT_DIR/Sources/Senda/Generated/mesh_ffi.swift"
 
 echo "Building $FRAMEWORK_NAME XCFramework..."
 echo "Repo root: $REPO_ROOT"
@@ -133,8 +133,8 @@ create_framework() {
 
   # Copy static library as the framework binary (no extension)
   cp "$LIB_PATH" "$FRAMEWORK_DIR/$FRAMEWORK_NAME"
-  cp "$FFI_DIR/ClosedMeshFFI.h" "$FRAMEWORK_DIR/Headers/ClosedMeshFFI.h"
-  cp "$FFI_DIR/ClosedMeshFFI.modulemap" "$FRAMEWORK_DIR/Modules/module.modulemap"
+  cp "$FFI_DIR/SendaFFI.h" "$FRAMEWORK_DIR/Headers/SendaFFI.h"
+  cp "$FFI_DIR/SendaFFI.modulemap" "$FRAMEWORK_DIR/Modules/module.modulemap"
 
   # Embed PrivacyInfo.xcprivacy (required for App Store submission)
   if [ -f "$SWIFT_DIR/PrivacyInfo.xcprivacy" ]; then
@@ -151,9 +151,9 @@ create_framework() {
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.closedmesh.ClosedMeshFFI</string>
+    <string>network.senda.SendaFFI</string>
     <key>CFBundleName</key>
-    <string>ClosedMeshFFI</string>
+    <string>SendaFFI</string>
     <key>CFBundlePackageType</key>
     <string>FMWK</string>
     <key>CFBundleVersion</key>
@@ -207,11 +207,11 @@ if [ ! -d "$XCFW_OUT" ]; then
     <array>
         <dict>
             <key>BinaryPath</key>
-            <string>ClosedMeshFFI.framework/ClosedMeshFFI</string>
+            <string>SendaFFI.framework/SendaFFI</string>
             <key>LibraryIdentifier</key>
             <string>ios-arm64</string>
             <key>LibraryPath</key>
-            <string>ClosedMeshFFI.framework</string>
+            <string>SendaFFI.framework</string>
             <key>SupportedArchitectures</key>
             <array><string>arm64</string></array>
             <key>SupportedPlatform</key>
@@ -219,11 +219,11 @@ if [ ! -d "$XCFW_OUT" ]; then
         </dict>
         <dict>
             <key>BinaryPath</key>
-            <string>ClosedMeshFFI.framework/ClosedMeshFFI</string>
+            <string>SendaFFI.framework/SendaFFI</string>
             <key>LibraryIdentifier</key>
             <string>ios-arm64_x86_64-simulator</string>
             <key>LibraryPath</key>
-            <string>ClosedMeshFFI.framework</string>
+            <string>SendaFFI.framework</string>
             <key>SupportedArchitectures</key>
             <array><string>arm64</string><string>x86_64</string></array>
             <key>SupportedPlatform</key>
@@ -233,11 +233,11 @@ if [ ! -d "$XCFW_OUT" ]; then
         </dict>
         <dict>
             <key>BinaryPath</key>
-            <string>ClosedMeshFFI.framework/ClosedMeshFFI</string>
+            <string>SendaFFI.framework/SendaFFI</string>
             <key>LibraryIdentifier</key>
             <string>ios-arm64_x86_64-maccatalyst</string>
             <key>LibraryPath</key>
-            <string>ClosedMeshFFI.framework</string>
+            <string>SendaFFI.framework</string>
             <key>SupportedArchitectures</key>
             <array><string>arm64</string><string>x86_64</string></array>
             <key>SupportedPlatform</key>
@@ -247,11 +247,11 @@ if [ ! -d "$XCFW_OUT" ]; then
         </dict>
         <dict>
             <key>BinaryPath</key>
-            <string>ClosedMeshFFI.framework/ClosedMeshFFI</string>
+            <string>SendaFFI.framework/SendaFFI</string>
             <key>LibraryIdentifier</key>
             <string>macos-arm64_x86_64</string>
             <key>LibraryPath</key>
-            <string>ClosedMeshFFI.framework</string>
+            <string>SendaFFI.framework</string>
             <key>SupportedArchitectures</key>
             <array><string>arm64</string><string>x86_64</string></array>
             <key>SupportedPlatform</key>

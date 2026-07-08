@@ -1,17 +1,17 @@
 # CLI User Guide
 
-This is a practical user guide to the `closedmesh` CLI.
+This is a practical user guide to the `senda` CLI.
 It explains what to run for common tasks, then documents each command and switch.
 
-Catalog id definition: a catalog id is the model id shown in `closedmesh models recommended` (for example `Qwen3-0.6B-Q4_K_M`).
+Catalog id definition: a catalog id is the model id shown in `senda models recommended` (for example `Qwen3-0.6B-Q4_K_M`).
 
 ## Get help
 
 ```bash
-closedmesh --help
-closedmesh <command> --help
-closedmesh models --help
-closedmesh models <subcommand> --help
+senda --help
+senda <command> --help
+senda models --help
+senda models <subcommand> --help
 ```
 
 ## Start here (common tasks)
@@ -21,32 +21,32 @@ If you want to:
 1. Start serving right away:
 
 ```bash
-closedmesh serve --auto
+senda serve --auto
 ```
 
 2. Find a model you can run:
 
 ```bash
-closedmesh models search gemma --gguf
-closedmesh models search smoll --mlx
+senda models search gemma --gguf
+senda models search smoll --mlx
 ```
 
 3. Inspect a model before downloading:
 
 ```bash
-closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+senda models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
 ```
 
 4. Download a model:
 
 ```bash
-closedmesh models download unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+senda models download unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
 ```
 
 5. Check what is already installed:
 
 ```bash
-closedmesh models installed
+senda models installed
 ```
 
 ## Runtime entrypoints (`serve` / `client`)
@@ -56,9 +56,9 @@ If you want to start serving, join a mesh, or run as an API-only client, start h
 Examples:
 
 ```bash
-closedmesh serve
-closedmesh serve --model Qwen3-0.6B-Q4_K_M
-closedmesh client --auto
+senda serve
+senda serve --model Qwen3-0.6B-Q4_K_M
+senda client --auto
 ```
 
 Runtime switches:
@@ -124,9 +124,9 @@ Use this to find something you can actually download and run (GGUF or MLX).
 Usage:
 
 ```bash
-closedmesh models search gemma --gguf
-closedmesh models search smoll --mlx --limit 5
-closedmesh models search qwen --catalog
+senda models search gemma --gguf
+senda models search smoll --mlx --limit 5
+senda models search qwen --catalog
 ```
 
 Switches:
@@ -144,8 +144,8 @@ Use this when you want to sanity-check one exact model ref before you download o
 Usage:
 
 ```bash
-closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
-closedmesh models show mlx-community/SmolLM-135M-8bit
+senda models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+senda models show mlx-community/SmolLM-135M-8bit
 ```
 
 Switches:
@@ -159,8 +159,8 @@ Use this when you’re ready to download one specific resolved model.
 Usage:
 
 ```bash
-closedmesh models download unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
-closedmesh models download mlx-community/SmolLM-135M-8bit
+senda models download unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+senda models download mlx-community/SmolLM-135M-8bit
 ```
 
 Switches:
@@ -175,9 +175,9 @@ Use this when you want to check for new upstream revisions or refresh cached rep
 Usage:
 
 ```bash
-closedmesh models updates --check
-closedmesh models updates --all
-closedmesh models updates unsloth/gemma-4-31B-it-GGUF
+senda models updates --check
+senda models updates --all
+senda models updates unsloth/gemma-4-31B-it-GGUF
 ```
 
 Switches:
@@ -193,9 +193,9 @@ Use this to quickly download by built-in catalog ID or shorthand.
 Usage:
 
 ```bash
-closedmesh download
-closedmesh download 32b
-closedmesh download Qwen3-0.6B-Q4_K_M --draft
+senda download
+senda download 32b
+senda download Qwen3-0.6B-Q4_K_M --draft
 ```
 
 Switches:
@@ -204,10 +204,10 @@ Switches:
 
 ### `update`
 
-Use this to update closedmesh and exit.
+Use this to update senda and exit.
 
 Switches:
-- `--auto-update`: available on most commands; when set, closedmesh checks for a newer bundled release before proceeding.
+- `--auto-update`: available on most commands; when set, senda checks for a newer bundled release before proceeding.
 
 
 ### `gpus`
@@ -217,12 +217,12 @@ Use this to inspect local GPU identity and capacity, including per-device VRAM, 
 
 ### `load`
 
-Use this to load a model into an already-running local closedmesh runtime.
+Use this to load a model into an already-running local senda runtime.
 
 Usage:
 
 ```bash
-closedmesh load Qwen3-0.6B-Q4_K_M
+senda load Qwen3-0.6B-Q4_K_M
 ```
 
 Switches:
@@ -259,25 +259,25 @@ Switches:
 
 ### `goose`
 
-Use this to launch Goose already wired to closedmesh’s OpenAI-compatible endpoint.
+Use this to launch Goose already wired to senda’s OpenAI-compatible endpoint.
 
 Switches:
 
 - `--model <MODEL>`: model id from `/v1/models`.
-- `--port <PORT>`: closedmesh API port (default `9337`).
+- `--port <PORT>`: senda API port (default `9337`).
 
 ### `claude`
 
-Use this to launch Claude Code already wired to closedmesh’s OpenAI-compatible endpoint.
+Use this to launch Claude Code already wired to senda’s OpenAI-compatible endpoint.
 
 Switches:
 
 - `--model <MODEL>`: model id from `/v1/models`.
-- `--port <PORT>`: closedmesh API port (default `9337`).
+- `--port <PORT>`: senda API port (default `9337`).
 
 ### `opencode`
 
-Use this to launch OpenCode already wired to closedmesh’s OpenAI-compatible endpoint.
+Use this to launch OpenCode already wired to senda’s OpenAI-compatible endpoint.
 
 It injects a temporary OpenCode config through `OPENCODE_CONFIG_CONTENT` at launch time, so it does not edit persistent OpenCode config files unless you explicitly pass `--write`.
 
@@ -285,11 +285,11 @@ Switches:
 
 - `--model <MODEL>`: model id from `/v1/models`.
 - `--host <HOST|HOST:PORT|URL>`: OpenCode target host or URL (default `127.0.0.1:9337`). Bare host forms assume `http`, default inference port `9337`, and default management port `3131`.
-- `--write`: write a merged `~/.config/opencode/opencode.json` that preserves unrelated root keys and sibling providers. If only `opencode.jsonc` exists, closedmesh errors and tells you to rename or migrate it to `opencode.json` first.
+- `--write`: write a merged `~/.config/opencode/opencode.json` that preserves unrelated root keys and sibling providers. If only `opencode.jsonc` exists, senda errors and tells you to rename or migrate it to `opencode.json` first.
 
 ### `stop`
 
-Use this to stop local `closedmesh`, `llama-server`, and `rpc-server` processes.
+Use this to stop local `senda`, `llama-server`, and `rpc-server` processes.
 
 
 ### `blackboard`
@@ -299,10 +299,10 @@ Use this to post/search/read shared mesh notes, or to run blackboard as MCP over
 Usage:
 
 ```bash
-closedmesh blackboard
-closedmesh blackboard "STATUS: testing gguf resolution"
-closedmesh blackboard --search "gemma"
-closedmesh blackboard --mcp
+senda blackboard
+senda blackboard "STATUS: testing gguf resolution"
+senda blackboard --search "gemma"
+senda blackboard --mcp
 ```
 
 Switches:
@@ -371,16 +371,16 @@ Use this when you want to know whether a MoE model is likely to fit on your hard
 Usage:
 
 ```bash
-closedmesh moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
-closedmesh moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16
-closedmesh moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16 --json
+senda moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
+senda moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16
+senda moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16 --json
 ```
 
 Behavior:
 
-- Checks local closedmesh ranking cache first.
+- Checks local senda ranking cache first.
 - Checks `meshllm/moe-rankings` on Hugging Face and uses it when it provides a stronger ranking than local cache. If local and published rankings have the same analyzer strength, the local cache wins.
-- Keeps Hugging Face dataset files in the normal Hugging Face cache; it does not copy dataset artifacts into `~/.cache/closedmesh`.
+- Keeps Hugging Face dataset files in the normal Hugging Face cache; it does not copy dataset artifacts into `~/.cache/senda`.
 - Prefers `full-*` rankings over `micro-*` for the same model/distribution.
 - Prints ranking provenance clearly so you can see whether the planner used local cache, Hugging Face, or an explicit override.
 
@@ -398,7 +398,7 @@ Use this when you want to produce a full local MoE ranking for a model and cache
 Usage:
 
 ```bash
-closedmesh moe analyze full unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
+senda moe analyze full unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
 ```
 
 Behavior:
@@ -415,7 +415,7 @@ Use this when you want a faster local fallback ranking using the canonical micro
 Usage:
 
 ```bash
-closedmesh moe analyze micro unsloth/gemma-4-26B-A4B-it-GGUF:UD-IQ2_M
+senda moe analyze micro unsloth/gemma-4-26B-A4B-it-GGUF:UD-IQ2_M
 ```
 
 Behavior:
@@ -432,8 +432,8 @@ Use this to open a contribution PR for a local ranking artifact on the canonical
 Usage:
 
 ```bash
-closedmesh moe share unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
-closedmesh moe share unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --ranking-file ~/.cache/closedmesh/moe-rankings/local-gemma-4-26b-a4b-it-ud-q4_k_s.micro-p8-t128-all.csv
+senda moe share unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S
+senda moe share unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --ranking-file ~/.cache/senda/moe-rankings/local-gemma-4-26b-a4b-it-ud-q4_k_s.micro-p8-t128-all.csv
 ```
 
 Behavior:
@@ -457,39 +457,39 @@ Switches:
 
 Supported for `models show`, `models download`, and `serve --model`:
 
-1. Catalog id (an id from `closedmesh models recommended`):
+1. Catalog id (an id from `senda models recommended`):
 
 ```bash
-closedmesh models show Qwen3-0.6B-Q4_K_M
+senda models show Qwen3-0.6B-Q4_K_M
 ```
 
 2. HF repo or GGUF selector:
 
 ```bash
-closedmesh models show unsloth/gemma-4-31B-it-GGUF
-closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
+senda models show unsloth/gemma-4-31B-it-GGUF
+senda models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL
 ```
 
 3. HF URL:
 
 ```bash
-closedmesh models show https://huggingface.co/unsloth/gemma-4-31B-it-GGUF
+senda models show https://huggingface.co/unsloth/gemma-4-31B-it-GGUF
 ```
 
 4. Revision pin:
 
 ```bash
-closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL@main
-closedmesh models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL@<commit-sha>
-closedmesh models show mlx-community/SmolLM-135M-8bit@<commit-sha>
-closedmesh models show https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/tree/main
+senda models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL@main
+senda models show unsloth/gemma-4-31B-it-GGUF:UD-Q4_K_XL@<commit-sha>
+senda models show mlx-community/SmolLM-135M-8bit@<commit-sha>
+senda models show https://huggingface.co/unsloth/gemma-4-31B-it-GGUF/tree/main
 ```
 
 For MLX, use repo shorthand (not `/model`):
 
 ```bash
-closedmesh models show mlx-community/SmolLM-135M-8bit
-closedmesh models download mlx-community/SmolLM-135M-8bit
+senda models show mlx-community/SmolLM-135M-8bit
+senda models download mlx-community/SmolLM-135M-8bit
 ```
 
 ## Model resolution behavior
@@ -518,18 +518,18 @@ MLX behavior:
 
 ## Machine-readable output (`--json`)
 
-All `models` subcommands support `--json`. `closedmesh moe plan` also supports `--json`.
+All `models` subcommands support `--json`. `senda moe plan` also supports `--json`.
 
 Examples:
 
 ```bash
-closedmesh models search smoll --mlx --limit 1 --json | jq .
-closedmesh models show mlx-community/SmolLM-135M-8bit --json | jq .
-closedmesh models download Qwen3-0.6B-Q4_K_M --json | jq .
-closedmesh models installed --json | jq .
-closedmesh models recommended --json | jq .
-closedmesh models updates --check --json | jq .
-closedmesh moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16 --json | jq .
+senda models search smoll --mlx --limit 1 --json | jq .
+senda models show mlx-community/SmolLM-135M-8bit --json | jq .
+senda models download Qwen3-0.6B-Q4_K_M --json | jq .
+senda models installed --json | jq .
+senda models recommended --json | jq .
+senda models updates --check --json | jq .
+senda moe plan unsloth/gemma-4-26B-A4B-it-GGUF:UD-Q4_K_S --max-vram 16 --json | jq .
 ```
 
 Shape summary:

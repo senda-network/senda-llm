@@ -18,7 +18,7 @@ permissions:
   contents: write
 
 env:
-  CACHE_NAMESPACE: closedmesh
+  CACHE_NAMESPACE: senda
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
 
@@ -48,7 +48,7 @@ jobs:
         id: sha
         run: |
           old_sha="$(tr -d '[:space:]' < third_party/llama.cpp/upstream.txt)"
-          new_sha="$(tr -d '[:space:]' < .deps/llama.cpp/.git/closedmesh-upstream-sha)"
+          new_sha="$(tr -d '[:space:]' < .deps/llama.cpp/.git/senda-upstream-sha)"
           echo "old_sha=$old_sha" >> "$GITHUB_OUTPUT"
           echo "new_sha=$new_sha" >> "$GITHUB_OUTPUT"
           if [[ "$old_sha" == "$new_sha" ]]; then
@@ -89,7 +89,7 @@ jobs:
             echo "## ⚠️  llama.cpp patch drift detected"
             echo
             echo "Upstream moved \`${{ steps.sha.outputs.old_sha }}\` → \`${{ steps.sha.outputs.new_sha }}\`."
-            echo "One or more closedmesh patches no longer apply on the latest upstream."
+            echo "One or more senda patches no longer apply on the latest upstream."
             echo
             echo "### Failure excerpt"
             echo '```'
@@ -142,7 +142,7 @@ jobs:
 
       - name: Check embedded client dependency purity
         run: |
-          cargo tree -p closedmesh-client --prefix=none --no-dedupe > /tmp/mesh-client-deps.txt
+          cargo tree -p senda-client --prefix=none --no-dedupe > /tmp/mesh-client-deps.txt
           FORBIDDEN="keyring|rpassword|hf-hub|dirs|clap|include_dir|rmcp|keyring-core"
           if grep -E "^[[:space:]│├└─-]*($FORBIDDEN)([[:space:]]|$)" /tmp/mesh-client-deps.txt; then
             echo "ERROR: Forbidden dependency found in mesh-client"
@@ -151,16 +151,16 @@ jobs:
           fi
           echo "PASS: No forbidden dependencies found"
 
-      - name: Build closedmesh binary (debug)
-        run: cargo build -p closedmesh --bin closedmesh
+      - name: Build senda binary (debug)
+        run: cargo build -p senda --bin senda
 
       - name: Unit tests
         run: cargo test --lib --tests
 
       - name: Protocol compatibility matrix
         run: |
-          cargo test -p closedmesh --test protocol_compat_v0_client
-          cargo test -p closedmesh --test protocol_convert_matrix
+          cargo test -p senda --test protocol_compat_v0_client
+          cargo test -p senda --test protocol_convert_matrix
 
       - name: Prepare patched latest llama.cpp
         run: scripts/prepare-llama.sh "${{ needs.latest_upstream.outputs.new_sha }}"
@@ -186,18 +186,18 @@ jobs:
 
       - name: CLI smoke test
         run: |
-          target/debug/closedmesh --version
-          target/debug/closedmesh --help | head -5
+          target/debug/senda --version
+          target/debug/senda --help | head -5
 
       - name: Client-auto boot test
-        run: scripts/ci-client-auto-test.sh target/debug/closedmesh
+        run: scripts/ci-client-auto-test.sh target/debug/senda
 
       - name: Upload Linux inference binaries
         uses: actions/upload-artifact@v6
         with:
           name: llama-canary-linux-inference-binaries
           path: |
-            target/debug/closedmesh
+            target/debug/senda
             llama.cpp/build/bin/rpc-server
             llama.cpp/build/bin/llama-server
             llama.cpp/build/bin/llama-moe-analyze
@@ -214,7 +214,7 @@ jobs:
     uses: ./.github/workflows/smoke.yml
     with:
       artifact_name: llama-canary-linux-inference-binaries
-      mesh_binary_target: target/debug/closedmesh
+      mesh_binary_target: target/debug/senda
       cache_key_prefix: llama-canary-
       workflow_cache_file: .github/workflows/llama-upstream-canary.yml
       runs_on: '"ubuntu-latest"'

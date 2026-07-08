@@ -1,6 +1,6 @@
 # Contributing
 
-Join the [#closedmesh channel on the Goose Discord](https://discord.gg/goose-oss) for discussion and questions.
+Join the [#senda channel on the Goose Discord](https://discord.gg/goose-oss) for discussion and questions.
 
 This file covers local build and development workflows for this repository.
 
@@ -96,16 +96,16 @@ just bundle
 
 Use this two-terminal flow for UI development.
 
-Terminal A (run `closedmesh` yourself):
+Terminal A (run `senda` yourself):
 
 ```bash
-closedmesh --port 9337 --console 3131
+senda --port 9337 --console 3131
 ```
 
-If `closedmesh` is not on your `PATH`:
+If `senda` is not on your `PATH`:
 
 ```bash
-./target/release/closedmesh --port 9337 --console 3131
+./target/release/senda --port 9337 --console 3131
 ```
 
 Terminal B (run Vite with HMR):
@@ -161,8 +161,8 @@ For the repo's CI design rules and workflow responsibilities, see [`docs/CI_GUID
 
 | Changed paths                                                                                           | `linux` / `macos` | `linux_cuda` / `linux_rocm` / `linux_vulkan` / `windows` |
 | ------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------- |
-| `closedmesh/src/**`, `Cargo.*`, `Justfile`, `scripts/**`, `closedmesh/build.rs`, `closedmesh/plugin/**`, `closedmesh/tests/**`, `closedmesh/proto/**` | ✅ runs           | ✅ runs                                                  |
-| `closedmesh/ui/**`                                                                                        | ✅ runs           | ⏭ skipped                                               |
+| `senda/src/**`, `Cargo.*`, `Justfile`, `scripts/**`, `senda/build.rs`, `senda/plugin/**`, `senda/tests/**`, `senda/proto/**` | ✅ runs           | ✅ runs                                                  |
+| `senda/ui/**`                                                                                        | ✅ runs           | ⏭ skipped                                               |
 | `**/*.md`, `docs/**`, anything else                                                                     | ⏭ skipped        | ⏭ skipped                                               |
 | Manual `workflow_dispatch`                                                                              | ✅ runs           | ✅ runs                                                  |
 
@@ -170,7 +170,7 @@ For the repo's CI design rules and workflow responsibilities, see [`docs/CI_GUID
 
 To confirm builds are skipped on a docs-only change, open a PR and push a commit that touches only a `.md` file (e.g. add a blank line to `README.md`). All build jobs should appear as **Skipped** in the Actions tab — only the `changes` job runs.
 
-To confirm UI-only changes skip the GPU backend jobs, push a commit touching only `closedmesh/ui/**`. The `linux` and `macos` jobs run; `linux_cuda`, `linux_rocm`, `linux_vulkan`, and `windows` are skipped.
+To confirm UI-only changes skip the GPU backend jobs, push a commit touching only `senda/ui/**`. The `linux` and `macos` jobs run; `linux_cuda`, `linux_rocm`, `linux_vulkan`, and `windows` are skipped.
 
 ### Adding new paths
 
@@ -178,7 +178,7 @@ If you add a new Rust crate, build script, or test directory, add its path to th
 
 ## Benchmark Binaries
 
-Memory bandwidth benchmark source files live in `closedmesh/benchmarks/`. These are optional — they are **not** compiled by `just build`. Each target platform requires its own toolchain.
+Memory bandwidth benchmark source files live in `senda/benchmarks/`. These are optional — they are **not** compiled by `just build`. Each target platform requires its own toolchain.
 
 ### Building
 
@@ -197,15 +197,15 @@ just benchmark-build-hip-windows
 just benchmark-build-intel-windows
 ```
 
-These produce `.exe` binaries next to `closedmesh.exe`.
+These produce `.exe` binaries next to `senda.exe`.
 
-> **AMD note:** The AMD benchmark (`closedmesh/benchmarks/membench-fingerprint.hip`) has not been tested on real AMD hardware. The recipe is provided for reference only.
+> **AMD note:** The AMD benchmark (`senda/benchmarks/membench-fingerprint.hip`) has not been tested on real AMD hardware. The recipe is provided for reference only.
 
-> **Intel Arc note:** The Intel Arc benchmark (`closedmesh/benchmarks/membench-fingerprint-intel.cpp`) has not been tested on real Intel Arc hardware. The recipe is provided for reference only.
+> **Intel Arc note:** The Intel Arc benchmark (`senda/benchmarks/membench-fingerprint-intel.cpp`) has not been tested on real Intel Arc hardware. The recipe is provided for reference only.
 
 ### Output location
 
-All recipes output to `closedmesh/target/release/`, the same directory as the `closedmesh` binary. The `detect_bin_dir()` function in `closedmesh` probes that directory at runtime, so benchmark binaries are discovered automatically.
+All recipes output to `senda/target/release/`, the same directory as the `senda` binary. The `detect_bin_dir()` function in `senda` probes that directory at runtime, so benchmark binaries are discovered automatically.
 
 ### Including in release bundles (Apple Silicon)
 
@@ -218,19 +218,19 @@ just benchmark-build-apple && just bundle
 If the binary is not present, `just bundle` prints a note and continues without it — the bundle is still valid.
 
 CUDA, HIP, and Intel binaries are **not** included in the Unix tarball bundle; they must be compiled on the target platform.
-On Windows release packaging, any `membench-fingerprint*.exe` binaries present in `closedmesh/target/release/` are included automatically in the generated `.zip`.
+On Windows release packaging, any `membench-fingerprint*.exe` binaries present in `senda/target/release/` are included automatically in the generated `.zip`.
 
 ## Protocol Backward Compatibility
 
-Any change to `closedmesh/src/protocol/` or `mesh-client/src/protocol/` requires backward-compatibility tests before merging.
+Any change to `senda/src/protocol/` or `mesh-client/src/protocol/` requires backward-compatibility tests before merging.
 
 Embedded clients (iOS, macOS, Android) are permanently supported. Protocol changes that break embedded client compatibility are breaking changes.
 
 Run the protocol compatibility tests after any protocol change:
 
 ```bash
-cargo test -p closedmesh --test protocol_compat_v0_client
-cargo test -p closedmesh --test protocol_convert_matrix
+cargo test -p senda --test protocol_compat_v0_client
+cargo test -p senda --test protocol_convert_matrix
 ```
 
-See [`closedmesh/docs/EMBEDDED_CLIENT_ADR.md`](closedmesh/docs/EMBEDDED_CLIENT_ADR.md) for the full compatibility policy and rationale.
+See [`senda/docs/EMBEDDED_CLIENT_ADR.md`](senda/docs/EMBEDDED_CLIENT_ADR.md) for the full compatibility policy and rationale.

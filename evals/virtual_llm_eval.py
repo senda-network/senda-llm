@@ -3,8 +3,8 @@
 Virtual LLM eval — compare model answers with and without mesh hooks.
 
 Usage:
-    # Start closedmesh with hooks (normal mode):
-    closedmesh --model <path> --auto
+    # Start senda with hooks (normal mode):
+    senda --model <path> --auto
 
     # Run eval:
     python3 evals/virtual_llm_eval.py --port 9337

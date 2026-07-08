@@ -13,7 +13,7 @@ UDL="$REPO_ROOT/mesh-api-ffi/src/mesh_ffi.udl"
 KOTLIN_LIB_DIR="$REPO_ROOT/sdk/kotlin/src/main/kotlin/uniffi/mesh_ffi"
 KOTLIN_EXAMPLE_DIR="$REPO_ROOT/sdk/kotlin/example/example-jvm/src/main/kotlin/uniffi/mesh_ffi"
 
-BINDGEN_ROOT="${MESH_UNIFFI_BINDGEN_ROOT:-$HOME/.cache/closedmesh/uniffi-bindgen-0.31.0}"
+BINDGEN_ROOT="${MESH_UNIFFI_BINDGEN_ROOT:-$HOME/.cache/senda/uniffi-bindgen-0.31.0}"
 BINDGEN="$BINDGEN_ROOT/bin/uniffi-bindgen"
 
 if [ ! -x "$BINDGEN" ]; then

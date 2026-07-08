@@ -1,6 +1,6 @@
 # Plugins Plan
 
-This document tracks the implementation plan for the `closedmesh` plugin architecture defined in [PLUGINS.md](./PLUGINS.md).
+This document tracks the implementation plan for the `senda` plugin architecture defined in [PLUGINS.md](./PLUGINS.md).
 
 ## Sequencing Principles
 
@@ -72,7 +72,7 @@ This phase should deliver:
 Target behavior:
 
 - plugins do not implement MCP JSON-RPC directly
-- `closedmesh` remains the MCP server
+- `senda` remains the MCP server
 - external MCP endpoints can be aggregated later through the same host surface
 
 ### Phase 4: Manifest-Driven HTTP Bindings
@@ -129,7 +129,7 @@ Target behavior:
 
 - plugins can register local or managed OpenAI-compatible inference servers
 - plugins can register external MCP servers
-- `closedmesh` talks directly to those endpoints
+- `senda` talks directly to those endpoints
 - plugin IPC remains the control plane, not the data path
 
 ### Phase 7: Migrate Existing Built-Ins
@@ -168,9 +168,9 @@ These plugins should validate:
 
 The llama pluginization work should move the current local llama-style serving path behind the new plugin-hosted inference endpoint contract.
 
-The MLX plugin should then take inspiration from the in-process inference-server work in [PR #103](https://github.com/closedmesh/closedmesh-llm/pull/103), but implemented using the new plugin endpoint registration architecture rather than direct built-in runtime ownership in core.
+The MLX plugin should then take inspiration from the in-process inference-server work in [PR #103](https://github.com/senda-network/senda-llm/pull/103), but implemented using the new plugin endpoint registration architecture rather than direct built-in runtime ownership in core.
 
-After that, add an attached external inference plugin, with Lemonade as the first target for that mode. That should take inspiration from [PR #150](https://github.com/closedmesh/closedmesh-llm/pull/150), but implemented using endpoint registration rather than ad hoc `inference/register` notifications in the transport layer.
+After that, add an attached external inference plugin, with Lemonade as the first target for that mode. That should take inspiration from [PR #150](https://github.com/senda-network/senda-llm/pull/150), but implemented using endpoint registration rather than ad hoc `inference/register` notifications in the transport layer.
 
 ### Phase 9: Host-Owned Plugin Crypto API
 
@@ -252,7 +252,7 @@ The pluginized llama backend should prove that the current built-in serving path
 
 The MLX plugin should then prove that a second plugin-hosted backend can use the same contract while owning its own runtime behavior.
 
-Take implementation cues from the current llama runtime behavior first, and then from [PR #103](https://github.com/closedmesh/closedmesh-llm/pull/103):
+Take implementation cues from the current llama runtime behavior first, and then from [PR #103](https://github.com/senda-network/senda-llm/pull/103):
 
 - plugin-hosted local model serving with llama semantics
 - plugin-hosted local inference serving
@@ -320,9 +320,9 @@ When building and validating inference plugins, create an Ollama provider plugin
 
 The purpose of the Ollama provider plugin is to validate the inference endpoint registration model end to end:
 
-- plugin registers an inference endpoint with `closedmesh`
+- plugin registers an inference endpoint with `senda`
 - plugin reports endpoint health without becoming disabled when the endpoint is temporarily unavailable
-- `closedmesh` talks directly to the Ollama OpenAI-compatible endpoint rather than proxying inference through the plugin
+- `senda` talks directly to the Ollama OpenAI-compatible endpoint rather than proxying inference through the plugin
 - model discovery and routing work through the registered endpoint
 - endpoint recovery makes the provider available again automatically
 

@@ -1,12 +1,12 @@
-# release-closedmesh.ps1 — package the closedmesh binary for the closedmesh.com installer (Windows).
+# release-senda.ps1 — package the senda binary for the senda.network installer (Windows).
 #
-# Produces dist-release\closedmesh-windows-x86_64-<flavor>.zip, where <flavor>
-# is 'cuda' (vulkan/cpu wired up later). Mirrors scripts/release-closedmesh.sh
+# Produces dist-release\senda-windows-x86_64-<flavor>.zip, where <flavor>
+# is 'cuda' (vulkan/cpu wired up later). Mirrors scripts/release-senda.sh
 # for the macOS/Linux side.
 #
 # Bundle is SELF-CONTAINED and ships:
-#   - closedmesh.exe                          (target/release/, built by cargo)
-#   - rpc-server.exe / llama-server.exe       (.deps/llama.cpp/build/bin/, ClosedMesh-patched)
+#   - senda.exe                          (target/release/, built by cargo)
+#   - rpc-server.exe / llama-server.exe       (.deps/llama.cpp/build/bin/, Senda-patched)
 #   - llama-moe-analyze.exe / llama-moe-split.exe (same, MoE tools added by patch 0003)
 #   - all ggml-* / llama* / mtmd DLLs         (.deps/llama.cpp/build/bin/, when BUILD_SHARED_LIBS=ON)
 #   - cudart / cublas / cublasLt / nvrtc DLLs (CUDA toolkit redist, CUDA flavor only)
@@ -22,7 +22,7 @@
 # binaries instead.
 #
 # Usage:
-#   powershell -NoProfile -File scripts/release-closedmesh.ps1 -Flavor cuda [-OutputDir dist-release]
+#   powershell -NoProfile -File scripts/release-senda.ps1 -Flavor cuda [-OutputDir dist-release]
 
 [CmdletBinding()]
 param(
@@ -42,19 +42,19 @@ if (-not $OutputDir) { $OutputDir = $defaultDist }
 
 # Windows installer only ships x86_64 today; aarch64 (Snapdragon X) is future work.
 $platformSuffix = "windows-x86_64-$Flavor"
-$asset = "closedmesh-$platformSuffix.zip"
+$asset = "senda-$platformSuffix.zip"
 $zipPath = Join-Path $OutputDir $asset
 $shaPath = "$zipPath.sha256"
 
-$mesh        = Join-Path $repoRoot 'target\release\closedmesh.exe'
+$mesh        = Join-Path $repoRoot 'target\release\senda.exe'
 $llamaBinDir = Join-Path $repoRoot '.deps\llama.cpp\build\bin'
 
 if (-not (Test-Path -PathType Leaf $mesh)) {
-    Write-Error "release-closedmesh: built closedmesh.exe not found at $mesh. Run scripts/build-windows.ps1 -Backend $Flavor first."
+    Write-Error "release-senda: built senda.exe not found at $mesh. Run scripts/build-windows.ps1 -Backend $Flavor first."
     exit 1
 }
 if (-not (Test-Path -PathType Container $llamaBinDir)) {
-    Write-Error "release-closedmesh: patched llama.cpp build dir not found at $llamaBinDir. Run scripts/build-windows.ps1 -Backend $Flavor first."
+    Write-Error "release-senda: patched llama.cpp build dir not found at $llamaBinDir. Run scripts/build-windows.ps1 -Backend $Flavor first."
     exit 1
 }
 
@@ -105,16 +105,16 @@ function Resolve-CudaBinDir {
 
 $stage = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString()))
 try {
-    Copy-Item $mesh (Join-Path $stage 'closedmesh.exe')
+    Copy-Item $mesh (Join-Path $stage 'senda.exe')
 
     $licensePath = Join-Path $repoRoot 'LICENSE'
     if (Test-Path $licensePath) {
         Copy-Item $licensePath (Join-Path $stage 'LICENSE')
     }
 
-    $taskRef = Join-Path $repoRoot 'dist\closedmesh-task.xml'
+    $taskRef = Join-Path $repoRoot 'dist\senda-task.xml'
     if (Test-Path $taskRef) {
-        Copy-Item $taskRef (Join-Path $stage 'closedmesh-task.xml')
+        Copy-Item $taskRef (Join-Path $stage 'senda-task.xml')
     }
 
     foreach ($exe in @('rpc-server.exe', 'llama-server.exe', 'llama-moe-analyze.exe', 'llama-moe-split.exe')) {

@@ -1,5 +1,5 @@
 import XCTest
-@testable import ClosedMesh
+@testable import Senda
 
 final class MeshClientTests: XCTestCase {
     func testClientCreation() {

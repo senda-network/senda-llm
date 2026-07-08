@@ -10,8 +10,8 @@ public extension MeshClient {
     }
 }
 
-#if canImport(ClosedMeshFFI)
-import ClosedMeshFFI
+#if canImport(SendaFFI)
+import SendaFFI
 
 public final class EventStreamBridge: EventListener, @unchecked Sendable {
     private let continuation: AsyncThrowingStream<MeshEvent, Error>.Continuation

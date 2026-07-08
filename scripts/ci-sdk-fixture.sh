@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [ "$#" -lt 5 ]; then
-    echo "Usage: $0 <closedmesh-binary> <bin-dir> <model-path> -- <command...>" >&2
+    echo "Usage: $0 <senda-binary> <bin-dir> <model-path> -- <command...>" >&2
     exit 1
 fi
 
@@ -12,7 +12,7 @@ MODEL="$3"
 shift 3
 
 if [ "${1:-}" != "--" ]; then
-    echo "Usage: $0 <closedmesh-binary> <bin-dir> <model-path> -- <command...>" >&2
+    echo "Usage: $0 <senda-binary> <bin-dir> <model-path> -- <command...>" >&2
     exit 1
 fi
 shift
@@ -20,11 +20,11 @@ shift
 API_PORT="${MESH_SDK_API_PORT:-9347}"
 CONSOLE_PORT="${MESH_SDK_CONSOLE_PORT:-3141}"
 MAX_WAIT="${MESH_SDK_MAX_WAIT:-180}"
-LOG="${MESH_SDK_LOG:-/tmp/closedmesh-sdk-ci.log}"
+LOG="${MESH_SDK_LOG:-/tmp/senda-sdk-ci.log}"
 DEVICE="${MESH_SDK_DEVICE:-CPU}"
 
 echo "=== SDK Fixture ==="
-echo "  closedmesh:  $MESH_LLM"
+echo "  senda:  $MESH_LLM"
 echo "  bin-dir:   $BIN_DIR"
 echo "  model:     $MODEL"
 echo "  api port:  $API_PORT"
@@ -32,7 +32,7 @@ echo "  console:   $CONSOLE_PORT"
 echo "  device:    $DEVICE"
 
 if [ ! -x "$MESH_LLM" ]; then
-    echo "Missing closedmesh binary: $MESH_LLM" >&2
+    echo "Missing senda binary: $MESH_LLM" >&2
     exit 1
 fi
 
@@ -82,7 +82,7 @@ trap cleanup EXIT
 STATUS_JSON=""
 for i in $(seq 1 "$MAX_WAIT"); do
     if ! kill -0 "$MESH_PID" 2>/dev/null; then
-        echo "closedmesh exited unexpectedly" >&2
+        echo "senda exited unexpectedly" >&2
         tail -80 "$LOG" || true
         exit 1
     fi

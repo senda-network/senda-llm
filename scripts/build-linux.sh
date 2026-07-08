@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-linux.sh — build llama.cpp + closedmesh on Linux
+# build-linux.sh — build llama.cpp + senda on Linux
 #
 # Usage:
 #   scripts/build-linux.sh [--clean] [--backend cpu|cuda|rocm|vulkan] [--cuda-arch SM_LIST] [--rocm-arch GFX_LIST]
@@ -18,16 +18,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-LLAMA_DIR="${CLOSEDMESH_LLAMA_DIR:-$REPO_ROOT/.deps/llama.cpp}"
+LLAMA_DIR="${SENDA_LLAMA_DIR:-$REPO_ROOT/.deps/llama.cpp}"
 BUILD_DIR="$LLAMA_DIR/build"
-MESH_DIR="$REPO_ROOT/closedmesh"
+MESH_DIR="$REPO_ROOT/senda"
 UI_DIR="$MESH_DIR/ui"
 
 CLEAN=0
 BACKEND=""
 CUDA_ARCH=""
 ROCM_ARCH=""
-LLAMA_TARGETS="${CLOSEDMESH_LLAMA_TARGETS:-}"
+LLAMA_TARGETS="${SENDA_LLAMA_TARGETS:-}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -247,7 +247,7 @@ case "$BACKEND" in
         ;;
 esac
 
-LLAMA_WORKDIR="$LLAMA_DIR" "$SCRIPT_DIR/prepare-llama.sh" "${CLOSEDMESH_LLAMA_PIN_SHA:-pinned}"
+LLAMA_WORKDIR="$LLAMA_DIR" "$SCRIPT_DIR/prepare-llama.sh" "${SENDA_LLAMA_PIN_SHA:-pinned}"
 
 if [[ "$CLEAN" -eq 1 && -d "$BUILD_DIR" ]]; then
     echo "Cleaning build dir..."
@@ -287,16 +287,16 @@ elif [[ "$BACKEND" == "cuda" ]]; then
     # facing release artifacts must ship. Tracking:
     # https://github.com/ggml-org/llama.cpp/issues/20866
     #
-    # CI may opt out via CLOSEDMESH_CUDA_FA_ALL_QUANTS=off because ci.yml does
+    # CI may opt out via SENDA_CUDA_FA_ALL_QUANTS=off because ci.yml does
     # only a --version smoke test on the CUDA binary and never exercises the
     # asymmetric KV cache path. Dropping the flag shrinks the FlashAttention
     # kernel matrix drastically (~177 fattn .cu instantiations \u2192 a fraction)
     # and cuts llama.cpp CUDA compile time significantly. NEVER use this
     # opt-out for release builds.
     CUDA_FA_ALL_QUANTS_FLAG="-DGGML_CUDA_FA_ALL_QUANTS=ON"
-    if [[ "${CLOSEDMESH_CUDA_FA_ALL_QUANTS:-on}" == "off" ]]; then
+    if [[ "${SENDA_CUDA_FA_ALL_QUANTS:-on}" == "off" ]]; then
         CUDA_FA_ALL_QUANTS_FLAG="-DGGML_CUDA_FA_ALL_QUANTS=OFF"
-        echo "GGML_CUDA_FA_ALL_QUANTS disabled via CLOSEDMESH_CUDA_FA_ALL_QUANTS=off (CI opt-out)"
+        echo "GGML_CUDA_FA_ALL_QUANTS disabled via SENDA_CUDA_FA_ALL_QUANTS=off (CI opt-out)"
     fi
     cmake_flags+=(
         -DGGML_CUDA=ON
@@ -334,16 +334,16 @@ cmake "${cmake_flags[@]}"
 
 # Post-configure assertion: guarantee the CUDA cmake cache reflects the
 # intended GGML_CUDA_FA_ALL_QUANTS state. The default path must ship ON; the
-# CI opt-out must explicitly pass CLOSEDMESH_CUDA_FA_ALL_QUANTS=off. Tracking:
+# CI opt-out must explicitly pass SENDA_CUDA_FA_ALL_QUANTS=off. Tracking:
 # https://github.com/ggml-org/llama.cpp/issues/20866
 if [[ "$BACKEND" == "cuda" ]]; then
     EXPECTED_FA_ALL_QUANTS="ON"
-    if [[ "${CLOSEDMESH_CUDA_FA_ALL_QUANTS:-on}" == "off" ]]; then
+    if [[ "${SENDA_CUDA_FA_ALL_QUANTS:-on}" == "off" ]]; then
         EXPECTED_FA_ALL_QUANTS="OFF"
     fi
     if ! grep -q "^GGML_CUDA_FA_ALL_QUANTS:BOOL=${EXPECTED_FA_ALL_QUANTS}" "$BUILD_DIR/CMakeCache.txt"; then
         echo "ERROR: GGML_CUDA_FA_ALL_QUANTS is not ${EXPECTED_FA_ALL_QUANTS} in $BUILD_DIR/CMakeCache.txt" >&2
-        echo "       Expected state derived from CLOSEDMESH_CUDA_FA_ALL_QUANTS=${CLOSEDMESH_CUDA_FA_ALL_QUANTS:-on}." >&2
+        echo "       Expected state derived from SENDA_CUDA_FA_ALL_QUANTS=${SENDA_CUDA_FA_ALL_QUANTS:-on}." >&2
         echo "       Release builds MUST ship ON (asymmetric K/V cache crash risk)." >&2
         echo "       See scripts/build-linux.sh and ggml-org/llama.cpp#20866." >&2
         exit 1
@@ -372,16 +372,16 @@ if [[ -d "$MESH_DIR" ]]; then
         "$SCRIPT_DIR/build-ui.sh" "$UI_DIR"
     fi
 
-    # CLOSEDMESH_BUILD_PROFILE=dev|debug lets CI opt into dev profile (single
+    # SENDA_BUILD_PROFILE=dev|debug lets CI opt into dev profile (single
     # target subdir, only the bin target — same shape as linux+macos jobs).
     # Default stays release so local `just build` is unchanged.
-    if [[ "${CLOSEDMESH_BUILD_PROFILE:-release}" == "dev" || "${CLOSEDMESH_BUILD_PROFILE:-release}" == "debug" ]]; then
-        echo "Building closedmesh (profile: dev, bin only)..."
-        (cd "$REPO_ROOT" && cargo build -p closedmesh --bin closedmesh)
-        echo "Mesh binary: target/debug/closedmesh"
+    if [[ "${SENDA_BUILD_PROFILE:-release}" == "dev" || "${SENDA_BUILD_PROFILE:-release}" == "debug" ]]; then
+        echo "Building senda (profile: dev, bin only)..."
+        (cd "$REPO_ROOT" && cargo build -p senda --bin senda)
+        echo "Mesh binary: target/debug/senda"
     else
-        echo "Building closedmesh (profile: release)..."
+        echo "Building senda (profile: release)..."
         (cd "$MESH_DIR" && cargo build --release)
-        echo "Mesh binary: target/release/closedmesh"
+        echo "Mesh binary: target/release/senda"
     fi
 fi

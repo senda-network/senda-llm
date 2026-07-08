@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/* Official openai-node smoke against a closedmesh OpenAI-compatible endpoint. */
+/* Official openai-node smoke against a senda OpenAI-compatible endpoint. */
 
 const OpenAI = require('openai');
 
@@ -48,7 +48,7 @@ async function streamedText(stream) {
 async function main() {
   const args = parseArgs(process.argv);
   const client = new OpenAI({
-    apiKey: 'closedmesh-ci',
+    apiKey: 'senda-ci',
     baseURL: args.baseUrl,
   });
 

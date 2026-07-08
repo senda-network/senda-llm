@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ci-moe-mesh-test.sh — verify MoE expert sharding works end-to-end through a mesh.
 #
-# Starts two closedmesh nodes on the same machine with a small MoE model,
+# Starts two senda nodes on the same machine with a small MoE model,
 # forces the MoE split path with --split --max-vram 0.1, waits for the mesh
 # to form and both nodes to serve their expert shards, then verifies inference
 # works through both the host and a client node.
@@ -14,7 +14,7 @@
 #   - Mesh formation and MoE placement planning
 #   - Session hash-routed inference through the mesh
 #
-# Usage: scripts/ci-moe-mesh-test.sh <closedmesh-binary> <bin-dir> <model-path>
+# Usage: scripts/ci-moe-mesh-test.sh <senda-binary> <bin-dir> <model-path>
 
 set -euo pipefail
 
@@ -30,18 +30,18 @@ C_API_PORT=19214
 C_CONSOLE_PORT=19215
 MAX_WAIT=240
 MAX_INFERENCE_ATTEMPTS=15
-LOG_A=/tmp/closedmesh-moe-mesh-a.log
-LOG_B=/tmp/closedmesh-moe-mesh-b.log
-LOG_C=/tmp/closedmesh-moe-mesh-c.log
+LOG_A=/tmp/senda-moe-mesh-a.log
+LOG_B=/tmp/senda-moe-mesh-b.log
+LOG_C=/tmp/senda-moe-mesh-c.log
 
 echo "=== CI MoE Mesh Test ==="
-echo "  closedmesh:  $MESH_LLM"
+echo "  senda:  $MESH_LLM"
 echo "  bin-dir:   $BIN_DIR"
 echo "  model:     $MODEL"
 echo "  os:        $(uname -s)"
 
 if [ ! -f "$MESH_LLM" ]; then
-    echo "❌ Missing closedmesh binary: $MESH_LLM"
+    echo "❌ Missing senda binary: $MESH_LLM"
     exit 1
 fi
 if [ ! -f "$MODEL" ]; then
@@ -72,7 +72,7 @@ trap cleanup EXIT
 
 # Clear any cached MoE splits for this model so we exercise the full split path.
 MODEL_STEM=$(basename "$MODEL" .gguf)
-SPLIT_CACHE="$HOME/.cache/closedmesh/splits/${MODEL_STEM}"
+SPLIT_CACHE="$HOME/.cache/senda/splits/${MODEL_STEM}"
 if [ -d "$SPLIT_CACHE" ]; then
     echo "Clearing cached MoE splits: $SPLIT_CACHE"
     rm -rf "$SPLIT_CACHE"
@@ -81,7 +81,7 @@ fi
 # ── Start Node A ──
 echo ""
 echo "Starting Node A..."
-CLOSEDMESH_EPHEMERAL_KEY=1 "$MESH_LLM" \
+SENDA_EPHEMERAL_KEY=1 "$MESH_LLM" \
     serve \
     --model "$MODEL" \
     --split \
@@ -121,7 +121,7 @@ done
 # ── Start Node B ──
 echo ""
 echo "Starting Node B..."
-CLOSEDMESH_EPHEMERAL_KEY=1 "$MESH_LLM" \
+SENDA_EPHEMERAL_KEY=1 "$MESH_LLM" \
     serve \
     --model "$MODEL" \
     --split \
@@ -311,7 +311,7 @@ fi
 # ── Start Node C (client) and test routing through it ──
 echo ""
 echo "Starting Node C (client)..."
-CLOSEDMESH_EPHEMERAL_KEY=1 "$MESH_LLM" \
+SENDA_EPHEMERAL_KEY=1 "$MESH_LLM" \
     client \
     --no-draft \
     --bin-dir "$BIN_DIR" \

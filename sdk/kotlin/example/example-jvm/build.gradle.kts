@@ -7,7 +7,7 @@ kotlin {
     jvmToolchain(21)
 }
 
-group = "com.closedmesh.example"
+group = "network.senda.example"
 version = "0.1.0"
 
 repositories {
@@ -24,11 +24,11 @@ dependencies {
 sourceSets {
     main {
         kotlin {
-            srcDir("../../src/main/kotlin/com/closedmesh")
+            srcDir("../../src/main/kotlin/com/senda")
         }
     }
 }
 
 application {
-    mainClass.set("com.closedmesh.example.ExampleMainKt")
+    mainClass.set("network.senda.example.ExampleMainKt")
 }

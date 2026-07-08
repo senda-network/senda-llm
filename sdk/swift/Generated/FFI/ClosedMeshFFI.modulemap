@@ -1,5 +1,5 @@
-framework module ClosedMeshFFI {
-  header "ClosedMeshFFI.h"
+framework module SendaFFI {
+  header "SendaFFI.h"
   export *
   use "Darwin"
   use "_Builtin_stdbool"

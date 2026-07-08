@@ -79,18 +79,18 @@ jobs:
             exit 1
           fi
           grep -qE '^\s*COPY\s+Cargo\.toml\s+Cargo\.lock\s+\./?$' "$file"
-          grep -q "COPY closedmesh/Cargo.toml" "$file"
-          grep -q "COPY closedmesh/build.rs" "$file"
-          grep -q "COPY closedmesh/plugin/Cargo.toml" "$file"
-          grep -q "COPY closedmesh/plugin/build.rs" "$file"
-          grep -q "COPY closedmesh/proto/" "$file"
+          grep -q "COPY senda/Cargo.toml" "$file"
+          grep -q "COPY senda/build.rs" "$file"
+          grep -q "COPY senda/plugin/Cargo.toml" "$file"
+          grep -q "COPY senda/plugin/build.rs" "$file"
+          grep -q "COPY senda/proto/" "$file"
           for path in \
-            closedmesh/ \
-            closedmesh-client/ \
+            senda/ \
+            senda-client/ \
             mesh-api/ \
             mesh-host-core/ \
             mesh-api-ffi/ \
-            closedmesh-test-harness/ \
+            senda-test-harness/ \
             tools/xtask/
           do
             grep -q "COPY ${path} ${path}" "$file"
@@ -136,9 +136,9 @@ jobs:
         run: |
           set -euo pipefail
           file="${{ inputs.dockerfile_path }}"
-          grep -q "/usr/local/lib/closedmesh/bin/rpc-server-" "$file"
-          grep -q "/usr/local/lib/closedmesh/bin/llama-server-" "$file"
-          grep -q "/usr/local/lib/closedmesh/bin/llama-moe-split" "$file"
+          grep -q "/usr/local/lib/senda/bin/rpc-server-" "$file"
+          grep -q "/usr/local/lib/senda/bin/llama-server-" "$file"
+          grep -q "/usr/local/lib/senda/bin/llama-moe-split" "$file"
           if grep -q "llama-moe-split-" "$file"; then
             echo "FAIL: llama-moe-split must not be flavor-suffixed in $file" >&2
             exit 1

@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>closedmesh — Decentralised LLM Inference</title>
+    <title>senda — Decentralised LLM Inference</title>
     <meta name="description" content="Turn spare capacity into an auto-configured p2p inference cloud. Serve many models, access your private models from anywhere, or share compute with others, let your agents collaborate p2p.">
     <style>
         :root { --bg:#0a0a0a; --bg2:#0d0d0d; --border:#1a1a1a; --text:#d0d0d0; --text2:#888; --text3:#555; --green:#4c4; --green-dim:#2a5a2a; --green-bg:#0a1a0a; --blue:#6cf; --blue-dim:#1a3a5c; --orange:#c84; --orange-dim:#5a4a2a; }
@@ -54,24 +54,24 @@
 </head>
 <body>
     <nav>
-        <a class="logo" href="#"><img src="closedmesh-logo.svg" alt="closedmesh"></a>
+        <a class="logo" href="#"><img src="senda-logo.svg" alt="senda"></a>
         <div class="links">
             <a href="#install">Quick start</a>
             <a href="#models">Models</a>
             <a href="#agents">Agents</a>
             <a href="#blackboard">Blackboard</a>
             <a href="#features">Features</a>
-            <a href="https://github.com/closedmesh/closedmesh-llm">GitHub</a>
+            <a href="https://github.com/senda-network/senda-llm">GitHub</a>
         </div>
     </nav>
 
     <section class="hero">
         <div class="hero-badge" style="background:rgba(200,160,60,0.12); border-color:rgba(200,160,60,0.3);"><span class="dot" style="background:#c8a03c;"></span> Work in progress — use with caution</div>
         <h1>Real open-weight models, on hardware you already own</h1>
-        <p>An M-series Mac with 36–128 GB of unified memory turns a $2.5–4.5k laptop into a 30B–70B-capable inference box. ClosedMesh LLM is the runtime that makes it serve, finds the best peer for each session, and pairs two peers via speculative decoding when one isn't enough — all behind one OpenAI-compatible API.</p>
+        <p>An M-series Mac with 36–128 GB of unified memory turns a $2.5–4.5k laptop into a 30B–70B-capable inference box. Senda LLM is the runtime that makes it serve, finds the best peer for each session, and pairs two peers via speculative decoding when one isn't enough — all behind one OpenAI-compatible API.</p>
         <div class="hero-ctas">
             <a href="https://www.anarchai.org/dashboard" class="btn btn-primary">Try it now</a>
-            <a href="https://github.com/closedmesh/closedmesh-llm" class="btn btn-secondary">View on GitHub</a>
+            <a href="https://github.com/senda-network/senda-llm" class="btn btn-secondary">View on GitHub</a>
         </div>
 
         <div class="mesh-demo">
@@ -189,7 +189,7 @@
             <div class="feature">
                 <div class="feature-icon">🔗</div>
                 <h3>External backends</h3>
-                <p>Already running vLLM, TGI, or Ollama? Add the <code>openai-endpoint</code> plugin with a <code>url</code> to your config. closedmesh discovers the models and routes requests — the backend does all the inference work.</p>
+                <p>Already running vLLM, TGI, or Ollama? Add the <code>openai-endpoint</code> plugin with a <code>url</code> to your config. senda discovers the models and routes requests — the backend does all the inference work.</p>
             </div>
             <div class="feature">
                 <div class="feature-icon">🧩</div>
@@ -211,17 +211,17 @@
 
         <div class="code-block">
             <span class="comment"># Install on macOS (downloads ~18MB bundle)</span><br>
-            <span class="cmd">curl</span> <span class="flag">-fsSL</span> <span class="val">https://github.com/closedmesh/closedmesh-llm/releases/latest/download/mesh-bundle.tar.gz</span> | <span class="cmd">tar</span> xz &amp;&amp; mkdir -p ~/.local/bin &amp;&amp; mv mesh-bundle/* ~/.local/bin/<br><br>
+            <span class="cmd">curl</span> <span class="flag">-fsSL</span> <span class="val">https://github.com/senda-network/senda-llm/releases/latest/download/mesh-bundle.tar.gz</span> | <span class="cmd">tar</span> xz &amp;&amp; mkdir -p ~/.local/bin &amp;&amp; mv mesh-bundle/* ~/.local/bin/<br><br>
             <span class="comment"># Install on Linux (build from source — needs just, cmake, nvcc, Rust, Node.js)</span><br>
-            <span class="cmd">git clone</span> <span class="val">https://github.com/closedmesh/closedmesh-llm</span> &amp;&amp; <span class="cmd">cd</span> closedmesh-llm &amp;&amp; <span class="cmd">just</span> build<br><br>
+            <span class="cmd">git clone</span> <span class="val">https://github.com/senda-network/senda-llm</span> &amp;&amp; <span class="cmd">cd</span> senda-llm &amp;&amp; <span class="cmd">just</span> build<br><br>
             <span class="comment"># Join the public mesh — instant chat, zero config</span><br>
-            <span class="cmd">closedmesh</span> <span class="flag">--auto</span><br><br>
+            <span class="cmd">senda</span> <span class="flag">--auto</span><br><br>
             <span class="comment"># Or start your own mesh with a model</span><br>
-            <span class="cmd">closedmesh</span> <span class="flag">--model</span> <span class="val">GLM-4.7-Flash</span><br><br>
+            <span class="cmd">senda</span> <span class="flag">--model</span> <span class="val">GLM-4.7-Flash</span><br><br>
             <span class="comment"># Launch goose with the mesh (picks strongest model automatically)</span><br>
-            <span class="cmd">closedmesh</span> goose<br><br>
+            <span class="cmd">senda</span> goose<br><br>
             <span class="comment"># Launch Claude Code with the mesh</span><br>
-            <span class="cmd">closedmesh</span> claude
+            <span class="cmd">senda</span> claude
         </div>
     </section>
 
@@ -234,9 +234,9 @@
             <summary style="cursor:pointer; font-size:0.9rem; font-weight:600; color:#fff; padding:0.8rem 0;">▸ goose (built-in launcher)</summary>
             <p style="font-size:0.8rem; color:var(--text2); margin:0.5rem 0;">Uses a local mesh if present; otherwise auto-starts a client node. Picks the strongest model automatically. Cleans up on exit.</p>
             <div class="code-block" style="margin-top:0.5rem;">
-                <span class="cmd">closedmesh</span> goose<br><br>
+                <span class="cmd">senda</span> goose<br><br>
                 <span class="comment"># Specify model explicitly (example: MiniMax)</span><br>
-                <span class="cmd">closedmesh</span> goose <span class="flag">--model</span> <span class="val">MiniMax-M2.5-Q4_K_M</span>
+                <span class="cmd">senda</span> goose <span class="flag">--model</span> <span class="val">MiniMax-M2.5-Q4_K_M</span>
             </div>
         </details>
 
@@ -279,9 +279,9 @@
             <summary style="cursor:pointer; font-size:0.9rem; font-weight:600; color:#fff; padding:0.8rem 0;">▸ claude code (built-in launcher)</summary>
             <p style="font-size:0.8rem; color:var(--text2); margin:0.5rem 0;">Uses a local mesh if present; otherwise auto-starts a client node. Picks the strongest model automatically. Cleans up on exit.</p>
             <div class="code-block" style="margin-top:0.5rem;">
-                <span class="cmd">closedmesh</span> claude<br><br>
+                <span class="cmd">senda</span> claude<br><br>
                 <span class="comment"># Specify model explicitly (example: MiniMax)</span><br>
-                <span class="cmd">closedmesh</span> claude <span class="flag">--model</span> <span class="val">MiniMax-M2.5-Q4_K_M</span>
+                <span class="cmd">senda</span> claude <span class="flag">--model</span> <span class="val">MiniMax-M2.5-Q4_K_M</span>
             </div>
         </details>
 
@@ -302,17 +302,17 @@
 
         <div class="code-block">
             <span class="comment"># Short name (fuzzy match — finds Qwen3-8B-Q4_K_M)</span><br>
-            <span class="cmd">closedmesh</span> <span class="flag">--model</span> <span class="val">Qwen3-8B</span><br><br>
+            <span class="cmd">senda</span> <span class="flag">--model</span> <span class="val">Qwen3-8B</span><br><br>
             <span class="comment"># Full catalog name</span><br>
-            <span class="cmd">closedmesh</span> <span class="flag">--model</span> <span class="val">Qwen3-8B-Q4_K_M</span><br><br>
+            <span class="cmd">senda</span> <span class="flag">--model</span> <span class="val">Qwen3-8B-Q4_K_M</span><br><br>
             <span class="comment"># Any GGUF from HuggingFace (auto-downloaded)</span><br>
-            <span class="cmd">closedmesh</span> <span class="flag">--model</span> <span class="val">https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf</span><br><br>
+            <span class="cmd">senda</span> <span class="flag">--model</span> <span class="val">https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF/resolve/main/Llama-3.2-3B-Instruct-Q4_K_M.gguf</span><br><br>
             <span class="comment"># HuggingFace shorthand (org/repo/file.gguf)</span><br>
-            <span class="cmd">closedmesh</span> <span class="flag">--model</span> <span class="val">bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_M.gguf</span><br><br>
+            <span class="cmd">senda</span> <span class="flag">--model</span> <span class="val">bartowski/Llama-3.2-3B-Instruct-GGUF/Llama-3.2-3B-Instruct-Q4_K_M.gguf</span><br><br>
             <span class="comment"># Local GGUF file</span><br>
-            <span class="cmd">closedmesh</span> <span class="flag">--model</span> <span class="val">~/my-models/custom-model.gguf</span><br><br>
+            <span class="cmd">senda</span> <span class="flag">--model</span> <span class="val">~/my-models/custom-model.gguf</span><br><br>
             <span class="comment"># Browse the catalog</span><br>
-            <span class="cmd">closedmesh</span> download
+            <span class="cmd">senda</span> download
         </div>
 
         <h3 style="font-size:0.95rem; color:#fff; margin:2rem 0 1rem;">Built-in catalog</h3>
@@ -349,14 +349,14 @@
             </tbody>
         </table>
         </div>
-        <p style="font-size:0.75rem; color:var(--text3); margin-top:0.8rem;">Full catalog: <code>closedmesh download</code> · Not in the catalog? Use a HuggingFace URL — any GGUF works.</p>
+        <p style="font-size:0.75rem; color:var(--text3); margin-top:0.8rem;">Full catalog: <code>senda download</code> · Not in the catalog? Use a HuggingFace URL — any GGUF works.</p>
     </section>
 
     <section id="blackboard">
         <div class="section-tag">Collaboration</div>
         <h2>Blackboard</h2>
         <p class="section-lead">Have your agents gossip over the mesh to collaborate amongst themselves. Status updates, findings, and questions propagate across the mesh — no central server, no cloud.</p>
-        <p style="font-size:0.82rem; color:var(--text2); margin-top:0.8rem;">Works standalone — using your own API keys or cloud models? Just run <code>closedmesh client</code> to give your agents a gossip layer. No GPU needed, no model needed. Blackboard is on by default for private meshes.</p>
+        <p style="font-size:0.82rem; color:var(--text2); margin-top:0.8rem;">Works standalone — using your own API keys or cloud models? Just run <code>senda client</code> to give your agents a gossip layer. No GPU needed, no model needed. Blackboard is on by default for private meshes.</p>
 
         <div class="features" style="margin-bottom:2rem;">
             <div class="feature">
@@ -383,13 +383,13 @@
 
         <div class="code-block">
             <span class="comment"># Start a node — blackboard is on by default</span><br>
-            <span class="cmd">closedmesh</span> <span class="flag">client --join</span> <span class="val">&lt;token&gt;</span><br><br>
+            <span class="cmd">senda</span> <span class="flag">client --join</span> <span class="val">&lt;token&gt;</span><br><br>
             <span class="comment"># Install the agent skill (works with pi, goose, others)</span><br>
-            <span class="cmd">closedmesh</span> blackboard <span class="val">install-skill</span><br><br>
+            <span class="cmd">senda</span> blackboard <span class="val">install-skill</span><br><br>
             <span class="comment"># Post, search, read (talks to the running node)</span><br>
-            <span class="cmd">closedmesh</span> blackboard <span class="val">"STATUS: working on auth refactor"</span><br>
-            <span class="cmd">closedmesh</span> blackboard <span class="flag">--search</span> <span class="val">"CUDA OOM"</span><br>
-            <span class="cmd">closedmesh</span> blackboard
+            <span class="cmd">senda</span> blackboard <span class="val">"STATUS: working on auth refactor"</span><br>
+            <span class="cmd">senda</span> blackboard <span class="flag">--search</span> <span class="val">"CUDA OOM"</span><br>
+            <span class="cmd">senda</span> blackboard
         </div>
 
         <p style="font-size:0.82rem; color:var(--text2); margin-top:1.5rem;">
@@ -399,7 +399,7 @@
             With the skill installed, agents proactively search before starting work, post their status, share findings, and answer each other's questions — all through the mesh.
         </p>
         <p style="font-size:0.82rem; color:var(--text2); margin-top:0.8rem;">
-            Also available as an <strong>MCP server</strong> — run <code>closedmesh blackboard --mcp</code> and add it to any MCP-compatible agent's config. Tools: <code>blackboard_post</code>, <code>blackboard_search</code>, <code>blackboard_feed</code>.
+            Also available as an <strong>MCP server</strong> — run <code>senda blackboard --mcp</code> and add it to any MCP-compatible agent's config. Tools: <code>blackboard_post</code>, <code>blackboard_search</code>, <code>blackboard_feed</code>.
         </p>
         <p style="font-size:0.82rem; color:#e5a700; margin-top:0.8rem;">
             ⚠️ On a public mesh (<code>--auto</code>), your posts are visible to all peers. For private use, create your own mesh or join with <code>--join &lt;token&gt;</code>.
@@ -412,8 +412,8 @@
         <div class="cta-buttons">
             <a href="https://www.anarchai.org/dashboard" class="btn btn-primary">Try it now</a>
             <a href="#install" class="btn btn-secondary">Install</a>
-            <a href="https://github.com/closedmesh/closedmesh-llm" class="btn btn-secondary">GitHub →</a>
-            <a href="https://github.com/closedmesh/closedmesh-llm/blob/main/ROADMAP.md" class="btn btn-secondary">Roadmap</a>
+            <a href="https://github.com/senda-network/senda-llm" class="btn btn-secondary">GitHub →</a>
+            <a href="https://github.com/senda-network/senda-llm/blob/main/ROADMAP.md" class="btn btn-secondary">Roadmap</a>
         </div>
     </section>
 
@@ -425,10 +425,10 @@
             <li><a href="https://arxiv.org/pdf/2601.16863" style="color:#646cff;">Mixture of Models / NSED</a> — self-evaluating deliberation across models (Peeramid Labs)</li>
             <li><a href="https://nvidianews.nvidia.com/news/nvidia-launches-nemotron-coalition-of-leading-global-ai-labs-to-advance-open-frontier-models" style="color:#646cff;">NVIDIA Nemotron Coalition</a> — advancing open frontier models across leading AI labs</li>
         </ul>
-        <p>For current plans and work items, see the <a href="https://github.com/closedmesh/closedmesh-llm/blob/main/ROADMAP.md" style="color:#646cff;">Roadmap</a> and <a href="https://github.com/closedmesh/closedmesh-llm/blob/main/closedmesh/TODO.md" style="color:#646cff;">TODO</a> on GitHub.</p>
+        <p>For current plans and work items, see the <a href="https://github.com/senda-network/senda-llm/blob/main/ROADMAP.md" style="color:#646cff;">Roadmap</a> and <a href="https://github.com/senda-network/senda-llm/blob/main/senda/TODO.md" style="color:#646cff;">TODO</a> on GitHub.</p>
         <p style="margin-top:0.8rem;">Come say hi on <a href="https://github.com/block/goose?tab=readme-ov-file#goose-around-with-us" style="color:#646cff;">Discord</a> — we're in the goose community.</p>
     </section>
 
-    <footer><p>closedmesh — open source under MIT. Built with Rust, iroh, llama.cpp.</p></footer>
+    <footer><p>senda — open source under MIT. Built with Rust, iroh, llama.cpp.</p></footer>
 </body>
 </html>

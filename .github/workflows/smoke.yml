@@ -21,7 +21,7 @@ on:
         type: string
 
 env:
-  CACHE_NAMESPACE: closedmesh
+  CACHE_NAMESPACE: senda
   # Tiny model for integration tests (~138MB Q8_0, has chat template)
   MODEL_URL: https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/9e6855bc4be717fca1ef21360a1db4b29d5c559a/SmolLM2-135M-Instruct-Q8_0.gguf
   MODEL_FILE: SmolLM2-135M-Instruct-Q8_0.gguf
@@ -109,7 +109,7 @@ jobs:
         run: |
           # Note: `~` is not expanded inside GHA `env:` values, so set the
           # env var here in the run script where bash does the expansion.
-          export CLOSEDMESH_DRAFT_MODEL="$HOME/.models/$MODEL_FILE"
+          export SENDA_DRAFT_MODEL="$HOME/.models/$MODEL_FILE"
           scripts/ci-smoke-test.sh \
             "${{ inputs.mesh_binary_target }}" \
             llama.cpp/build/bin \

@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-16"?>
 <!--
-  Reference Windows Scheduled Task XML for ClosedMesh.
+  Reference Windows Scheduled Task XML for Senda.
 
-  The official installer (`iwr -useb closedmesh.com/install.ps1 | iex; closedmesh-install.ps1 --service`)
+  The official installer (`iwr -useb senda.network/install.ps1 | iex; senda-install.ps1 --service`)
   generates this with the right paths for your user account using
   Register-ScheduledTask. This copy ships in the release zip as a reference.
 
   Replace USERNAME below with your Windows username if you copy this manually,
   then import with:
-    schtasks /Create /XML closedmesh-task.xml /TN ClosedMesh
-    schtasks /Run /TN ClosedMesh
+    schtasks /Create /XML senda-task.xml /TN Senda
+    schtasks /Run /TN Senda
 -->
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>ClosedMesh — private LLM mesh node</Description>
-    <URI>\ClosedMesh</URI>
+    <Description>Senda — private LLM mesh node</Description>
+    <URI>\Senda</URI>
   </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
@@ -52,8 +52,8 @@
   </Settings>
   <Actions Context="Author">
     <Exec>
-      <Command>%LOCALAPPDATA%\closedmesh\bin\closedmesh.exe</Command>
-      <Arguments>serve --auto --mesh-name closedmesh --headless</Arguments>
+      <Command>%LOCALAPPDATA%\senda\bin\senda.exe</Command>
+      <Arguments>serve --auto --mesh-name senda --headless</Arguments>
       <WorkingDirectory>%USERPROFILE%</WorkingDirectory>
     </Exec>
   </Actions>

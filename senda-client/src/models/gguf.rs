@@ -1,0 +1,930 @@
+use std::io::{Read, Seek, SeekFrom};
+use std::path::Path;
+
+const MAX_GGUF_STRING_BYTES: u64 = 1_000_000;
+const MAX_GGUF_ARRAY_ELEMENTS: u64 = 1_000_000;
+const MAX_GGUF_ARRAY_DEPTH: u32 = 64;
+const MAX_GGUF_TENSOR_DIMS: u32 = 8;
+const MAX_GGUF_HEADER_KV_COUNT: usize = 1_000_000;
+const MAX_GGUF_TENSOR_COUNT: usize = 1_000_000;
+
+/// MoE info extracted from a GGUF file header.
+#[derive(Clone, Debug)]
+pub struct GgufMoeInfo {
+    pub expert_count: u32,
+    pub expert_used_count: u32,
+}
+
+/// GGUF value types (matching gguf.h enum).
+#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum GgufType {
+    Uint8 = 0,
+    Int8 = 1,
+    Uint16 = 2,
+    Int16 = 3,
+    Uint32 = 4,
+    Int32 = 5,
+    Float32 = 6,
+    Bool = 7,
+    String = 8,
+    Array = 9,
+    Uint64 = 10,
+    Int64 = 11,
+    Float64 = 12,
+}
+
+impl GgufType {
+    fn from_u32(v: u32) -> Option<Self> {
+        match v {
+            0 => Some(Self::Uint8),
+            1 => Some(Self::Int8),
+            2 => Some(Self::Uint16),
+            3 => Some(Self::Int16),
+            4 => Some(Self::Uint32),
+            5 => Some(Self::Int32),
+            6 => Some(Self::Float32),
+            7 => Some(Self::Bool),
+            8 => Some(Self::String),
+            9 => Some(Self::Array),
+            10 => Some(Self::Uint64),
+            11 => Some(Self::Int64),
+            12 => Some(Self::Float64),
+            _ => None,
+        }
+    }
+
+    fn fixed_size(self) -> Option<usize> {
+        match self {
+            Self::Uint8 | Self::Int8 | Self::Bool => Some(1),
+            Self::Uint16 | Self::Int16 => Some(2),
+            Self::Uint32 | Self::Int32 | Self::Float32 => Some(4),
+            Self::Uint64 | Self::Int64 | Self::Float64 => Some(8),
+            Self::String | Self::Array => None,
+        }
+    }
+}
+
+fn read_u32(f: &mut std::fs::File) -> std::io::Result<u32> {
+    let mut buf = [0u8; 4];
+    f.read_exact(&mut buf)?;
+    Ok(u32::from_le_bytes(buf))
+}
+
+fn read_u64(f: &mut std::fs::File) -> std::io::Result<u64> {
+    let mut buf = [0u8; 8];
+    f.read_exact(&mut buf)?;
+    Ok(u64::from_le_bytes(buf))
+}
+
+fn read_i32(f: &mut std::fs::File) -> std::io::Result<i32> {
+    let mut buf = [0u8; 4];
+    f.read_exact(&mut buf)?;
+    Ok(i32::from_le_bytes(buf))
+}
+
+fn read_i64(f: &mut std::fs::File) -> std::io::Result<i64> {
+    let mut buf = [0u8; 8];
+    f.read_exact(&mut buf)?;
+    Ok(i64::from_le_bytes(buf))
+}
+
+fn read_gguf_header_count(
+    f: &mut std::fs::File,
+    max: usize,
+    label: &str,
+) -> std::io::Result<usize> {
+    let value = read_i64(f)?;
+    let count = usize::try_from(value).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("negative {label}"))
+    })?;
+    if count > max {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{label} too large"),
+        ));
+    }
+    Ok(count)
+}
+
+fn read_bounded_len(f: &mut std::fs::File, max: u64, label: &str) -> std::io::Result<usize> {
+    let len = read_u64(f)?;
+    if len > max {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{label} too long"),
+        ));
+    }
+    usize::try_from(len).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("{label} too large"),
+        )
+    })
+}
+
+fn read_gguf_string(f: &mut std::fs::File) -> std::io::Result<String> {
+    let len = read_bounded_len(f, MAX_GGUF_STRING_BYTES, "string")?;
+    let mut buf = vec![0u8; len];
+    f.read_exact(&mut buf)?;
+    String::from_utf8(buf).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid UTF-8 in GGUF string",
+        )
+    })
+}
+
+fn skip_gguf_value(f: &mut std::fs::File, typ: GgufType) -> std::io::Result<()> {
+    skip_gguf_value_with_depth(f, typ, 0)
+}
+
+fn skip_gguf_value_with_depth(
+    f: &mut std::fs::File,
+    typ: GgufType,
+    depth: u32,
+) -> std::io::Result<()> {
+    match typ {
+        GgufType::String => {
+            let _ = read_gguf_string(f)?;
+        }
+        GgufType::Array => {
+            if depth >= MAX_GGUF_ARRAY_DEPTH {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "GGUF nesting too deep",
+                ));
+            }
+            let elem_type = GgufType::from_u32(read_u32(f)?).ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, "bad array type")
+            })?;
+            let count = read_bounded_len(f, MAX_GGUF_ARRAY_ELEMENTS, "array")?;
+            for _ in 0..count {
+                skip_gguf_value_with_depth(f, elem_type, depth + 1)?;
+            }
+        }
+        other => {
+            let size = other.fixed_size().unwrap_or(0);
+            f.seek(SeekFrom::Current(size as i64))?;
+        }
+    }
+    Ok(())
+}
+
+fn read_gguf_value_as_u32(f: &mut std::fs::File, typ: GgufType) -> std::io::Result<Option<u32>> {
+    match typ {
+        GgufType::Uint32 => Ok(Some(read_u32(f)?)),
+        GgufType::Int32 => {
+            let value = read_i32(f)?;
+            let value = u32::try_from(value).map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "negative Int32 where unsigned GGUF value was expected",
+                )
+            })?;
+            Ok(Some(value))
+        }
+        GgufType::Uint16 => {
+            let mut buf = [0u8; 2];
+            f.read_exact(&mut buf)?;
+            Ok(Some(u16::from_le_bytes(buf) as u32))
+        }
+        GgufType::Uint8 => {
+            let mut buf = [0u8; 1];
+            f.read_exact(&mut buf)?;
+            Ok(Some(buf[0] as u32))
+        }
+        _ => {
+            skip_gguf_value(f, typ)?;
+            Ok(None)
+        }
+    }
+}
+
+fn read_gguf_value_as_f32(f: &mut std::fs::File, typ: GgufType) -> std::io::Result<Option<f32>> {
+    match typ {
+        GgufType::Float32 => {
+            let mut buf = [0u8; 4];
+            f.read_exact(&mut buf)?;
+            Ok(Some(f32::from_le_bytes(buf)))
+        }
+        _ => {
+            skip_gguf_value(f, typ)?;
+            Ok(None)
+        }
+    }
+}
+
+fn read_gguf_value_as_string_opt(
+    f: &mut std::fs::File,
+    typ: GgufType,
+) -> std::io::Result<Option<String>> {
+    match typ {
+        GgufType::String => Ok(Some(read_gguf_string(f)?)),
+        _ => {
+            skip_gguf_value(f, typ)?;
+            Ok(None)
+        }
+    }
+}
+
+/// Detect MoE parameters from a GGUF file by reading its header KV pairs.
+///
+/// Scans for `*.expert_count` and `*.expert_used_count` keys.
+/// Returns None if the file isn't MoE (no expert_count or expert_count <= 1).
+/// Takes ~1ms for typical GGUF files and only reads the header, not tensor data.
+pub fn detect_moe(path: &Path) -> Option<GgufMoeInfo> {
+    let mut f = std::fs::File::open(path).ok()?;
+
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).ok()?;
+    if &magic != b"GGUF" {
+        return None;
+    }
+
+    let version = read_u32(&mut f).ok()?;
+    if version < 2 {
+        return None;
+    }
+
+    let _n_tensors = read_gguf_header_count(&mut f, MAX_GGUF_TENSOR_COUNT, "tensor count").ok()?;
+    let n_kv = read_gguf_header_count(&mut f, MAX_GGUF_HEADER_KV_COUNT, "KV count").ok()?;
+
+    let mut expert_count: Option<u32> = None;
+    let mut expert_used_count: Option<u32> = None;
+
+    for _ in 0..n_kv {
+        let key = read_gguf_string(&mut f).ok()?;
+        let vtype = GgufType::from_u32(read_u32(&mut f).ok()?)?;
+
+        if key.ends_with(".expert_count") {
+            expert_count = read_gguf_value_as_u32(&mut f, vtype).ok()?;
+        } else if key.ends_with(".expert_used_count") {
+            expert_used_count = read_gguf_value_as_u32(&mut f, vtype).ok()?;
+        } else {
+            skip_gguf_value(&mut f, vtype).ok()?;
+        }
+
+        if expert_count.is_some() && expert_used_count.is_some() {
+            break;
+        }
+    }
+
+    match (expert_count, expert_used_count) {
+        (Some(ec), Some(euc)) if ec > 1 => Some(GgufMoeInfo {
+            expert_count: ec,
+            expert_used_count: euc,
+        }),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct GgufCompactMeta {
+    pub architecture: String,
+    pub context_length: u32,
+    pub vocab_size: u32,
+    pub embedding_size: u32,
+    pub head_count: u32,
+    pub layer_count: u32,
+    pub feed_forward_length: u32,
+    pub key_length: u32,
+    pub value_length: u32,
+    /// Number of KV heads (GQA). `None` when the GGUF omits
+    /// `.attention.head_count_kv`; callers fall back to `head_count`, which is
+    /// the conservative direction for sizing (over-counts KV).
+    pub head_count_kv: Option<u32>,
+    pub tokenizer_model_name: String,
+    pub rope_scale: f32,
+    pub rope_freq_base: f32,
+    pub expert_count: u32,
+    pub expert_used_count: u32,
+}
+
+impl GgufCompactMeta {
+    /// Bytes the K cache consumes per token across all layers under f16.
+    /// `None` when required structural fields are missing/zero, so callers can
+    /// fall back rather than trust a bogus zero.
+    pub fn k_cache_bytes_per_token_f16(&self) -> Option<u64> {
+        if self.layer_count == 0 || self.key_length == 0 {
+            return None;
+        }
+        // GQA: kv_heads ≤ q_heads. Fall back to the full head count when the
+        // GGUF omits head_count_kv (over-counts KV — the safe direction).
+        let kv_heads = self.head_count_kv.unwrap_or(self.head_count) as u64;
+        if kv_heads == 0 {
+            return None;
+        }
+        Some(kv_heads * self.key_length as u64 * 2 /* f16 */ * self.layer_count as u64)
+    }
+
+    /// Bytes the V cache consumes per token across all layers under f16.
+    /// `None` when required structural fields are missing/zero.
+    pub fn v_cache_bytes_per_token_f16(&self) -> Option<u64> {
+        if self.layer_count == 0 || self.value_length == 0 {
+            return None;
+        }
+        let kv_heads = self.head_count_kv.unwrap_or(self.head_count) as u64;
+        if kv_heads == 0 {
+            return None;
+        }
+        Some(kv_heads * self.value_length as u64 * 2 /* f16 */ * self.layer_count as u64)
+    }
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct GgufTensorByteProfile {
+    pub expert_count: u32,
+    pub expert_used_count: u32,
+    pub full_model_bytes: u64,
+    pub base_resident_bytes: u64,
+    pub expert_tensor_bytes: u64,
+    pub file_overhead_bytes: u64,
+}
+
+#[derive(Clone, Debug)]
+struct GgufTensorInfo {
+    name: String,
+    offset: u64,
+}
+
+/// Scan a GGUF file header and return compact structural metadata.
+/// Reads only the KV section, never tensor data. Returns None on any parse failure.
+pub fn scan_gguf_compact_meta(path: &Path) -> Option<GgufCompactMeta> {
+    let mut f = std::fs::File::open(path).ok()?;
+
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).ok()?;
+    if &magic != b"GGUF" {
+        return None;
+    }
+    let version = read_u32(&mut f).ok()?;
+    if version < 2 {
+        return None;
+    }
+    let _n_tensors = read_gguf_header_count(&mut f, MAX_GGUF_TENSOR_COUNT, "tensor count").ok()?;
+    let n_kv = read_gguf_header_count(&mut f, MAX_GGUF_HEADER_KV_COUNT, "KV count").ok()?;
+
+    let mut meta = GgufCompactMeta::default();
+    let mut kv_head_count: u32 = 0;
+
+    for _ in 0..n_kv {
+        let key = read_gguf_string(&mut f).ok()?;
+        let vtype = GgufType::from_u32(read_u32(&mut f).ok()?)?;
+
+        if key == "general.architecture" {
+            meta.architecture = read_gguf_value_as_string_opt(&mut f, vtype).ok()??;
+        } else if key == "tokenizer.ggml.model" {
+            meta.tokenizer_model_name = read_gguf_value_as_string_opt(&mut f, vtype).ok()??;
+        } else if key.ends_with(".context_length") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.context_length = v;
+            }
+        } else if key.ends_with(".embedding_length") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.embedding_size = v;
+            }
+        } else if key.ends_with(".head_count") && !key.ends_with("_kv") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.head_count = v;
+            }
+        } else if key.ends_with(".attention.head_count_kv") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                kv_head_count = v;
+                meta.head_count_kv = Some(v);
+            }
+        } else if key.ends_with(".block_count") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.layer_count = v;
+            }
+        } else if key.ends_with(".feed_forward_length") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.feed_forward_length = v;
+            }
+        } else if key.ends_with(".attention.key_length") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.key_length = v;
+            }
+        } else if key.ends_with(".attention.value_length") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.value_length = v;
+            }
+        } else if key.ends_with(".rope.scale") {
+            if let Ok(Some(v)) = read_gguf_value_as_f32(&mut f, vtype) {
+                meta.rope_scale = v;
+            }
+        } else if key.ends_with(".rope.freq_base") {
+            if let Ok(Some(v)) = read_gguf_value_as_f32(&mut f, vtype) {
+                meta.rope_freq_base = v;
+            }
+        } else if key.ends_with(".vocab_size") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.vocab_size = v;
+            }
+        } else if key.ends_with(".expert_count") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.expert_count = v;
+            }
+        } else if key.ends_with(".expert_used_count") {
+            if let Ok(Some(v)) = read_gguf_value_as_u32(&mut f, vtype) {
+                meta.expert_used_count = v;
+            }
+        } else {
+            skip_gguf_value(&mut f, vtype).ok()?;
+        }
+    }
+
+    if meta.head_count > 0 {
+        if meta.key_length == 0 {
+            if let Some(key_length) = meta.embedding_size.checked_div(meta.head_count) {
+                meta.key_length = key_length;
+            }
+        }
+        if meta.value_length == 0 {
+            let effective_kv = if kv_head_count > 0 {
+                kv_head_count
+            } else {
+                meta.head_count
+            };
+            if let Some(value_length) = meta.embedding_size.checked_div(effective_kv) {
+                meta.value_length = value_length;
+            }
+        }
+    }
+
+    Some(meta)
+}
+
+fn align_offset(value: u64, alignment: u32) -> u64 {
+    let alignment = u64::from(alignment.max(1));
+    let remainder = value % alignment;
+    if remainder == 0 {
+        value
+    } else {
+        value + (alignment - remainder)
+    }
+}
+
+fn read_tensor_infos(
+    f: &mut std::fs::File,
+    n_tensors: usize,
+) -> std::io::Result<Vec<GgufTensorInfo>> {
+    let mut tensors = Vec::new();
+    tensors.try_reserve(n_tensors).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "GGUF tensor count requires too much memory",
+        )
+    })?;
+    for _ in 0..n_tensors {
+        let name = read_gguf_string(f)?;
+        let n_dims = read_u32(f)?;
+        if n_dims > MAX_GGUF_TENSOR_DIMS {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "too many GGUF tensor dimensions",
+            ));
+        }
+        for _ in 0..n_dims {
+            let _ = read_u64(f)?;
+        }
+        let _ = read_u32(f)?;
+        let offset = read_u64(f)?;
+        tensors.push(GgufTensorInfo { name, offset });
+    }
+    Ok(tensors)
+}
+
+fn is_expert_partitioned_tensor(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("shared_expert") || lower.contains("sharedexpert") || lower.contains("shexp")
+    {
+        return false;
+    }
+
+    lower.contains("ffn_gate_exps")
+        || lower.contains("ffn_up_exps")
+        || lower.contains("ffn_down_exps")
+        || lower.contains("exp_probs")
+        || lower.contains(".expert")
+        || lower.contains("_expert")
+}
+
+/// Cheap header-only enumeration of every tensor name in a GGUF file.
+///
+/// Reads only the magic, KV section, and tensor-info table — never tensor
+/// data — so this is safe to call on multi-GB files. Returns `None` on
+/// any parse failure (missing magic, truncated header, malformed table).
+///
+/// Used by [`crate::inference::moe`] to validate the output of
+/// `llama-moe-split` before launching `llama-server` against the shard.
+/// Issue
+/// [senda-network/senda-llm#7](https://github.com/senda-network/senda-llm/issues/7)
+/// documented the failure mode where the splitter exits 0 but produces a
+/// shard missing every `blk.<L>.ffn_*_exps.weight`; llama-server then
+/// crash-loops on `error loading model: missing tensor 'blk.0.ffn_down_exps.weight'`.
+pub fn scan_gguf_tensor_names(path: &Path) -> Option<Vec<String>> {
+    let mut f = std::fs::File::open(path).ok()?;
+
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).ok()?;
+    if &magic != b"GGUF" {
+        return None;
+    }
+    let version = read_u32(&mut f).ok()?;
+    if version < 2 {
+        return None;
+    }
+
+    let n_tensors = read_gguf_header_count(&mut f, MAX_GGUF_TENSOR_COUNT, "tensor count").ok()?;
+    let n_kv = read_gguf_header_count(&mut f, MAX_GGUF_HEADER_KV_COUNT, "KV count").ok()?;
+
+    for _ in 0..n_kv {
+        let _key = read_gguf_string(&mut f).ok()?;
+        let vtype = GgufType::from_u32(read_u32(&mut f).ok()?)?;
+        skip_gguf_value(&mut f, vtype).ok()?;
+    }
+
+    let tensors = read_tensor_infos(&mut f, n_tensors).ok()?;
+    Some(tensors.into_iter().map(|t| t.name).collect())
+}
+
+/// Returns true iff `name` is one of the per-expert FFN tensor names that
+/// llama.cpp expects on every layer of an MoE model. Mirrors the local
+/// `is_expert_partitioned_tensor` heuristic, but exposed publicly so the
+/// runtime crate can use it for shard validation.
+pub fn is_expert_tensor_name(name: &str) -> bool {
+    is_expert_partitioned_tensor(name)
+}
+
+/// Scan GGUF tensor metadata and estimate which bytes are always resident versus
+/// expert-partitioned. Reads only the header and tensor-info tables.
+pub fn scan_gguf_tensor_byte_profile(path: &Path) -> Option<GgufTensorByteProfile> {
+    let mut f = std::fs::File::open(path).ok()?;
+    let file_len = f.metadata().ok()?.len();
+
+    let mut magic = [0u8; 4];
+    f.read_exact(&mut magic).ok()?;
+    if &magic != b"GGUF" {
+        return None;
+    }
+    let version = read_u32(&mut f).ok()?;
+    if version < 2 {
+        return None;
+    }
+
+    let n_tensors = read_gguf_header_count(&mut f, MAX_GGUF_TENSOR_COUNT, "tensor count").ok()?;
+    let n_kv = read_gguf_header_count(&mut f, MAX_GGUF_HEADER_KV_COUNT, "KV count").ok()?;
+
+    let mut expert_count = 0u32;
+    let mut expert_used_count = 0u32;
+    let mut alignment = 32u32;
+
+    for _ in 0..n_kv {
+        let key = read_gguf_string(&mut f).ok()?;
+        let vtype = GgufType::from_u32(read_u32(&mut f).ok()?)?;
+
+        if key == "general.alignment" {
+            if let Ok(Some(value)) = read_gguf_value_as_u32(&mut f, vtype) {
+                alignment = value.max(1);
+            }
+        } else if key.ends_with(".expert_count") {
+            if let Ok(Some(value)) = read_gguf_value_as_u32(&mut f, vtype) {
+                expert_count = value;
+            }
+        } else if key.ends_with(".expert_used_count") {
+            if let Ok(Some(value)) = read_gguf_value_as_u32(&mut f, vtype) {
+                expert_used_count = value;
+            }
+        } else {
+            skip_gguf_value(&mut f, vtype).ok()?;
+        }
+    }
+
+    let mut tensors = read_tensor_infos(&mut f, n_tensors).ok()?;
+    if tensors.is_empty() {
+        return Some(GgufTensorByteProfile {
+            expert_count,
+            expert_used_count,
+            full_model_bytes: file_len,
+            base_resident_bytes: 0,
+            expert_tensor_bytes: 0,
+            file_overhead_bytes: file_len,
+        });
+    }
+
+    let tensor_info_end = f.stream_position().ok()?;
+    let data_start = align_offset(tensor_info_end, alignment);
+    if data_start > file_len {
+        return None;
+    }
+    let data_len = file_len - data_start;
+
+    tensors.sort_by_key(|tensor| tensor.offset);
+    if tensors.first()?.offset > data_len {
+        return None;
+    }
+
+    let mut base_resident_bytes = 0u64;
+    let mut expert_tensor_bytes = 0u64;
+    for (index, tensor) in tensors.iter().enumerate() {
+        let next_offset = tensors
+            .get(index + 1)
+            .map(|next| next.offset)
+            .unwrap_or(data_len);
+        if next_offset < tensor.offset || next_offset > data_len {
+            return None;
+        }
+        let tensor_bytes = next_offset - tensor.offset;
+        if is_expert_partitioned_tensor(&tensor.name) {
+            expert_tensor_bytes = expert_tensor_bytes.saturating_add(tensor_bytes);
+        } else {
+            base_resident_bytes = base_resident_bytes.saturating_add(tensor_bytes);
+        }
+    }
+
+    let file_overhead_bytes = file_len.saturating_sub(base_resident_bytes + expert_tensor_bytes);
+    Some(GgufTensorByteProfile {
+        expert_count,
+        expert_used_count,
+        full_model_bytes: file_len,
+        base_resident_bytes,
+        expert_tensor_bytes,
+        file_overhead_bytes,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_file_path(prefix: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{unique}.gguf"))
+    }
+
+    fn write_bytes(prefix: &str, bytes: &[u8]) -> PathBuf {
+        let path = temp_file_path(prefix);
+        let mut file = std::fs::File::create(&path).unwrap();
+        file.write_all(bytes).unwrap();
+        file.flush().unwrap();
+        path
+    }
+
+    fn push_array_header(bytes: &mut Vec<u8>, elem_type: GgufType, count: u64) {
+        bytes.extend_from_slice(&(elem_type as u32).to_le_bytes());
+        bytes.extend_from_slice(&count.to_le_bytes());
+    }
+
+    fn push_gguf_string(bytes: &mut Vec<u8>, value: &str) {
+        bytes.extend_from_slice(&(value.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(value.as_bytes());
+    }
+
+    fn push_u32_kv(bytes: &mut Vec<u8>, key: &str, value: u32) {
+        push_gguf_string(bytes, key);
+        bytes.extend_from_slice(&(GgufType::Uint32 as u32).to_le_bytes());
+        bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn push_tensor_info(bytes: &mut Vec<u8>, name: &str, offset: u64) {
+        push_gguf_string(bytes, name);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&16u64.to_le_bytes());
+        bytes.extend_from_slice(&(GgufType::Uint8 as u32).to_le_bytes());
+        bytes.extend_from_slice(&offset.to_le_bytes());
+    }
+
+    #[test]
+    fn skip_gguf_value_rejects_excessive_array_depth() {
+        let mut bytes = Vec::new();
+        for _ in 0..=MAX_GGUF_ARRAY_DEPTH {
+            push_array_header(&mut bytes, GgufType::Array, 1);
+        }
+        push_array_header(&mut bytes, GgufType::Uint8, 1);
+        bytes.push(0);
+
+        let path = write_bytes("mesh-client-gguf-depth", &bytes);
+        let mut file = std::fs::File::open(&path).unwrap();
+        let err = skip_gguf_value(&mut file, GgufType::Array).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("nesting too deep"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn skip_gguf_value_rejects_excessive_array_count() {
+        let mut bytes = Vec::new();
+        push_array_header(&mut bytes, GgufType::Uint8, MAX_GGUF_ARRAY_ELEMENTS + 1);
+
+        let path = write_bytes("mesh-client-gguf-count", &bytes);
+        let mut file = std::fs::File::open(&path).unwrap();
+        let err = skip_gguf_value(&mut file, GgufType::Array).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("array too long"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn scan_gguf_compact_meta_returns_none_on_malicious_nested_array() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&1i64.to_le_bytes());
+        push_gguf_string(&mut bytes, "general.architecture");
+        bytes.extend_from_slice(&(GgufType::Array as u32).to_le_bytes());
+        for _ in 0..=MAX_GGUF_ARRAY_DEPTH {
+            push_array_header(&mut bytes, GgufType::Array, 1);
+        }
+        push_array_header(&mut bytes, GgufType::Uint8, 1);
+        bytes.push(0);
+
+        let path = write_bytes("mesh-client-gguf-malicious", &bytes);
+        assert!(scan_gguf_compact_meta(&path).is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn scan_gguf_compact_meta_derives_value_length_from_kv_heads_without_head_count() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&2i64.to_le_bytes());
+        push_u32_kv(&mut bytes, "llama.embedding_length", 4096);
+        push_u32_kv(&mut bytes, "llama.attention.head_count_kv", 8);
+
+        let path = write_bytes("mesh-client-gguf-kv-heads", &bytes);
+        let meta = scan_gguf_compact_meta(&path).expect("should parse GGUF");
+        assert_eq!(meta.head_count, 0);
+        assert_eq!(meta.key_length, 0);
+        assert_eq!(meta.value_length, 512);
+        assert_eq!(meta.head_count_kv, Some(8));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn f16_kv_per_token_uses_gqa_heads_and_handles_missing_metadata() {
+        // Qwen3-8B: 36 layers, GQA 8 KV heads, 128 head dim.
+        let meta = GgufCompactMeta {
+            layer_count: 36,
+            head_count: 32,
+            head_count_kv: Some(8),
+            key_length: 128,
+            value_length: 128,
+            ..Default::default()
+        };
+        // 8 kv_heads * 128 * 2 bytes * 36 layers = 73_728 bytes/token for each
+        // of K and V. Must use the 8 GQA heads, not the 32 query heads.
+        assert_eq!(meta.k_cache_bytes_per_token_f16(), Some(73_728));
+        assert_eq!(meta.v_cache_bytes_per_token_f16(), Some(73_728));
+
+        // Without head_count_kv, fall back to the full head count (over-counts,
+        // the safe direction): 32 * 128 * 2 * 36 = 294_912.
+        let mha = GgufCompactMeta {
+            head_count_kv: None,
+            ..meta.clone()
+        };
+        assert_eq!(mha.k_cache_bytes_per_token_f16(), Some(294_912));
+
+        // Missing structural fields → None, so callers fall back rather than
+        // trust a bogus zero.
+        let empty = GgufCompactMeta::default();
+        assert_eq!(empty.k_cache_bytes_per_token_f16(), None);
+        assert_eq!(empty.v_cache_bytes_per_token_f16(), None);
+    }
+
+    #[test]
+    fn scan_gguf_compact_meta_rejects_negative_kv_count() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&(-1i64).to_le_bytes());
+
+        let path = write_bytes("mesh-client-gguf-negative-kv", &bytes);
+        assert!(scan_gguf_compact_meta(&path).is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn scan_gguf_tensor_names_returns_every_tensor_name_in_order() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&3i64.to_le_bytes()); // n_tensors
+        bytes.extend_from_slice(&0i64.to_le_bytes()); // n_kv
+        push_tensor_info(&mut bytes, "blk.0.attn_q.weight", 0);
+        push_tensor_info(&mut bytes, "blk.0.ffn_down_exps.weight", 64);
+        push_tensor_info(&mut bytes, "output.weight", 128);
+
+        let path = write_bytes("mesh-client-gguf-names", &bytes);
+        let names = scan_gguf_tensor_names(&path).expect("should parse GGUF");
+        assert_eq!(
+            names,
+            vec![
+                "blk.0.attn_q.weight",
+                "blk.0.ffn_down_exps.weight",
+                "output.weight",
+            ]
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn scan_gguf_tensor_names_returns_none_on_bad_magic() {
+        let bytes = b"NOTG\x02\x00\x00\x00";
+        let path = write_bytes("mesh-client-gguf-names-bad", bytes);
+        assert!(scan_gguf_tensor_names(&path).is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn is_expert_tensor_name_recognises_canonical_moe_patterns() {
+        // Positive cases: every per-expert tensor name we've seen in
+        // upstream llama.cpp models. Mixtral / Qwen3-MoE / DeepSeek-V2.
+        for n in [
+            "blk.0.ffn_down_exps.weight",
+            "blk.7.ffn_up_exps.weight",
+            "blk.31.ffn_gate_exps.weight",
+            "blk.0.exp_probs_b.bias",
+        ] {
+            assert!(is_expert_tensor_name(n), "should be expert tensor: {n}");
+        }
+        // Negative cases: shared trunk tensors and the dense fallback
+        // FFN. These must NOT trigger the validation.
+        for n in [
+            "blk.0.attn_q.weight",
+            "blk.0.ffn_down.weight",
+            "output.weight",
+            "blk.0.shared_expert.ffn_down.weight",
+        ] {
+            assert!(!is_expert_tensor_name(n), "should NOT be expert: {n}");
+        }
+    }
+
+    #[test]
+    fn scan_gguf_tensor_byte_profile_rejects_excessive_tensor_count() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&((MAX_GGUF_TENSOR_COUNT as i64) + 1).to_le_bytes());
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+
+        let path = write_bytes("mesh-client-gguf-too-many-tensors", &bytes);
+        assert!(scan_gguf_tensor_byte_profile(&path).is_none());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_gguf_value_as_u32_rejects_negative_int32() {
+        let path = write_bytes("mesh-client-gguf-negative-int32", &(-1i32).to_le_bytes());
+        let mut file = std::fs::File::open(&path).unwrap();
+        let err = read_gguf_value_as_u32(&mut file, GgufType::Int32).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        assert!(err
+            .to_string()
+            .contains("negative Int32 where unsigned GGUF value was expected"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn scan_gguf_tensor_byte_profile_splits_base_and_expert_bytes() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"GGUF");
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&2i64.to_le_bytes());
+        bytes.extend_from_slice(&3i64.to_le_bytes());
+
+        push_u32_kv(&mut bytes, "general.alignment", 32);
+        push_u32_kv(&mut bytes, "llama.expert_count", 8);
+        push_u32_kv(&mut bytes, "llama.expert_used_count", 2);
+
+        push_tensor_info(&mut bytes, "blk.0.ffn_up_exps.weight", 0);
+        push_tensor_info(&mut bytes, "blk.0.attn_q.weight", 64);
+
+        let data_start = align_offset(bytes.len() as u64, 32) as usize;
+        bytes.resize(data_start, 0);
+        bytes.resize(data_start + 96, 0);
+
+        let path = write_bytes("mesh-client-gguf-tensors", &bytes);
+        let profile = scan_gguf_tensor_byte_profile(&path).unwrap();
+        assert_eq!(profile.expert_count, 8);
+        assert_eq!(profile.expert_used_count, 2);
+        assert_eq!(profile.expert_tensor_bytes, 64);
+        assert_eq!(profile.base_resident_bytes, 32);
+        assert_eq!(profile.full_model_bytes, bytes.len() as u64);
+        assert_eq!(
+            profile.full_model_bytes,
+            profile.base_resident_bytes + profile.expert_tensor_bytes + profile.file_overhead_bytes
+        );
+        let _ = std::fs::remove_file(path);
+    }
+}

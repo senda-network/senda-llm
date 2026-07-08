@@ -1,9 +1,9 @@
-package com.closedmesh.example
+package network.senda.example
 
-import com.closedmesh.ChatMessage
-import com.closedmesh.ChatRequest
-import com.closedmesh.Event
-import com.closedmesh.MeshClient
+import network.senda.ChatMessage
+import network.senda.ChatRequest
+import network.senda.Event
+import network.senda.MeshClient
 import com.sun.jna.NativeLibrary
 import kotlinx.coroutines.runBlocking
 import uniffi.mesh_ffi.createClient
@@ -76,7 +76,7 @@ fun main(args: Array<String>) = runBlocking {
     println("[disconnect] ok")
 }
 
-private fun waitForModels(client: MeshClient): List<com.closedmesh.Model> {
+private fun waitForModels(client: MeshClient): List<network.senda.Model> {
     val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
     while (System.nanoTime() < deadline) {
         val models = runBlocking { client.listModels() }

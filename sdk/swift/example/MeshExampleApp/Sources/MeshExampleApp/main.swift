@@ -1,5 +1,5 @@
 import Foundation
-import ClosedMesh
+import Senda
 
 enum ExampleError: Error {
     case noModels

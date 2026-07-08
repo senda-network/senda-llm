@@ -14,8 +14,8 @@ $ErrorActionPreference = "Stop"
 $apiPort = 9337
 $consolePort = 3131
 $maxWaitSeconds = 180
-$stdoutLogPath = Join-Path ([System.IO.Path]::GetTempPath()) "closedmesh-ci.stdout.log"
-$stderrLogPath = Join-Path ([System.IO.Path]::GetTempPath()) "closedmesh-ci.stderr.log"
+$stdoutLogPath = Join-Path ([System.IO.Path]::GetTempPath()) "senda-ci.stdout.log"
+$stderrLogPath = Join-Path ([System.IO.Path]::GetTempPath()) "senda-ci.stderr.log"
 
 function Write-ProcessLogs {
     foreach ($path in @($stdoutLogPath, $stderrLogPath)) {
@@ -27,7 +27,7 @@ function Write-ProcessLogs {
 }
 
 Write-Host "=== CI Smoke Test ==="
-Write-Host "  closedmesh:  $MeshLlm"
+Write-Host "  senda:  $MeshLlm"
 Write-Host "  bin-dir:   $BinDir"
 Write-Host "  model:     $ModelPath"
 if (-not [string]::IsNullOrWhiteSpace($MmprojPath)) {
@@ -37,7 +37,7 @@ Write-Host "  api port:  $apiPort"
 Write-Host "  os:        Windows"
 
 if (-not (Test-Path $MeshLlm)) {
-    throw "Missing closedmesh binary: $MeshLlm"
+    throw "Missing senda binary: $MeshLlm"
 }
 
 Get-ChildItem -Path $BinDir -Filter "rpc-server*" -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String | Write-Host
@@ -58,7 +58,7 @@ try {
         $arguments += @("--mmproj", $MmprojPath)
     }
 
-    Write-Host "Starting closedmesh..."
+    Write-Host "Starting senda..."
     $process = Start-Process `
         -FilePath $MeshLlm `
         -ArgumentList $arguments `
@@ -70,9 +70,9 @@ try {
     Write-Host "Waiting for model to load (up to ${maxWaitSeconds}s)..."
     for ($i = 1; $i -le $maxWaitSeconds; $i++) {
         if ($process.HasExited) {
-            Write-Host "❌ closedmesh exited unexpectedly"
+            Write-Host "❌ senda exited unexpectedly"
             Write-ProcessLogs
-            throw "closedmesh exited before llama_ready"
+            throw "senda exited before llama_ready"
         }
 
         try {
@@ -136,7 +136,7 @@ try {
     Write-Host "=== All smoke tests passed ==="
 } finally {
     if ($process) {
-        Write-Host "Shutting down closedmesh (PID $($process.Id))..."
+        Write-Host "Shutting down senda (PID $($process.Id))..."
         try {
             taskkill /PID $process.Id /T /F | Out-Null
         } catch {

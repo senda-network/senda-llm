@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Reference launchd LaunchAgent for ClosedMesh.
+  Reference launchd LaunchAgent for Senda.
 
-  The official installer (`curl closedmesh.com/install | sh -s -- --service`)
+  The official installer (`curl senda.network/install | sh -s -- --service`)
   generates this file with the right paths for your home directory at
-  ~/Library/LaunchAgents/dev.closedmesh.closedmesh.plist. This copy ships in
+  ~/Library/LaunchAgents/network.senda.runtime.plist. This copy ships in
   the release tarball as a reference.
 
   Replace USERNAME below with your macOS username if you copy this manually.
@@ -13,16 +13,16 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.closedmesh.closedmesh</string>
+    <string>network.senda.runtime</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/USERNAME/.local/bin/closedmesh</string>
+        <string>/Users/USERNAME/.local/bin/senda</string>
         <string>serve</string>
         <string>--auto</string>
         <string>--mesh-name</string>
-        <string>closedmesh</string>
+        <string>senda</string>
         <string>--join-url</string>
-        <string>https://mesh.closedmesh.com/api/status</string>
+        <string>https://entry.senda.network/api/status</string>
         <string>--headless</string>
     </array>
     <key>WorkingDirectory</key>
@@ -37,8 +37,8 @@
     <key>ProcessType</key>
     <string>Background</string>
     <key>StandardOutPath</key>
-    <string>/Users/USERNAME/Library/Logs/closedmesh/stdout.log</string>
+    <string>/Users/USERNAME/Library/Logs/senda/stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/USERNAME/Library/Logs/closedmesh/stderr.log</string>
+    <string>/Users/USERNAME/Library/Logs/senda/stderr.log</string>
 </dict>
 </plist>

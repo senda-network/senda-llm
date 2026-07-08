@@ -5,8 +5,8 @@
 # If no scenario given, runs all scenarios.
 #
 # Prerequisites:
-#   /tmp/closedmesh-pipeline  — binary from pipeline-routing branch
-#   /tmp/closedmesh-main      — binary from main branch
+#   /tmp/senda-pipeline  — binary from pipeline-routing branch
+#   /tmp/senda-main      — binary from main branch
 #   Models already downloaded: Qwen2.5-32B + Hermes-7B
 
 set -o pipefail
@@ -18,8 +18,8 @@ DEFAULT_WAIT=30
 MODEL_A="Qwen2.5-32B-Instruct-Q4_K_M"
 MODEL_B="Hermes-2-Pro-Mistral-7B-Q4_K_M"
 
-if [ ! -f /tmp/closedmesh-pipeline ] || [ ! -f /tmp/closedmesh-main ]; then
-    echo "ERROR: Need /tmp/closedmesh-pipeline and /tmp/closedmesh-main"
+if [ ! -f /tmp/senda-pipeline ] || [ ! -f /tmp/senda-main ]; then
+    echo "ERROR: Need /tmp/senda-pipeline and /tmp/senda-main"
     exit 1
 fi
 
@@ -63,11 +63,11 @@ run_variant() {
     done
 
     # Kill any existing mesh processes
-    pkill -9 -f closedmesh 2>/dev/null; pkill -9 -f llama-server 2>/dev/null; pkill -9 -f rpc-server 2>/dev/null
+    pkill -9 -f senda 2>/dev/null; pkill -9 -f llama-server 2>/dev/null; pkill -9 -f rpc-server 2>/dev/null
     sleep 2
 
-    # Start closedmesh
-    RUST_LOG=closedmesh=info CLOSEDMESH_EPHEMERAL_KEY=1 "$binary" \
+    # Start senda
+    RUST_LOG=senda=info SENDA_EPHEMERAL_KEY=1 "$binary" \
         --model "$MODEL_A" --model "$MODEL_B" \
         > "$result_dir/_mesh.log" 2>&1 &
     local mesh_pid=$!
@@ -143,14 +143,14 @@ run_variant() {
 
     # Cleanup
     kill $mesh_pid 2>/dev/null; wait $mesh_pid 2>/dev/null
-    pkill -9 -f closedmesh 2>/dev/null; pkill -9 -f llama-server 2>/dev/null; pkill -9 -f rpc-server 2>/dev/null
+    pkill -9 -f senda 2>/dev/null; pkill -9 -f llama-server 2>/dev/null; pkill -9 -f rpc-server 2>/dev/null
     sleep 2
 }
 
 # Run each scenario on both variants
 for scenario in "${SCENARIOS[@]}"; do
-    run_variant "main" "/tmp/closedmesh-main" "$scenario"
-    run_variant "pipeline" "/tmp/closedmesh-pipeline" "$scenario"
+    run_variant "main" "/tmp/senda-main" "$scenario"
+    run_variant "pipeline" "/tmp/senda-pipeline" "$scenario"
 done
 
 # Generate comparison report

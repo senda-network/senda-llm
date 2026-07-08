@@ -32,7 +32,7 @@ permissions:
   packages: write
 
 env:
-  CACHE_NAMESPACE: closedmesh
+  CACHE_NAMESPACE: senda
   SCCACHE_GHA_ENABLED: "true"
 
 jobs:
@@ -131,7 +131,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -203,7 +203,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: release-swift-package
-          path: dist/ClosedMeshFFI.xcframework.zip
+          path: dist/SendaFFI.xcframework.zip
           if-no-files-found: error
 
   build:
@@ -217,11 +217,11 @@ jobs:
           - name: Linux CPU
             os: ubuntu-latest
             artifact_name: release-linux-cpu
-            closedmesh_flavor: cpu
+            senda_flavor: cpu
           - name: macOS
             os: macos-14
             artifact_name: release-macos
-            closedmesh_flavor: metal
+            senda_flavor: metal
 
     steps:
       - uses: actions/checkout@v5
@@ -236,7 +236,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
@@ -260,13 +260,13 @@ jobs:
           just --shell bash --shell-arg -lc release-build
           just --shell bash --shell-arg -lc release-bundle "$RELEASE_TAG" dist
 
-      - name: Package closedmesh installer artifact
+      - name: Package senda installer artifact
         shell: bash
         env:
-          MESH_RELEASE_FLAVOR: ${{ matrix.closedmesh_flavor }}
+          MESH_RELEASE_FLAVOR: ${{ matrix.senda_flavor }}
         run: |
-          chmod +x scripts/release-closedmesh.sh
-          scripts/release-closedmesh.sh dist
+          chmod +x scripts/release-senda.sh
+          scripts/release-senda.sh dist
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v6
@@ -281,7 +281,7 @@ jobs:
         with:
           name: ci-linux-release-inference-binaries
           path: |
-            target/release/closedmesh
+            target/release/senda
             llama.cpp/build/bin/rpc-server
             llama.cpp/build/bin/llama-server
             llama.cpp/build/bin/llama-moe-analyze
@@ -299,7 +299,7 @@ jobs:
     uses: ./.github/workflows/smoke.yml
     with:
       artifact_name: ci-linux-release-inference-binaries
-      mesh_binary_target: target/release/closedmesh
+      mesh_binary_target: target/release/senda
       cache_key_prefix: 'release-'
       workflow_cache_file: .github/workflows/release.yml
 
@@ -321,7 +321,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - name: Install system dependencies (Linux ARM64)
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
@@ -344,16 +344,16 @@ jobs:
           just --shell bash --shell-arg -lc release-build-arm64
           just --shell bash --shell-arg -lc release-bundle-arm64 "$RELEASE_TAG" dist
 
-      - name: Package closedmesh installer artifacts (Linux ARM64)
+      - name: Package senda installer artifacts (Linux ARM64)
         shell: bash
         run: |
-          chmod +x scripts/release-closedmesh.sh
-          # The closedmesh binary itself is flavor-agnostic (it spawns
+          chmod +x scripts/release-senda.sh
+          # The senda binary itself is flavor-agnostic (it spawns
           # llama-server / rpc-server which are flavor-specific). Ship one
           # tarball per supported runtime flavor for ARM64 so the installer
           # can pick the right autoupdate bundle.
-          MESH_RELEASE_FLAVOR=cpu    scripts/release-closedmesh.sh dist
-          MESH_RELEASE_FLAVOR=vulkan scripts/release-closedmesh.sh dist
+          MESH_RELEASE_FLAVOR=cpu    scripts/release-senda.sh dist
+          MESH_RELEASE_FLAVOR=vulkan scripts/release-senda.sh dist
 
       - name: Upload ARM64 CPU release artifacts
         uses: actions/upload-artifact@v6
@@ -405,7 +405,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -430,13 +430,13 @@ jobs:
           just --shell bash --shell-arg -lc release-build-cuda
           just --shell bash --shell-arg -lc release-bundle-cuda "$RELEASE_TAG" dist
 
-      - name: Package closedmesh installer artifact (Linux x86_64 CUDA)
+      - name: Package senda installer artifact (Linux x86_64 CUDA)
         shell: bash
         env:
           MESH_RELEASE_FLAVOR: cuda
         run: |
-          chmod +x scripts/release-closedmesh.sh
-          scripts/release-closedmesh.sh dist
+          chmod +x scripts/release-senda.sh
+          scripts/release-senda.sh dist
 
       - name: Upload CUDA release artifacts
         uses: actions/upload-artifact@v6
@@ -484,7 +484,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -506,13 +506,13 @@ jobs:
           just --shell bash --shell-arg -lc release-build-rocm
           just --shell bash --shell-arg -lc release-bundle-rocm "$RELEASE_TAG" dist
 
-      - name: Package closedmesh installer artifact (Linux x86_64 ROCm)
+      - name: Package senda installer artifact (Linux x86_64 ROCm)
         shell: bash
         env:
           MESH_RELEASE_FLAVOR: rocm
         run: |
-          chmod +x scripts/release-closedmesh.sh
-          scripts/release-closedmesh.sh dist
+          chmod +x scripts/release-senda.sh
+          scripts/release-senda.sh dist
 
       - name: Upload ROCm release artifacts
         uses: actions/upload-artifact@v6
@@ -561,7 +561,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -583,13 +583,13 @@ jobs:
           just --shell bash --shell-arg -lc release-build-vulkan
           just --shell bash --shell-arg -lc release-bundle-vulkan "$RELEASE_TAG" dist
 
-      - name: Package closedmesh installer artifact (Linux x86_64 Vulkan)
+      - name: Package senda installer artifact (Linux x86_64 Vulkan)
         shell: bash
         env:
           MESH_RELEASE_FLAVOR: vulkan
         run: |
-          chmod +x scripts/release-closedmesh.sh
-          scripts/release-closedmesh.sh dist
+          chmod +x scripts/release-senda.sh
+          scripts/release-senda.sh dist
 
       - name: Upload Vulkan release artifacts
         uses: actions/upload-artifact@v6
@@ -602,11 +602,11 @@ jobs:
         if: always()
         run: sccache --show-stats || true
 
-  # Windows: build closedmesh.exe AND patched llama.cpp helpers
+  # Windows: build senda.exe AND patched llama.cpp helpers
   # (rpc-server.exe, llama-server.exe, llama-moe-{analyze,split}.exe)
   # from source on every release. Pre-0.66.10 we used to download
   # ggml-org/llama.cpp's upstream Windows release for rpc-server /
-  # llama-server, but that bundle is missing every ClosedMesh patch
+  # llama-server, but that bundle is missing every Senda patch
   # (--gguf, --mesh-port, the moe tools), so compound-RAM MoE serving
   # was structurally broken on Windows. Compiling from source via the
   # same scripts/build-windows.ps1 used by `just release-build-*-windows`
@@ -649,17 +649,17 @@ jobs:
           method: network
           sub-packages: '["nvcc","cudart","visual_studio_integration","cublas","cublas_dev","thrust","cuda_profiler_api","nvtx"]'
 
-      - name: Build closedmesh.exe + patched llama.cpp (${{ matrix.flavor_label }})
+      - name: Build senda.exe + patched llama.cpp (${{ matrix.flavor_label }})
         shell: pwsh
         env:
           CMAKE_BUILD_PARALLEL_LEVEL: "4"
         run: ./scripts/build-windows.ps1 -Backend ${{ matrix.flavor }} -CudaArch '${{ matrix.cuda_arch }}'
 
-      - name: Package closedmesh installer artifact (Windows x86_64 ${{ matrix.flavor_label }})
+      - name: Package senda installer artifact (Windows x86_64 ${{ matrix.flavor_label }})
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          ./scripts/release-closedmesh.ps1 -Flavor ${{ matrix.flavor }} -OutputDir dist
+          ./scripts/release-senda.ps1 -Flavor ${{ matrix.flavor }} -OutputDir dist
 
       - name: Upload Windows release artifacts
         uses: actions/upload-artifact@v6

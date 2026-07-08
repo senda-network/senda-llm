@@ -39,7 +39,7 @@ permissions:
   contents: read
 
 env:
-  CACHE_NAMESPACE: closedmesh
+  CACHE_NAMESPACE: senda
 
 jobs:
   warm_cache:
@@ -75,10 +75,10 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - name: Build UI
-        working-directory: closedmesh/ui
+        working-directory: senda/ui
         shell: bash
         run: |
           npm ci
@@ -123,7 +123,7 @@ jobs:
         if: steps.llama_cache.outputs.cache-hit != 'true'
         shell: bash
         env:
-          CLOSEDMESH_LLAMA_PIN_SHA: ${{ inputs.llama_sha }}
+          SENDA_LLAMA_PIN_SHA: ${{ inputs.llama_sha }}
           BUILD_RECIPE: ${{ inputs.build_recipe }}
           BUILD_ARGS: ${{ inputs.build_args }}
           EXTRA_ENV: ${{ inputs.extra_env }}

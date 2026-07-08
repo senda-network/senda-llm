@@ -1,6 +1,6 @@
-# ClosedMesh Swift SDK
+# Senda Swift SDK
 
-Swift Package for connecting to closedmesh meshes from iOS, Mac Catalyst, and macOS apps.
+Swift Package for connecting to senda meshes from iOS, Mac Catalyst, and macOS apps.
 
 ## Installation
 
@@ -8,13 +8,13 @@ Add to your app's `Package.swift` using a tagged release:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/closedmesh/closedmesh-llm", from: "0.1.0"),
+    .package(url: "https://github.com/senda-network/senda-llm", from: "0.1.0"),
 ],
 targets: [
     .target(
         name: "YourApp",
         dependencies: [
-            .product(name: "ClosedMesh", package: "closedmesh"),
+            .product(name: "Senda", package: "senda"),
         ]
     ),
 ]
@@ -29,7 +29,7 @@ For development from a local checkout, build the native artifact first:
 ./sdk/swift/scripts/build-xcframework.sh
 ```
 
-That generates `sdk/swift/Generated/ClosedMeshFFI.xcframework`, which the root
+That generates `sdk/swift/Generated/SendaFFI.xcframework`, which the root
 Swift package picks up automatically for the real UniFFI-backed implementation.
 
 If you only want to run the pure Swift fallback without the XCFramework, set:
@@ -41,7 +41,7 @@ MESH_SWIFT_FORCE_STUB=1 swift test
 ## Usage
 
 ```swift
-import ClosedMesh
+import Senda
 
 let client = MeshClient(inviteToken: InviteToken("your-invite-token"))
 try await client.join()
@@ -67,7 +67,7 @@ for try await event in client.chatStream(request) {
 
 ### Encryption
 
-closedmesh uses QUIC (via iroh) for transport, which uses TLS 1.3. This constitutes use of encryption.
+senda uses QUIC (via iroh) for transport, which uses TLS 1.3. This constitutes use of encryption.
 
 **Required**: Set `ITSAppUsesNonExemptEncryption = YES` in your app's `Info.plist`.
 
@@ -75,7 +75,7 @@ If your app qualifies for an exemption (e.g., uses only standard encryption), yo
 
 ### Privacy Manifest
 
-The ClosedMesh XCFramework includes a `PrivacyInfo.xcprivacy` manifest declaring:
+The Senda XCFramework includes a `PrivacyInfo.xcprivacy` manifest declaring:
 - `NSPrivacyTracking = false` (no tracking)
 - No data collection
 - No required-reason API usage
@@ -84,15 +84,15 @@ This manifest is embedded inside each `.framework` bundle in the XCFramework, sa
 
 ### Entitlements
 
-No special entitlements are required. closedmesh uses standard POSIX sockets via iroh/quinn — no `com.apple.security.network.client` entitlement is needed for macOS (it's allowed by default).
+No special entitlements are required. senda uses standard POSIX sockets via iroh/quinn — no `com.apple.security.network.client` entitlement is needed for macOS (it's allowed by default).
 
 For iOS, network access is allowed by default. No special entitlements needed.
 
 ### App Store Submission Checklist
 
 - [ ] Set `ITSAppUsesNonExemptEncryption` in `Info.plist`
-- [ ] Verify `PrivacyInfo.xcprivacy` is embedded in XCFramework (run `find ClosedMesh.xcframework -name PrivacyInfo.xcprivacy`)
-- [ ] No subprocess spawning (closedmesh SDK never calls `Process()`)
+- [ ] Verify `PrivacyInfo.xcprivacy` is embedded in XCFramework (run `find Senda.xcframework -name PrivacyInfo.xcprivacy`)
+- [ ] No subprocess spawning (senda SDK never calls `Process()`)
 - [ ] No filesystem access for credentials (pass keys via constructor)
 - [ ] Implement `reconnect()` in `UIApplication.willEnterForegroundNotification` observer
 

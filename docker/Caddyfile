@@ -1,6 +1,6 @@
-# docker/Caddyfile — bearer-token auth gateway in front of the closedmesh
+# docker/Caddyfile — bearer-token auth gateway in front of the senda
 # runtime. Used when $MESH_AUTH_TOKEN is set (entrypoint selects this file
-# and binds closedmesh to 127.0.0.1).
+# and binds senda to 127.0.0.1).
 #
 #     {$GATEWAY_PORT} ──Caddy (auth)──> 127.0.0.1:{$INTERNAL_PORT}  (OpenAI API)
 #                     └──────────────> 127.0.0.1:{$CONSOLE_PORT}    (admin console)

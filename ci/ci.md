@@ -22,7 +22,7 @@ flowchart TD
             UI["Build UI\nnpm ci + build + test\n→ upload: ci-ui-dist"]
         end
         subgraph Core_Target["Target: rust-core (ubuntu-latest)"]
-            CORE["fmt check · clippy\ncargo build -p closedmesh (debug)\nunit tests · protocol compat\nbuild llama.cpp CPU+RPC\nCLI smoke · client-auto boot\n→ upload: ci-linux-inference-binaries"]
+            CORE["fmt check · clippy\ncargo build -p senda (debug)\nunit tests · protocol compat\nbuild llama.cpp CPU+RPC\nCLI smoke · client-auto boot\n→ upload: ci-linux-inference-binaries"]
         end
         subgraph FFI_Target["Target: ffi-sdk (ubuntu-latest)"]
             FFI["Build mesh-api / mesh-api-ffi / mesh-client\nembedded dep purity check\ncompile+lint only, no artifact"]
@@ -47,9 +47,9 @@ flowchart TD
             CUDA_132_89["13.2 × arch 89"]
         end
         CUDA_RESTORE --> CUDA_Variants
-        CUDA_BUILD_MISS["Cache MISS path:\nfull llama.cpp CUDA build\n(CI-only: single arch, fa-off)\n+ cargo build closedmesh (debug)"]
-        CUDA_BUILD_HIT["Cache HIT path:\nskip llama.cpp entirely\ncargo build closedmesh (debug) only"]
-        CUDA_SMOKE["CLI smoke\nclosedmesh --version / --help"]
+        CUDA_BUILD_MISS["Cache MISS path:\nfull llama.cpp CUDA build\n(CI-only: single arch, fa-off)\n+ cargo build senda (debug)"]
+        CUDA_BUILD_HIT["Cache HIT path:\nskip llama.cpp entirely\ncargo build senda (debug) only"]
+        CUDA_SMOKE["CLI smoke\nsenda --version / --help"]
         CUDA_Variants --> CUDA_BUILD_MISS
         CUDA_Variants --> CUDA_BUILD_HIT
         CUDA_BUILD_MISS --> CUDA_SMOKE

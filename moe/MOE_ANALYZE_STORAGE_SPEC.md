@@ -5,7 +5,7 @@ This document defines how `moe-analyze` artifacts are stored in two places:
 1. a canonical Hugging Face dataset repo used as the immutable system of record
 2. an optional colocated layout inside model repos for easy discovery by tools and users
 
-The goal is to make rankings easy to publish, discover, validate, and consume from `closedmesh` and other tools without relying on filename guessing or ad hoc conventions.
+The goal is to make rankings easy to publish, discover, validate, and consume from `senda` and other tools without relying on filename guessing or ad hoc conventions.
 
 ## Scope
 
@@ -288,7 +288,7 @@ Rules:
 
 ## Tool Behavior
 
-Recommended consumer behavior for `closedmesh` and other tools:
+Recommended consumer behavior for `senda` and other tools:
 
 1. resolve the loaded model to `source_repo`, `source_revision`, `format`, and `distribution_id`
 2. prefer the canonical dataset record when querying a global archive

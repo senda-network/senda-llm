@@ -8,7 +8,7 @@ trap 'rm -rf "$_STAGING_DIR"' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-BUILD_BIN_DIR="${CLOSEDMESH_LLAMA_BUILD_BIN_DIR:-$REPO_ROOT/.deps/llama.cpp/build/bin}"
+BUILD_BIN_DIR="${SENDA_LLAMA_BUILD_BIN_DIR:-$REPO_ROOT/.deps/llama.cpp/build/bin}"
 RELEASE_BIN_DIR="$REPO_ROOT/target/release"
 
 python_bin() {
@@ -88,8 +88,8 @@ copy_runtime_libs() {
 
 bundle_bin_name() {
     local name="$1"
-    if [[ "$name" == "closedmesh" || "$name" == "closedmesh" ]]; then
-        echo "closedmesh"
+    if [[ "$name" == "senda" || "$name" == "senda" ]]; then
+        echo "senda"
         return
     fi
 
@@ -310,7 +310,7 @@ resolve_release_target() {
             ;;
     esac
 
-    STABLE_ASSET="$(printf 'closedmesh-%s-%s%s.%s\n' "$STABLE_OS" "$STABLE_ARCH" "$(flavor_suffix "$effective_flavor")" "$ARCHIVE_EXT")"
+    STABLE_ASSET="$(printf 'senda-%s-%s%s.%s\n' "$STABLE_OS" "$STABLE_ARCH" "$(flavor_suffix "$effective_flavor")" "$ARCHIVE_EXT")"
     TARGET_TRIPLE="${TARGET_TRIPLE}$(flavor_suffix "$effective_flavor")"
 
     return 0
@@ -320,8 +320,8 @@ versioned_asset_name() {
     local version="$1"
 
     resolve_release_target
-    # Derive from STABLE_ASSET: "closedmesh-darwin-aarch64.tar.gz" → "closedmesh-v0.X.0-darwin-aarch64.tar.gz"
-    printf 'closedmesh-%s-%s\n' "$version" "${STABLE_ASSET#closedmesh-}"
+    # Derive from STABLE_ASSET: "senda-darwin-aarch64.tar.gz" → "senda-v0.X.0-darwin-aarch64.tar.gz"
+    printf 'senda-%s-%s\n' "$version" "${STABLE_ASSET#senda-}"
 }
 
 usage() {
@@ -354,7 +354,7 @@ main() {
     bundle_dir="$_STAGING_DIR/mesh-bundle"
     mkdir -p "$bundle_dir"
 
-    cp "$RELEASE_BIN_DIR/closedmesh${BIN_EXT}" "$bundle_dir/$(bundle_bin_name closedmesh)"
+    cp "$RELEASE_BIN_DIR/senda${BIN_EXT}" "$bundle_dir/$(bundle_bin_name senda)"
     cp "$BUILD_BIN_DIR/rpc-server${BIN_EXT}" "$bundle_dir/$(bundle_bin_name rpc-server)"
     cp "$BUILD_BIN_DIR/llama-server${BIN_EXT}" "$bundle_dir/$(bundle_bin_name llama-server)"
     cp "$BUILD_BIN_DIR/llama-moe-analyze${BIN_EXT}" "$bundle_dir/llama-moe-analyze"
@@ -362,7 +362,7 @@ main() {
     copy_runtime_libs "$bundle_dir"
 
     if [[ "$os_name" == "Darwin" ]]; then
-        for bin in "$bundle_dir/$(bundle_bin_name closedmesh)" "$bundle_dir/$(bundle_bin_name rpc-server)" "$bundle_dir/$(bundle_bin_name llama-server)" "$bundle_dir/llama-moe-analyze" "$bundle_dir/llama-moe-split"; do
+        for bin in "$bundle_dir/$(bundle_bin_name senda)" "$bundle_dir/$(bundle_bin_name rpc-server)" "$bundle_dir/$(bundle_bin_name llama-server)" "$bundle_dir/llama-moe-analyze" "$bundle_dir/llama-moe-split"; do
             [[ -f "$bin" ]] || continue
             install_name_tool -add_rpath @executable_path/ "$bin" 2>/dev/null || true
         done

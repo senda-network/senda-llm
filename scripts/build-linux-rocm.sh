@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build-linux-rocm.sh — build llama.cpp (ROCm/HIP) + closedmesh on Linux
+# build-linux-rocm.sh — build llama.cpp (ROCm/HIP) + senda on Linux
 #
 # Usage: scripts/build-linux-rocm.sh [amdgpu_targets]
 #   amdgpu_targets  Semicolon-separated AMDGPU targets, e.g.
@@ -10,9 +10,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-LLAMA_DIR="${CLOSEDMESH_LLAMA_DIR:-$REPO_ROOT/.deps/llama.cpp}"
+LLAMA_DIR="${SENDA_LLAMA_DIR:-$REPO_ROOT/.deps/llama.cpp}"
 BUILD_DIR="$LLAMA_DIR/build"
-MESH_DIR="$REPO_ROOT/closedmesh"
+MESH_DIR="$REPO_ROOT/senda"
 UI_DIR="$MESH_DIR/ui"
 
 AMDGPU_TARGETS="${1:-gfx90a;gfx942;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201}"
@@ -51,7 +51,7 @@ configure_compiler_cache() {
     )
 }
 
-LLAMA_WORKDIR="$LLAMA_DIR" "$SCRIPT_DIR/prepare-llama.sh" "${CLOSEDMESH_LLAMA_PIN_SHA:-pinned}"
+LLAMA_WORKDIR="$LLAMA_DIR" "$SCRIPT_DIR/prepare-llama.sh" "${SENDA_LLAMA_PIN_SHA:-pinned}"
 
 echo "Using ROCm from $ROCM_PATH"
 echo "Building for AMDGPU targets: $AMDGPU_TARGETS"
@@ -78,7 +78,7 @@ if [[ -d "$MESH_DIR" ]]; then
     if [[ -d "$UI_DIR" ]]; then
         "$SCRIPT_DIR/build-ui.sh" "$UI_DIR"
     fi
-    echo "Building closedmesh..."
-    (cd "$REPO_ROOT" && cargo build --release --locked -p closedmesh)
-    echo "Mesh binary: target/release/closedmesh"
+    echo "Building senda..."
+    (cd "$REPO_ROOT" && cargo build --release --locked -p senda)
+    echo "Mesh binary: target/release/senda"
 fi

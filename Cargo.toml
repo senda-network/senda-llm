@@ -1,16 +1,16 @@
 [workspace]
 members = [
-    "closedmesh",
-    "closedmesh/plugin",
-    "closedmesh-client",
+    "senda",
+    "senda/plugin",
+    "senda-client",
     "mesh-api",
     "mesh-host-core",
     "mesh-api-ffi",
-    "closedmesh-test-harness",
+    "senda-test-harness",
     "tools/xtask",
 ]
 default-members = [
-    "closedmesh",
-    "closedmesh/plugin",
+    "senda",
+    "senda/plugin",
 ]
 resolver = "2"

@@ -1,5 +1,5 @@
 import XCTest
-@testable import ClosedMesh
+@testable import Senda
 
 final class EventStreamTests: XCTestCase {
     func testChatStreamEmitsCompletedEvent() async throws {

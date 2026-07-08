@@ -9,7 +9,7 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir ".."))
-$buildBinDir = if ($env:CLOSEDMESH_LLAMA_BUILD_BIN_DIR) { $env:CLOSEDMESH_LLAMA_BUILD_BIN_DIR } else { Join-Path $repoRoot ".deps\llama.cpp\build\bin" }
+$buildBinDir = if ($env:SENDA_LLAMA_BUILD_BIN_DIR) { $env:SENDA_LLAMA_BUILD_BIN_DIR } else { Join-Path $repoRoot ".deps\llama.cpp\build\bin" }
 $releaseBinDir = Join-Path $repoRoot "target\release"
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
@@ -96,8 +96,8 @@ function Get-BundleBinaryName {
         [string]$BinaryFlavor
     )
 
-    if ($BaseName -eq "closedmesh" -or $BaseName -eq "closedmesh") {
-        return "closedmesh.exe"
+    if ($BaseName -eq "senda" -or $BaseName -eq "senda") {
+        return "senda.exe"
     }
 
     if ($BinaryFlavor) {
@@ -161,10 +161,10 @@ $Flavor = Normalize-RecipeArgument $Flavor @("flavor", "backend")
 $binaryFlavor = Get-BinaryFlavor $Flavor
 $targetTriple = "x86_64-pc-windows-msvc"
 $archiveExt = "zip"
-$stableAsset = "closedmesh-windows-x86_64$(Get-FlavorSuffix $binaryFlavor).$archiveExt"
-$versionedAsset = "closedmesh-$Version-windows-x86_64$(Get-FlavorSuffix $binaryFlavor).$archiveExt"
+$stableAsset = "senda-windows-x86_64$(Get-FlavorSuffix $binaryFlavor).$archiveExt"
+$versionedAsset = "senda-$Version-windows-x86_64$(Get-FlavorSuffix $binaryFlavor).$archiveExt"
 
-$meshBinary = Join-Path $releaseBinDir "closedmesh.exe"
+$meshBinary = Join-Path $releaseBinDir "senda.exe"
 $rpcBinary = Join-Path $buildBinDir "rpc-server.exe"
 $llamaBinary = Join-Path $buildBinDir "llama-server.exe"
 $moeAnalyzeBinary = Join-Path $buildBinDir "llama-moe-analyze.exe"
@@ -183,16 +183,16 @@ $resolvedOutputDir = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
 }
 New-Item -ItemType Directory -Path $resolvedOutputDir -Force | Out-Null
 
-$stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("closedmesh-release-" + [System.Guid]::NewGuid().ToString("N"))
+$stagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("senda-release-" + [System.Guid]::NewGuid().ToString("N"))
 $bundleDir = Join-Path $stagingRoot "mesh-bundle"
 New-Item -ItemType Directory -Path $bundleDir -Force | Out-Null
 
 try {
-    Copy-Item $meshBinary -Destination (Join-Path $bundleDir (Get-BundleBinaryName "closedmesh" $binaryFlavor)) -Force
+    Copy-Item $meshBinary -Destination (Join-Path $bundleDir (Get-BundleBinaryName "senda" $binaryFlavor)) -Force
     Copy-Item $rpcBinary -Destination (Join-Path $bundleDir (Get-BundleBinaryName "rpc-server" $binaryFlavor)) -Force
     Copy-Item $llamaBinary -Destination (Join-Path $bundleDir (Get-BundleBinaryName "llama-server" $binaryFlavor)) -Force
     # MoE helpers are flavor-agnostic on POSIX (one binary, no -flavor suffix);
-    # mirror that on Windows so closedmesh.exe finds them by their plain name
+    # mirror that on Windows so senda.exe finds them by their plain name
     # — `desktop/src/mesh.rs::MOVE_PREFIXES` and the runtime resolver both look
     # for `llama-moe-analyze.exe` / `llama-moe-split.exe`.
     Copy-Item $moeAnalyzeBinary -Destination (Join-Path $bundleDir "llama-moe-analyze.exe") -Force

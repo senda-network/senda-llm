@@ -933,114 +933,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "closedmesh"
-version = "0.66.79"
-dependencies = [
- "ansi-to-tui",
- "anyhow",
- "arboard",
- "argon2",
- "axum",
- "base64",
- "biip",
- "chacha20poly1305",
- "chrono",
- "clap",
- "closedmesh-client",
- "closedmesh-plugin",
- "crossterm 0.28.1",
- "crypto_box",
- "dirs",
- "ed25519-dalek",
- "hex",
- "httparse",
- "huggingface-hub",
- "include_dir",
- "iroh",
- "keyring",
- "libc",
- "nostr-sdk",
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "rand 0.10.1",
- "ratatui",
- "regex-lite",
- "reqwest 0.12.28",
- "rmcp",
- "rpassword",
- "rustls",
- "schemars",
- "semver",
- "serde",
- "serde_json",
- "serial_test",
- "sha2 0.10.9",
- "tabwriter",
- "tempfile",
- "thiserror 2.0.18",
- "tokio",
- "tokio-stream",
- "toml",
- "tracing",
- "tracing-subscriber",
- "url",
- "urlencoding",
- "zeroize",
- "zip",
-]
-
-[[package]]
-name = "closedmesh-client"
-version = "0.66.79"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "crypto_box",
- "ed25519-dalek",
- "hex",
- "httparse",
- "iroh",
- "nostr-sdk",
- "prost",
- "rand 0.10.1",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "thiserror 2.0.18",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "closedmesh-plugin"
-version = "0.66.79"
-dependencies = [
- "anyhow",
- "async-trait",
- "prost",
- "prost-build",
- "protoc-bin-vendored",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "closedmesh-test-harness"
-version = "0.1.0"
-dependencies = [
- "reqwest 0.12.28",
- "serde_json",
- "thiserror 2.0.18",
-]
-
-[[package]]
 name = "cmake"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3582,8 +3474,8 @@ dependencies = [
 name = "mesh-api"
 version = "0.66.79"
 dependencies = [
- "closedmesh-client",
  "hex",
+ "senda-client",
  "thiserror 2.0.18",
  "tokio",
 ]
@@ -5933,6 +5825,114 @@ name = "send_wrapper"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
+
+[[package]]
+name = "senda"
+version = "0.66.79"
+dependencies = [
+ "ansi-to-tui",
+ "anyhow",
+ "arboard",
+ "argon2",
+ "axum",
+ "base64",
+ "biip",
+ "chacha20poly1305",
+ "chrono",
+ "clap",
+ "crossterm 0.28.1",
+ "crypto_box",
+ "dirs",
+ "ed25519-dalek",
+ "hex",
+ "httparse",
+ "huggingface-hub",
+ "include_dir",
+ "iroh",
+ "keyring",
+ "libc",
+ "nostr-sdk",
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "rand 0.10.1",
+ "ratatui",
+ "regex-lite",
+ "reqwest 0.12.28",
+ "rmcp",
+ "rpassword",
+ "rustls",
+ "schemars",
+ "semver",
+ "senda-client",
+ "senda-plugin",
+ "serde",
+ "serde_json",
+ "serial_test",
+ "sha2 0.10.9",
+ "tabwriter",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "urlencoding",
+ "zeroize",
+ "zip",
+]
+
+[[package]]
+name = "senda-client"
+version = "0.66.79"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "crypto_box",
+ "ed25519-dalek",
+ "hex",
+ "httparse",
+ "iroh",
+ "nostr-sdk",
+ "prost",
+ "rand 0.10.1",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "senda-plugin"
+version = "0.66.79"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "prost",
+ "prost-build",
+ "protoc-bin-vendored",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "senda-test-harness"
+version = "0.1.0"
+dependencies = [
+ "reqwest 0.12.28",
+ "serde_json",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "serde"

@@ -1,4 +1,4 @@
-package com.closedmesh
+package com.senda
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose

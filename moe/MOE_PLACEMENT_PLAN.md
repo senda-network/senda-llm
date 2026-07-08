@@ -40,7 +40,7 @@ This means:
 
 - the dataset remains focused on durable measured data
 - deployment plans can be recomputed for different hardware classes
-- `closedmesh` or a separate planner can derive splits on demand
+- `senda` or a separate planner can derive splits on demand
 
 ## Example Derived Inputs
 

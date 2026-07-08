@@ -1,4 +1,4 @@
-# Deploy closedmesh to a remote macOS node
+# Deploy senda to a remote macOS node
 
 ## Build the bundle locally
 
@@ -20,30 +20,30 @@ ssh -p <SSH_PORT> user@host
 mkdir -p ~/bin && tar xzf mesh-bundle.tar.gz -C ~/bin --strip-components=1
 ```
 
-The bundle contains: `closedmesh`, `rpc-server`, `llama-server`, `*.dylib`.
+The bundle contains: `senda`, `rpc-server`, `llama-server`, `*.dylib`.
 
 ## Fix macOS quarantine
 
 Files transferred via scp get `com.apple.provenance` xattr which causes macOS to SIGKILL (exit 137) on launch. **Always run after scp:**
 
 ```bash
-codesign -s - ~/bin/closedmesh
+codesign -s - ~/bin/senda
 codesign -s - ~/bin/rpc-server
 codesign -s - ~/bin/llama-server
 xattr -cr ~/bin/
 ```
 
-To verify: `xattr ~/bin/closedmesh` should return nothing. If you see `com.apple.provenance` or `com.apple.quarantine`, the binary will be killed on launch.
+To verify: `xattr ~/bin/senda` should return nothing. If you see `com.apple.provenance` or `com.apple.quarantine`, the binary will be killed on launch.
 
 ## Download a model
 
 ```bash
-~/bin/closedmesh download 32b --draft    # downloads to ~/.models/
+~/bin/senda download 32b --draft    # downloads to ~/.models/
 ```
 
 Or list all available models:
 ```bash
-~/bin/closedmesh download
+~/bin/senda download
 ```
 
 Models go in `~/.models/` by convention. Both nodes need the same GGUF file for distributed inference.
@@ -52,7 +52,7 @@ Models go in `~/.models/` by convention. Both nodes need the same GGUF file for 
 
 ### As first node (creates mesh)
 ```bash
-nohup ~/bin/closedmesh --model Qwen2.5-32B --bind-port 7842 > /tmp/mesh.log 2>&1 &
+nohup ~/bin/senda --model Qwen2.5-32B --bind-port 7842 > /tmp/mesh.log 2>&1 &
 ```
 
 - `--bind-port` pins QUIC to a fixed UDP port for NAT port forwarding
@@ -65,12 +65,12 @@ grep "Invite token:" /tmp/mesh.log | tail -1 | sed "s/Invite token: //"
 
 ### As joining node
 ```bash
-nohup ~/bin/closedmesh --model Qwen2.5-32B --join <TOKEN> > /tmp/mesh.log 2>&1 &
+nohup ~/bin/senda --model Qwen2.5-32B --join <TOKEN> > /tmp/mesh.log 2>&1 &
 ```
 
 ### As lite client (no GPU, no model, API access only)
 ```bash
-nohup ~/bin/closedmesh --client --join <TOKEN> > /tmp/mesh.log 2>&1 &
+nohup ~/bin/senda --client --join <TOKEN> > /tmp/mesh.log 2>&1 &
 ```
 
 ## Networking
@@ -84,7 +84,7 @@ nohup ~/bin/closedmesh --client --join <TOKEN> > /tmp/mesh.log 2>&1 &
 
 ```bash
 # Check processes are running
-pgrep -la "closedmesh|rpc-server|llama-server"
+pgrep -la "senda|rpc-server|llama-server"
 
 # Check API
 curl -s http://localhost:9337/v1/models
@@ -98,25 +98,25 @@ curl -s http://localhost:9337/v1/chat/completions \
 ## Stopping
 
 ```bash
-pkill -f closedmesh; pkill -f rpc-server; pkill -f llama-server
+pkill -f senda; pkill -f rpc-server; pkill -f llama-server
 ```
 
-rpc-server and llama-server are child processes of closedmesh, but killing the parent doesn't always kill them (they can become orphans with ppid=1). Always kill all three explicitly.
+rpc-server and llama-server are child processes of senda, but killing the parent doesn't always kill them (they can become orphans with ppid=1). Always kill all three explicitly.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | Exit 137 immediately | macOS quarantine xattr | `codesign -s - ~/bin/*; xattr -cr ~/bin/` |
-| Empty reply from API | llama-server still loading | Wait. Check `/tmp/closedmesh-llama-server.log` |
+| Empty reply from API | llama-server still loading | Wait. Check `/tmp/senda-llama-server.log` |
 | "No inference server available" | Election in progress or llama-server crashed | Check `/tmp/mesh.log` for errors |
 | Timeout waiting for tunnel maps | Peer disconnected during model load | Will auto-recover on next mesh change |
-| Orphan rpc-server holding GPU memory | Parent closedmesh was killed | `pkill -f rpc-server` |
+| Orphan rpc-server holding GPU memory | Parent senda was killed | `pkill -f rpc-server` |
 | `*.n0.iroh-canary.iroh.link` DNS fails | Network has DNS sinkhole | Use `--bind-port` + UDP port forwarding instead of relays |
 
 ## Log locations
 
-- `~/.closedmesh/key` — persistent node identity
+- `~/.senda/key` — persistent node identity
 - `/tmp/mesh.log` — main process output (if started with `> /tmp/mesh.log 2>&1`)
-- `/tmp/closedmesh-llama-server.log` — llama-server stdout/stderr
-- `/tmp/closedmesh-rpc-<PORT>.log` — rpc-server stdout/stderr
+- `/tmp/senda-llama-server.log` — llama-server stdout/stderr
+- `/tmp/senda-rpc-<PORT>.log` — rpc-server stdout/stderr

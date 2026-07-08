@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# scripts/release.sh — build a ClosedMesh macOS arm64 release tarball.
+# scripts/release.sh — build a Senda macOS arm64 release tarball.
 #
-# Output: dist-release/closedmesh-darwin-aarch64.tar.gz + .sha256
+# Output: dist-release/senda-darwin-aarch64.tar.gz + .sha256
 #
 #   ./scripts/release.sh
 #
-# Then upload the tarball as an asset on a GitHub Release on closedmesh/closedmesh-llm.
+# Then upload the tarball as an asset on a GitHub Release on senda-network/senda-llm.
 
 set -euo pipefail
 
@@ -13,7 +13,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
 ARCH="darwin-aarch64"
-ASSET_NAME="closedmesh-${ARCH}.tar.gz"
+ASSET_NAME="senda-${ARCH}.tar.gz"
 DIST_DIR="$REPO_ROOT/dist-release"
 TARBALL="$DIST_DIR/$ASSET_NAME"
 SHA="$DIST_DIR/$ASSET_NAME.sha256"
@@ -25,9 +25,9 @@ fi
 
 echo "==> cargo build --release"
 CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$REPO_ROOT/target}" \
-    cargo build --release -p closedmesh
+    cargo build --release -p senda
 
-BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/release/closedmesh"
+BIN="${CARGO_TARGET_DIR:-$REPO_ROOT/target}/release/senda"
 if [[ ! -x "$BIN" ]]; then
     echo "release: built binary not found at $BIN" >&2
     exit 1
@@ -38,12 +38,12 @@ mkdir -p "$DIST_DIR"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 
-cp "$BIN" "$STAGE/closedmesh"
-chmod +x "$STAGE/closedmesh"
-cp "$REPO_ROOT/dist/dev.closedmesh.closedmesh.plist" "$STAGE/dev.closedmesh.closedmesh.plist"
+cp "$BIN" "$STAGE/senda"
+chmod +x "$STAGE/senda"
+cp "$REPO_ROOT/dist/network.senda.runtime.plist" "$STAGE/network.senda.runtime.plist"
 [[ -f "$REPO_ROOT/LICENSE" ]] && cp "$REPO_ROOT/LICENSE" "$STAGE/LICENSE"
 
-tar -C "$STAGE" -czf "$TARBALL" closedmesh dev.closedmesh.closedmesh.plist $([[ -f "$STAGE/LICENSE" ]] && echo LICENSE)
+tar -C "$STAGE" -czf "$TARBALL" senda network.senda.runtime.plist $([[ -f "$STAGE/LICENSE" ]] && echo LICENSE)
 
 shasum -a 256 "$TARBALL" | awk '{print $1}' > "$SHA"
 
@@ -51,6 +51,6 @@ echo
 echo "  Tarball: $TARBALL"
 echo "  SHA256:  $(cat "$SHA")"
 echo
-echo "Upload this tarball to a GitHub Release on closedmesh/closedmesh-llm:"
-echo "  gh release create v\$VERSION '$TARBALL' --repo closedmesh/closedmesh-llm \\"
-echo "    --title 'ClosedMesh v\$VERSION' --notes 'ClosedMesh release.'"
+echo "Upload this tarball to a GitHub Release on senda-network/senda-llm:"
+echo "  gh release create v\$VERSION '$TARBALL' --repo senda-network/senda-llm \\"
+echo "    --title 'Senda v\$VERSION' --notes 'Senda release.'"

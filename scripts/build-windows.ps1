@@ -8,9 +8,9 @@ $ErrorActionPreference = "Stop"
 
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $scriptDir ".."))
-$llamaDir = if ($env:CLOSEDMESH_LLAMA_DIR) { $env:CLOSEDMESH_LLAMA_DIR } else { Join-Path $repoRoot ".deps\llama.cpp" }
+$llamaDir = if ($env:SENDA_LLAMA_DIR) { $env:SENDA_LLAMA_DIR } else { Join-Path $repoRoot ".deps\llama.cpp" }
 $buildDir = Join-Path $llamaDir "build"
-$meshUiDir = Join-Path $repoRoot "closedmesh\ui"
+$meshUiDir = Join-Path $repoRoot "senda\ui"
 $compilerLauncherArgs = @()
 $compilerCacheBin = $null
 
@@ -18,7 +18,7 @@ function Prepare-Llama {
     $pinFile = Join-Path $repoRoot "third_party\llama.cpp\upstream.txt"
     $patchDir = Join-Path $repoRoot "third_party\llama.cpp\patches"
     $upstreamUrl = if ($env:LLAMA_UPSTREAM_URL) { $env:LLAMA_UPSTREAM_URL } else { "https://github.com/ggml-org/llama.cpp.git" }
-    $targetSha = if ($env:CLOSEDMESH_LLAMA_PIN_SHA) { $env:CLOSEDMESH_LLAMA_PIN_SHA } else { (Get-Content $pinFile -Raw).Trim() }
+    $targetSha = if ($env:SENDA_LLAMA_PIN_SHA) { $env:SENDA_LLAMA_PIN_SHA } else { (Get-Content $pinFile -Raw).Trim() }
 
     if (-not (Test-Path $pinFile)) {
         throw "Missing llama.cpp upstream pin: $pinFile"
@@ -41,8 +41,8 @@ function Prepare-Llama {
         & git am --abort *> $null
         Invoke-NativeCommand "git" @("remote", "set-url", "origin", $upstreamUrl)
         Invoke-NativeCommand "git" @("fetch", "origin", "master", "--tags")
-        Invoke-NativeCommand "git" @("config", "user.name", "ClosedMesh CI")
-        Invoke-NativeCommand "git" @("config", "user.email", "ci@closedmesh.local")
+        Invoke-NativeCommand "git" @("config", "user.name", "Senda CI")
+        Invoke-NativeCommand "git" @("config", "user.email", "ci@senda.local")
         Invoke-NativeCommand "git" @("-c", "advice.detachedHead=false", "checkout", "--detach", "--quiet", $targetSha)
         Invoke-NativeCommand "git" @("reset", "--hard", "--quiet", $targetSha)
         Invoke-NativeCommand "git" @("clean", "-fdx", "-e", "build/")
@@ -680,7 +680,7 @@ Invoke-InRepo {
     # BUILD_SHARED_LIBS=ON mirrors upstream ggml-org/llama.cpp's official
     # Windows release: each backend (cuda, rpc, cpu-<isa>) lands as its
     # own ggml-*.dll alongside the executables, which is what
-    # release-closedmesh.ps1 expects to glob into the bundle. Static (OFF)
+    # release-senda.ps1 expects to glob into the bundle. Static (OFF)
     # would also work in principle but bakes the CUDA backend into the
     # exe, hides ggml-cuda.dll from the bundle, and diverges from the
     # filesystem layout `desktop/src/mesh.rs::repair_missing_helpers`
@@ -747,7 +747,7 @@ Invoke-InRepo {
 
     $parallelJobs = [Environment]::ProcessorCount
     Invoke-NativeCommand "cmake" $cmakeArgs
-    # Build only the targets the closedmesh runtime actually invokes —
+    # Build only the targets the senda runtime actually invokes —
     # the same set patch 0006 wires into llama.cpp's mesh CI. Building
     # `--all` pulls in llama-cli / llama-bench / etc., and the patch 0005
     # mesh-hook code in server-context.cpp leaks httplib::Client symbols
@@ -763,7 +763,7 @@ Invoke-InRepo {
 
     if (Test-Path $meshUiDir) {
         if (Test-UiBuildRequired -UiDirectory $meshUiDir) {
-            Write-Host "Building closedmesh UI..."
+            Write-Host "Building senda UI..."
             Push-Location $meshUiDir
             try {
                 if (Test-NpmInstallRequired -UiDirectory $meshUiDir) {
@@ -774,12 +774,12 @@ Invoke-InRepo {
                 Pop-Location
             }
         } else {
-            Write-Host "Skipping closedmesh UI build; dist is up to date."
+            Write-Host "Skipping senda UI build; dist is up to date."
         }
     }
 
-    Write-Host "Building closedmesh..."
-    Invoke-NativeCommand "cargo" @("build", "--release", "--locked", "-p", "closedmesh")
+    Write-Host "Building senda..."
+    Invoke-NativeCommand "cargo" @("build", "--release", "--locked", "-p", "senda")
     Copy-DevRuntimeBinaries -BackendName $backendName -BuildDir $buildDir -RepoRoot $repoRoot
-    Write-Host "Mesh binary: target\release\closedmesh.exe"
+    Write-Host "Mesh binary: target\release\senda.exe"
 }

@@ -5,10 +5,10 @@ plugins {
     `maven-publish`
 }
 
-group = "com.closedmesh"
+group = "com.senda"
 version = "0.66.79"
 
-val androidArtifactId = "closedmesh-android"
+val androidArtifactId = "senda-android"
 
 repositories {
     mavenCentral()
@@ -167,21 +167,21 @@ publishing {
             artifact(sourcesJar)
 
             pom {
-                name.set("ClosedMesh Android SDK")
-                description.set("Android/Kotlin bindings for connecting to ClosedMesh.")
-                url.set("https://github.com/closedmesh/closedmesh-llm")
+                name.set("Senda Android SDK")
+                description.set("Android/Kotlin bindings for connecting to Senda.")
+                url.set("https://github.com/senda-network/senda-llm")
 
                 licenses {
                     license {
                         name.set("MIT")
-                        url.set("https://github.com/closedmesh/closedmesh-llm/blob/main/LICENSE")
+                        url.set("https://github.com/senda-network/senda-llm/blob/main/LICENSE")
                     }
                 }
 
                 scm {
-                    url.set("https://github.com/closedmesh/closedmesh-llm")
-                    connection.set("scm:git:https://github.com/closedmesh/closedmesh-llm.git")
-                    developerConnection.set("scm:git:ssh://git@github.com/closedmesh/closedmesh-llm.git")
+                    url.set("https://github.com/senda-network/senda-llm")
+                    connection.set("scm:git:https://github.com/senda-network/senda-llm.git")
+                    developerConnection.set("scm:git:ssh://git@github.com/senda-network/senda-llm.git")
                 }
 
                 withXml {
@@ -239,7 +239,7 @@ publishing {
     repositories {
         maven {
             name = "GitHubPackages"
-            url = uri("https://maven.pkg.github.com/closedmesh/closedmesh-llm")
+            url = uri("https://maven.pkg.github.com/senda-network/senda-llm")
             credentials {
                 username = providers.environmentVariable("GITHUB_ACTOR")
                     .orElse(providers.gradleProperty("gpr.user"))

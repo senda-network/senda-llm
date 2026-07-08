@@ -18,13 +18,13 @@ For built-in launcher commands such as `goose`, `claude`, and `opencode`:
 Launch Goose:
 
 ```bash
-closedmesh goose
+senda goose
 ```
 
 Use a specific model:
 
 ```bash
-closedmesh goose --model MiniMax-M2.5-Q4_K_M
+senda goose --model MiniMax-M2.5-Q4_K_M
 ```
 
 This writes or updates `~/.config/goose/custom_providers/mesh.json` and launches Goose.
@@ -34,13 +34,13 @@ This writes or updates `~/.config/goose/custom_providers/mesh.json` and launches
 Launch Claude Code directly through Mesh LLM:
 
 ```bash
-closedmesh claude
+senda claude
 ```
 
 Use a specific model:
 
 ```bash
-closedmesh claude --model MiniMax-M2.5-Q4_K_M
+senda claude --model MiniMax-M2.5-Q4_K_M
 ```
 
 ## OpenCode
@@ -48,25 +48,25 @@ closedmesh claude --model MiniMax-M2.5-Q4_K_M
 Launch OpenCode directly through Mesh LLM:
 
 ```bash
-closedmesh opencode
+senda opencode
 ```
 
 Point OpenCode at a different mesh host or URL:
 
 ```bash
-closedmesh opencode --host https://mesh.example.com
+senda opencode --host https://mesh.example.com
 ```
 
 Use a specific model:
 
 ```bash
-closedmesh opencode --host 127.0.0.1:9337 --model MiniMax-M2.5-Q4_K_M
+senda opencode --host 127.0.0.1:9337 --model MiniMax-M2.5-Q4_K_M
 ```
 
 Write a merged persistent OpenCode config to `~/.config/opencode/opencode.json`:
 
 ```bash
-closedmesh opencode --write --host 127.0.0.1:9337
+senda opencode --write --host 127.0.0.1:9337
 ```
 
 If only `~/.config/opencode/opencode.jsonc` exists, Mesh LLM stops with a clear error telling you to rename or migrate it to `opencode.json` first.
@@ -81,7 +81,7 @@ OPENCODE_CONFIG_CONTENT='{
   "provider": {
     "mesh": {
       "npm": "@ai-sdk/openai-compatible",
-      "name": "closedmesh",
+      "name": "senda",
       "options": {
         "baseURL": "http://127.0.0.1:9337/v1"
       },
@@ -100,7 +100,7 @@ OPENCODE_CONFIG_CONTENT='{
 Start a mesh client:
 
 ```bash
-closedmesh client --auto --port 9337
+senda client --auto --port 9337
 ```
 
 Check available models:
@@ -161,26 +161,26 @@ Mesh LLM can also share status, findings, and questions across the mesh through 
 This works even if you are not using Mesh LLM for model serving. A client-only node is enough:
 
 ```bash
-closedmesh client
+senda client
 ```
 
 Install the agent skill:
 
 ```bash
-closedmesh blackboard install-skill
+senda blackboard install-skill
 ```
 
 Post a status update:
 
 ```bash
-closedmesh blackboard "STATUS: [org/repo branch:main] refactoring billing module"
+senda blackboard "STATUS: [org/repo branch:main] refactoring billing module"
 ```
 
 Search the feed:
 
 ```bash
-closedmesh blackboard --search "billing refactor"
-closedmesh blackboard --search "QUESTION"
+senda blackboard --search "billing refactor"
+senda blackboard --search "QUESTION"
 ```
 
 Messages are ephemeral, scrubbed for obvious PII, and stay inside the mesh.
@@ -190,7 +190,7 @@ Messages are ephemeral, scrubbed for obvious PII, and stay inside the mesh.
 Run the blackboard as an MCP server over stdio:
 
 ```bash
-closedmesh blackboard --mcp
+senda blackboard --mcp
 ```
 
 Example MCP config:
@@ -199,7 +199,7 @@ Example MCP config:
 {
   "mcpServers": {
     "mesh-blackboard": {
-      "command": "closedmesh",
+      "command": "senda",
       "args": ["blackboard", "--mcp"]
     }
   }

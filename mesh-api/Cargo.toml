@@ -4,8 +4,8 @@ version = "0.66.79"
 edition = "2021"
 description = "Public Rust SDK for embedding Mesh LLM clients in applications"
 license = "Apache-2.0"
-repository = "https://github.com/closedmesh/closedmesh-llm"
-homepage = "https://github.com/closedmesh/closedmesh-llm"
+repository = "https://github.com/senda-network/senda-llm"
+homepage = "https://github.com/senda-network/senda-llm"
 readme = "README.md"
 keywords = ["llm", "mesh", "sdk", "api", "client"]
 categories = ["api-bindings", "network-programming"]
@@ -14,7 +14,7 @@ categories = ["api-bindings", "network-programming"]
 host-io = ["mesh-client/host-io"]
 
 [dependencies]
-mesh-client = { package = "closedmesh-client", version = "0.66.79", path = "../closedmesh-client" }
+mesh-client = { package = "senda-client", version = "0.66.79", path = "../senda-client" }
 hex = "0.4"
 thiserror = "2"
 

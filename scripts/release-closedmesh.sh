@@ -1,33 +1,33 @@
 #!/usr/bin/env bash
-# release-closedmesh.sh — package the closedmesh binary for the closedmesh.com installer.
+# release-senda.sh — package the senda binary for the senda.network installer.
 #
-# Produces dist-release/closedmesh-<platform-suffix>.tar.gz, where <platform-suffix>
-# matches what closedmesh/public/install.sh asks for. Runs alongside the existing
-# scripts/package-release.sh (which produces the upstream closedmesh bundle).
+# Produces dist-release/senda-<platform-suffix>.tar.gz, where <platform-suffix>
+# matches what senda/public/install.sh asks for. Runs alongside the existing
+# scripts/package-release.sh (which produces the upstream senda bundle).
 #
 # What goes in the tarball depends on the flavor:
 #
-#   - metal (macOS arm64) / cpu (Linux): the full runtime — closedmesh,
+#   - metal (macOS arm64) / cpu (Linux): the full runtime — senda,
 #     rpc-server-<flavor>, llama-server-<flavor>, llama-moe-{analyze,split},
 #     and any runtime shared libraries. These flavors are small enough (~40MB
 #     on macOS, ~45MB on Linux CPU) to ship as a single-tarball installer
 #     payload that works end-to-end after `curl … | sh`.
 #
-#   - cuda / rocm / vulkan: only the main closedmesh binary. These flavors'
+#   - cuda / rocm / vulkan: only the main senda binary. These flavors'
 #     llama.cpp runtime bundles balloon from tens of MB to hundreds of MB
 #     (ROCm) or low gigabytes (CUDA) because they drag in cuBLAS / HIP
 #     shared libraries. We keep the installer tarball slim; install.sh
-#     does a second download of the matching `closedmesh-v<ver>-<target>.tar.gz`
+#     does a second download of the matching `senda-v<ver>-<target>.tar.gz`
 #     (produced by package-release.sh) for the llama.cpp runtime.
 #
 # Every flavor always includes:
-#   <archive>/closedmesh
-#   <archive>/dev.closedmesh.closedmesh.plist  (macOS only, reference)
-#   <archive>/closedmesh.service               (Linux only, systemd reference)
+#   <archive>/senda
+#   <archive>/network.senda.runtime.plist  (macOS only, reference)
+#   <archive>/senda.service               (Linux only, systemd reference)
 #   <archive>/LICENSE
 #
 # Usage:
-#   scripts/release-closedmesh.sh [--flavor cpu|cuda|rocm|vulkan|metal] [output_dir]
+#   scripts/release-senda.sh [--flavor cpu|cuda|rocm|vulkan|metal] [output_dir]
 #
 # Backend flavor defaults to:
 #   - macOS arm64: metal
@@ -39,7 +39,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 RELEASE_BIN_DIR="$REPO_ROOT/target/release"
-BUILD_BIN_DIR="${CLOSEDMESH_LLAMA_BUILD_BIN_DIR:-$REPO_ROOT/.deps/llama.cpp/build/bin}"
+BUILD_BIN_DIR="${SENDA_LLAMA_BUILD_BIN_DIR:-$REPO_ROOT/.deps/llama.cpp/build/bin}"
 DIST_DIR_DEFAULT="$REPO_ROOT/dist-release"
 
 FLAVOR="${MESH_RELEASE_FLAVOR:-}"
@@ -64,7 +64,7 @@ while [[ $# -gt 0 ]]; do
                 OUTPUT_DIR="$1"
                 shift
             else
-                echo "release-closedmesh: unexpected argument: $1" >&2
+                echo "release-senda: unexpected argument: $1" >&2
                 exit 1
             fi
             ;;
@@ -88,14 +88,14 @@ if [[ -z "$FLAVOR" ]]; then
         Darwin/aarch64) FLAVOR="metal" ;;
         Linux/x86_64|Linux/aarch64) FLAVOR="cpu" ;;
         *)
-            echo "release-closedmesh: unsupported platform $os/$arch_canon" >&2
+            echo "release-senda: unsupported platform $os/$arch_canon" >&2
             exit 1
             ;;
     esac
 fi
 
 # Compose platform-suffix used in the archive name. This must stay in lockstep
-# with the detect_target() function in closedmesh/public/install.sh.
+# with the detect_target() function in senda/public/install.sh.
 case "$os/$arch_canon/$FLAVOR" in
     Darwin/aarch64/metal) platform_suffix="darwin-aarch64" ;;
     Linux/x86_64/cpu)     platform_suffix="linux-x86_64-cpu" ;;
@@ -105,16 +105,16 @@ case "$os/$arch_canon/$FLAVOR" in
     Linux/aarch64/cpu)    platform_suffix="linux-aarch64-cpu" ;;
     Linux/aarch64/vulkan) platform_suffix="linux-aarch64-vulkan" ;;
     *)
-        echo "release-closedmesh: unsupported os/arch/flavor combo: $os/$arch_canon/$FLAVOR" >&2
+        echo "release-senda: unsupported os/arch/flavor combo: $os/$arch_canon/$FLAVOR" >&2
         exit 1
         ;;
 esac
 
-asset="closedmesh-${platform_suffix}.tar.gz"
+asset="senda-${platform_suffix}.tar.gz"
 
-bin="$RELEASE_BIN_DIR/closedmesh"
+bin="$RELEASE_BIN_DIR/senda"
 if [[ ! -x "$bin" ]]; then
-    echo "release-closedmesh: built binary not found at $bin" >&2
+    echo "release-senda: built binary not found at $bin" >&2
     echo "                    run 'just release-build' (or the platform-specific recipe) first." >&2
     exit 1
 fi
@@ -127,21 +127,21 @@ sha_file="$tarball.sha256"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 
-cp "$bin" "$stage/closedmesh"
-chmod +x "$stage/closedmesh"
+cp "$bin" "$stage/senda"
+chmod +x "$stage/senda"
 
 # Reference service definitions: ship per-platform so the tarball is
 # self-documenting, but install.sh / install.ps1 generate the live unit
 # at install time with the correct paths.
 case "$os" in
     Darwin)
-        if [[ -f "$REPO_ROOT/dist/dev.closedmesh.closedmesh.plist" ]]; then
-            cp "$REPO_ROOT/dist/dev.closedmesh.closedmesh.plist" "$stage/dev.closedmesh.closedmesh.plist"
+        if [[ -f "$REPO_ROOT/dist/network.senda.runtime.plist" ]]; then
+            cp "$REPO_ROOT/dist/network.senda.runtime.plist" "$stage/network.senda.runtime.plist"
         fi
         ;;
     Linux)
-        if [[ -f "$REPO_ROOT/dist/closedmesh.service" ]]; then
-            cp "$REPO_ROOT/dist/closedmesh.service" "$stage/closedmesh.service"
+        if [[ -f "$REPO_ROOT/dist/senda.service" ]]; then
+            cp "$REPO_ROOT/dist/senda.service" "$stage/senda.service"
         fi
         ;;
 esac
@@ -166,7 +166,7 @@ if (( include_runtime )); then
     for bin in "rpc-server" "llama-server" "llama-moe-analyze" "llama-moe-split"; do
         src="$BUILD_BIN_DIR/$bin"
         [[ ! -x "$src" ]] && missing_bins+=("$bin") && continue
-        # Flavor-suffix the two that closedmesh's launch.rs expects flavored.
+        # Flavor-suffix the two that senda's launch.rs expects flavored.
         case "$bin" in
             rpc-server|llama-server) dest="$stage/${bin}-${FLAVOR}" ;;
             *)                       dest="$stage/${bin}" ;;
@@ -176,7 +176,7 @@ if (( include_runtime )); then
     done
 
     if (( ${#missing_bins[@]} > 0 )); then
-        echo "release-closedmesh: missing llama.cpp binaries for flavor '$FLAVOR':" >&2
+        echo "release-senda: missing llama.cpp binaries for flavor '$FLAVOR':" >&2
         printf '  - %s\n' "${missing_bins[@]}" >&2
         echo "                    expected under $BUILD_BIN_DIR" >&2
         echo "                    run 'just release-build' first." >&2
@@ -203,7 +203,7 @@ if (( include_runtime )); then
     # mirror what package-release.sh does for the full bundle.
     if [[ "$os" == "Darwin" ]]; then
         for bin in \
-            "$stage/closedmesh" \
+            "$stage/senda" \
             "$stage/rpc-server-${FLAVOR}" \
             "$stage/llama-server-${FLAVOR}" \
             "$stage/llama-moe-analyze" \

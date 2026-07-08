@@ -58,7 +58,7 @@ permissions:
   actions: write
 
 env:
-  CACHE_NAMESPACE: closedmesh
+  CACHE_NAMESPACE: senda
   LLAMA_GPU_CACHE_RETENTION: ${{ github.event.inputs.retention || vars.LLAMA_GPU_CACHE_RETENTION || '2' }}
 
 jobs:
@@ -78,8 +78,8 @@ jobs:
       build_recipe: release-build-cuda
       build_args: 89
       extra_env: |
-        CLOSEDMESH_CUDA_FA_ALL_QUANTS=off
-        CLOSEDMESH_LLAMA_TARGETS=rpc-server llama-server llama-moe-analyze llama-moe-split
+        SENDA_CUDA_FA_ALL_QUANTS=off
+        SENDA_LLAMA_TARGETS=rpc-server llama-server llama-moe-analyze llama-moe-split
 
   warm_llama_cuda_fat:
     needs: resolve_llama_cache_keys

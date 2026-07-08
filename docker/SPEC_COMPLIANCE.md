@@ -1,16 +1,16 @@
 # Issue #115 Spec Compliance Tracker
 
-**Issue**: https://github.com/closedmesh/closedmesh-llm/issues/115
+**Issue**: https://github.com/senda-network/senda-llm/issues/115
 
 This file is the human-readable counterpart to `.github/workflows/docker-precheck.yml`. Both must agree. If they disagree, the reusable workflow is authoritative.
 
-> **Spec Correction #1**: The spec says `COPY proto/ proto/` but the actual path is `closedmesh/proto/` (verified via filesystem inspection: `closedmesh/proto/node.proto`, `closedmesh/proto/plugin.proto` exist; no root-level `proto/`). All Dockerfiles use the corrected path `COPY closedmesh/proto/ closedmesh/proto/`.
+> **Spec Correction #1**: The spec says `COPY proto/ proto/` but the actual path is `senda/proto/` (verified via filesystem inspection: `senda/proto/node.proto`, `senda/proto/plugin.proto` exist; no root-level `proto/`). All Dockerfiles use the corrected path `COPY senda/proto/ senda/proto/`.
 
 ## Open Question Resolutions
 
 | Question | Answer | Evidence |
 |----------|--------|----------|
-| Q1: CLI form | `closedmesh --client --auto --port 9337 --console 3131 --listen-all` (bare flags) | closedmesh/src/cli/mod.rs — top-level Cli struct accepts bare flags |
+| Q1: CLI form | `senda --client --auto --port 9337 --console 3131 --listen-all` (bare flags) | senda/src/cli/mod.rs — top-level Cli struct accepts bare flags |
 | Q2: :latest tag target | `client` (most portable, smallest, no GPU dependency) | Design decision |
 | Q3: CUDA compute_120 (Blackwell) | Works with CUDA 12.8.0 (compute_120 included in Justfile release-build-cuda) | Justfile line 53, release.yml line 78 |
 | Q4: Non-root user policy | Stay root (matches existing fly/Dockerfile; K3S users override via securityContext) | Design decision |
@@ -20,11 +20,11 @@ This file is the human-readable counterpart to `.github/workflows/docker-prechec
 | # | Spec Requirement | Enforcing File:Line | Grep Verifier | Status |
 |---|------------------|---------------------|---------------|--------|
 | 1 | ui-builder runs before rust-builder in every Dockerfile | docker/Dockerfile.client:46,53; docker/Dockerfile.cpu:50,57; docker/Dockerfile.vulkan:45,52; docker/Dockerfile.rocm:48,55; fly/Dockerfile:49,56 | `grep -n "COPY --from=ui-builder"` | ✅ verified (client, cpu, vulkan, rocm, fly) |
-| 2 | cargo-chef full workspace copy (incl. closedmesh/proto/ corrected path) — NO stub lib.rs | docker/Dockerfile.client:30-36; docker/Dockerfile.cpu:29-37; docker/Dockerfile.vulkan:29-37; docker/Dockerfile.rocm:30-38; fly/Dockerfile:34-40 | `grep -n "COPY closedmesh/proto"` | ✅ verified (client, cpu, vulkan, rocm, fly) |
+| 2 | cargo-chef full workspace copy (incl. senda/proto/ corrected path) — NO stub lib.rs | docker/Dockerfile.client:30-36; docker/Dockerfile.cpu:29-37; docker/Dockerfile.vulkan:29-37; docker/Dockerfile.rocm:30-38; fly/Dockerfile:34-40 | `grep -n "COPY senda/proto"` | ✅ verified (client, cpu, vulkan, rocm, fly) |
 | 3 | libdbus-1-dev in rust-builder apt | docker/Dockerfile.client:24; docker/Dockerfile.cpu:28; docker/Dockerfile.vulkan:23; docker/Dockerfile.rocm:28; fly/Dockerfile:27 | `grep -n "libdbus-1-dev"` | ✅ verified (client, cpu, vulkan, rocm, fly) |
 | 4 | master branch (NOT rebase-upstream-master) | docker/Dockerfile.cpu:66; docker/Dockerfile.vulkan:69; docker/Dockerfile.rocm:65 | `grep -n "master"` | ✅ verified (cpu, vulkan, rocm) |
 | 5 | GGML_CUDA_FA_ALL_QUANTS=ON in Dockerfile.cuda | docker/Dockerfile.cuda (cmake flags section) | `grep -n "GGML_CUDA_FA_ALL_QUANTS=ON"` | ✅ verified (cuda) |
-| 6 | Flavored binary naming in /usr/local/lib/closedmesh/bin/ | docker/Dockerfile.cpu:80-82,89-91; docker/Dockerfile.vulkan:84-86,93-95; docker/Dockerfile.rocm:79-81,90-92 | `grep -n "rpc-server-cpu\|llama-server-cpu\|rpc-server-vulkan\|llama-server-vulkan\|rpc-server-rocm\|llama-server-rocm"` | ✅ verified (cpu, vulkan, rocm) |
+| 6 | Flavored binary naming in /usr/local/lib/senda/bin/ | docker/Dockerfile.cpu:80-82,89-91; docker/Dockerfile.vulkan:84-86,93-95; docker/Dockerfile.rocm:79-81,90-92 | `grep -n "rpc-server-cpu\|llama-server-cpu\|rpc-server-vulkan\|llama-server-vulkan\|rpc-server-rocm\|llama-server-rocm"` | ✅ verified (cpu, vulkan, rocm) |
 | 7 | No `just bundle` in any Dockerfile | docker/Dockerfile.client (absent); docker/Dockerfile.vulkan (absent); docker/Dockerfile.rocm (absent); fly/Dockerfile (absent) | `` ! grep -rn "just bundle" docker/ fly/Dockerfile `` | ✅ verified (client, cpu, vulkan, rocm, fly) |
 | 8 | No `protobuf-compiler` apt install | docker/Dockerfile.client (absent); docker/Dockerfile.vulkan (absent); docker/Dockerfile.rocm (absent); fly/Dockerfile (absent) | `` ! grep -rn "protobuf-compiler" docker/ fly/Dockerfile `` | ✅ verified (client, cpu, vulkan, rocm, fly) |
 | 9 | No QEMU in docker.yml workflow | .github/workflows/docker.yml:31-77,148,313,477 (6 reusable precheck jobs; 3 native ubuntu-24.04-arm runners; no setup-qemu-action) | `` ! grep -in "qemu" .github/workflows/docker.yml `` | ✅ verified (17 jobs, 3 native arm64 runners, 0 QEMU references) |
@@ -66,10 +66,10 @@ This file is the human-readable counterpart to `.github/workflows/docker-prechec
 Task 0.5 — docker/entrypoint.sh — verified spec item 13 (3-mode case, no api-only mode) at 2026-04-08
 Task 1.1 — docker/Dockerfile.client — verified spec items 1, 2, 3, 7, 8, 12 (client image, 52MB, 0 missing libs) at 2026-04-08
 Task 1.2 — docker/Dockerfile.cpu — verified spec items 4, 6, 11 (cpu image, 58MB, binaries: rpc-server-cpu llama-server-cpu llama-moe-split, llama-sha: b2f6a68) at 2026-04-08
-Task 1.3 — docker/Dockerfile.vulkan — verified spec items 1, 2, 3, 4, 6, 7, 8, 11, 12 (vulkan image, 75MB, binaries: rpc-server-vulkan llama-server-vulkan llama-moe-split, closedmesh 0.58.0) at 2026-04-08
-Task 1.4 — docker/Dockerfile.cuda — verified spec item 5 (GGML_CUDA_FA_ALL_QUANTS=ON, cuda image 2717MB, binaries: rpc-server-cuda llama-server-cuda llama-moe-split, closedmesh 0.58.0) at 2026-04-08
-Task 1.5 — docker/Dockerfile.rocm — verified spec items 1, 2, 3, 4, 6, 7, 8, 11, 12 (rocm image 1305MB, binaries: rpc-server-rocm llama-server-rocm llama-moe-split, closedmesh 0.58.0, HIPCXX/HIP_PATH exports, DGGML_HIP=ON, DAMDGPU_TARGETS ARG) at 2026-04-08
-Task 2.2 — fly/Dockerfile — verified spec item 10 (ui-builder stage present, latent bug fixed); rows 1, 2, 3, 7, 8, 12 updated with fly/Dockerfile file:line refs; cleanroom build (no local ui/dist) → exit 0; smoke test closedmesh 0.58.0; APP_MODE=console confirmed at 2026-04-08
+Task 1.3 — docker/Dockerfile.vulkan — verified spec items 1, 2, 3, 4, 6, 7, 8, 11, 12 (vulkan image, 75MB, binaries: rpc-server-vulkan llama-server-vulkan llama-moe-split, senda 0.58.0) at 2026-04-08
+Task 1.4 — docker/Dockerfile.cuda — verified spec item 5 (GGML_CUDA_FA_ALL_QUANTS=ON, cuda image 2717MB, binaries: rpc-server-cuda llama-server-cuda llama-moe-split, senda 0.58.0) at 2026-04-08
+Task 1.5 — docker/Dockerfile.rocm — verified spec items 1, 2, 3, 4, 6, 7, 8, 11, 12 (rocm image 1305MB, binaries: rpc-server-rocm llama-server-rocm llama-moe-split, senda 0.58.0, HIPCXX/HIP_PATH exports, DGGML_HIP=ON, DAMDGPU_TARGETS ARG) at 2026-04-08
+Task 2.2 — fly/Dockerfile — verified spec item 10 (ui-builder stage present, latent bug fixed); rows 1, 2, 3, 7, 8, 12 updated with fly/Dockerfile file:line refs; cleanroom build (no local ui/dist) → exit 0; smoke test senda 0.58.0; APP_MODE=console confirmed at 2026-04-08
 Task 3.1 — .github/workflows/docker.yml — verified spec item 9 (no QEMU, 17 jobs total, 6 reusable precheck jobs, 3 native ubuntu-24.04-arm runners for client/cpu/vulkan arm64, cuda+rocm amd64-only, manifest merge jobs); reusable docker precheck encoded the same assertions in YAML at 2026-04-08
 Task 3.2 — Final Verification — all 13 spec items verified via `.github/workflows/docker-precheck.yml`; SPEC_COMPLIANCE.md updated with reusable workflow authority at 2026-04-08
 

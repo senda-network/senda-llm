@@ -10,7 +10,7 @@ set -euo pipefail
 # that keeps the scaffold constant while varying the first user turn.
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MESH_BIN="${MESH_BIN:-$ROOT/target/release/closedmesh}"
+MESH_BIN="${MESH_BIN:-$ROOT/target/release/senda}"
 BIN_DIR="${BIN_DIR:-$ROOT/.deps/llama.cpp/build/bin}"
 HF_CACHE_DIR="${HF_HUB_CACHE:-${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}/hub}"
 MODEL_PATH="${MODEL_PATH:-$HF_CACHE_DIR/Qwen2.5-0.5B-Instruct-Q4_K_M.gguf}"
@@ -155,7 +155,7 @@ start_phase() {
     launch_env=("${extra_env[@]}" "${launch_env[@]}")
   fi
   if [[ "$ENTRY_MODE" == "passive" ]]; then
-    launch_env=("CLOSEDMESH_FORCE_DUPLICATE_HOSTS=1" "${launch_env[@]}")
+    launch_env=("SENDA_FORCE_DUPLICATE_HOSTS=1" "${launch_env[@]}")
   fi
   if [[ "$NO_DRAFT" == "1" ]]; then
     extra_args+=(--no-draft)
@@ -187,7 +187,7 @@ EOF
   token="$(wait_for_token "$NODE1_LOG")"
 
   env "${launch_env[@]}" \
-    CLOSEDMESH_EPHEMERAL_KEY=1 \
+    SENDA_EPHEMERAL_KEY=1 \
     "$MESH_BIN" \
     serve \
     --config "$CONFIG_PATH" \
@@ -528,18 +528,18 @@ print(
 PY
 }
 
-require_file "$MESH_BIN" "closedmesh binary"
+require_file "$MESH_BIN" "senda binary"
 require_file "$BIN_DIR/llama-server" "llama.cpp llama-server"
 require_file "$MODEL_PATH" "benchmark model"
 
 echo "Logs: $TMP_DIR"
 
-start_phase "sticky-only" CLOSEDMESH_DISABLE_PREFIX_AFFINITY=1
+start_phase "sticky-only" SENDA_DISABLE_PREFIX_AFFINITY=1
 run_workload "sticky-only" "$TMP_DIR/sticky-only.json"
 annotate_route_distribution "$TMP_DIR/sticky-only.json"
 stop_nodes
 
-start_phase "prefix-only" CLOSEDMESH_PREFIX_ONLY=1
+start_phase "prefix-only" SENDA_PREFIX_ONLY=1
 run_workload "prefix-only" "$TMP_DIR/prefix-only.json"
 annotate_route_distribution "$TMP_DIR/prefix-only.json"
 report_comparison "$TMP_DIR/sticky-only.json" "$TMP_DIR/prefix-only.json"

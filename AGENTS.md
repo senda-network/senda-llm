@@ -2,26 +2,26 @@
 
 ## Repo Overview
 
-This repo (`closedmesh`) contains closedmesh — a Rust binary that pools GPUs over QUIC for distributed LLM inference using llama.cpp.
+This repo (`senda`) contains senda — a Rust binary that pools GPUs over QUIC for distributed LLM inference using llama.cpp.
 
 ## Key Docs
 
 | Doc | What it covers |
 |---|---|
 | `README.md` | Usage, install, CLI flags, examples |
-| `docs/VERIFICATION.md` | Model-identity peer verification: fingerprints, audit loop, `CLOSEDMESH_VERIFY_ENFORCE`, privacy boundary |
+| `docs/VERIFICATION.md` | Model-identity peer verification: fingerprints, audit loop, `SENDA_VERIFY_ENFORCE`, privacy boundary |
 | `CONTRIBUTING.md` | Build from source, dev workflow, UI dev |
 | `RELEASE.md` | Release process (build, bundle, tag, GitHub release) |
 | `ROADMAP.md` | Future directions |
-| `closedmesh/TODO.md` | Current work items and backlog |
-| `closedmesh/README.md` | Rust crate overview and file map |
-| `closedmesh/docs/DESIGN.md` | Architecture, protocols, features |
-| `closedmesh/docs/TESTING.md` | Test playbook, scenarios, remote deploy |
-| `closedmesh/docs/MULTI_MODAL.md` | Multimodal design: capability model, blob plugin, console, routing |
-| `closedmesh/docs/MoE_PLAN.md` | MoE expert sharding design |
-| `closedmesh/docs/MoE_DEPLOY_DESIGN.md` | MoE auto-deploy UX |
-| `closedmesh/docs/VIRTUAL_LLM.md` | Virtual LLM engine (inter-model collaboration) |
-| `closedmesh/docs/LLAMA_CPP_FORK.md` | llama.cpp fork: what's patched, how to update, how to sync |
+| `senda/TODO.md` | Current work items and backlog |
+| `senda/README.md` | Rust crate overview and file map |
+| `senda/docs/DESIGN.md` | Architecture, protocols, features |
+| `senda/docs/TESTING.md` | Test playbook, scenarios, remote deploy |
+| `senda/docs/MULTI_MODAL.md` | Multimodal design: capability model, blob plugin, console, routing |
+| `senda/docs/MoE_PLAN.md` | MoE expert sharding design |
+| `senda/docs/MoE_DEPLOY_DESIGN.md` | MoE auto-deploy UX |
+| `senda/docs/VIRTUAL_LLM.md` | Virtual LLM engine (inter-model collaboration) |
+| `senda/docs/LLAMA_CPP_FORK.md` | llama.cpp fork: what's patched, how to update, how to sync |
 | `fly/README.md` | Fly.io deployment (console + API apps) |
 | `tools/relay-fly-legacy/README.md` | Legacy self-hosted iroh relay (not in use — now using services.iroh.computer) |
 
@@ -30,7 +30,7 @@ This repo (`closedmesh`) contains closedmesh — a Rust binary that pools GPUs o
 Always use `just`. Never build manually.
 
 ```bash
-just build    # llama.cpp fork + closedmesh + UI
+just build    # llama.cpp fork + senda + UI
 just bundle   # portable tarball
 just stop     # kill mesh/rpc/llama processes
 just test     # quick inference test against :9337
@@ -54,22 +54,22 @@ See `CONTRIBUTING.md` for full dev workflow.
 
 ## llama.cpp Fork
 
-closedmesh depends on a patched fork of llama.cpp at **[github.com/Mesh-LLM/llama.cpp](https://github.com/Mesh-LLM/llama.cpp)** (`master` branch). The fork carries 8 commits on top of upstream: RPC optimizations, MoE expert splitting, and mesh hooks for inter-model collaboration.
+senda depends on a patched fork of llama.cpp at **[github.com/Mesh-LLM/llama.cpp](https://github.com/Mesh-LLM/llama.cpp)** (`master` branch). The fork carries 8 commits on top of upstream: RPC optimizations, MoE expert splitting, and mesh hooks for inter-model collaboration.
 
 **Be careful with this fork.** It is a separate repo with its own history. Breaking the fork breaks all builds.
 
 - The pinned commit SHA lives in `LLAMA_CPP_SHA` at the repo root. All build scripts and CI read from this file.
 - `just build` clones/pulls the fork automatically. You do not need to touch it for normal Rust or UI work.
 - **Do not update the fork to upstream HEAD unless explicitly asked.** Upstream llama.cpp changes frequently and rebasing our patches can introduce conflicts.
-- If you need to update the fork, read `closedmesh/docs/LLAMA_CPP_FORK.md` first. It has the full procedure: rebase, resolve conflicts, push, bump SHA, rebuild, test.
+- If you need to update the fork, read `senda/docs/LLAMA_CPP_FORK.md` first. It has the full procedure: rebase, resolve conflicts, push, bump SHA, rebuild, test.
 - If you need to add a new C++ patch, work in the fork checkout, commit, push, then bump `LLAMA_CPP_SHA`.
 - The fork's `master` is always: upstream HEAD + our patches rebased on top. Linear history, never merge commits.
 
 ## Project Structure
 
-- `closedmesh/src/` — Rust source
-- `closedmesh/ui/` — React web console (shadcn/ui patterns, see https://ui.shadcn.com/llms.txt)
-- `closedmesh/docs/` — Design and testing docs
+- `senda/src/` — Rust source
+- `senda/ui/` — React web console (shadcn/ui patterns, see https://ui.shadcn.com/llms.txt)
+- `senda/docs/` — Design and testing docs
 - `fly/` — Fly.io deployment (console + API client apps)
 - `tools/relay-fly-legacy/` — Legacy self-hosted iroh relay (not in use — now using services.iroh.computer)
 - `evals/` — Benchmarking and evaluation scripts
@@ -78,25 +78,25 @@ closedmesh depends on a patched fork of llama.cpp at **[github.com/Mesh-LLM/llam
 
 The crate root should stay minimal.
 
-- Keep `closedmesh/src/lib.rs` and `closedmesh/src/main.rs` as the only root `.rs` files unless there is a strong reason otherwise.
+- Keep `senda/src/lib.rs` and `senda/src/main.rs` as the only root `.rs` files unless there is a strong reason otherwise.
 - New code should go into an existing domain directory when possible.
 
 Use semantic ownership for module placement.
 
-- `closedmesh/src/cli/` — Clap types, command parsing, command dispatch, and user-facing command handlers.
-- `closedmesh/src/runtime/` — top-level process orchestration and startup/runtime coordination.
-- `closedmesh/src/network/` — request routing, proxying, tunneling, relay/discovery networking, request-affinity logic, and endpoint rewrite support.
-- `closedmesh/src/inference/` — model-serving logic, election, launch, pipeline, and MoE behavior.
-- `closedmesh/src/system/` — machine-local environment and platform concerns such as hardware detection, benchmarking, self-update, and local system integration.
-- `closedmesh/src/models/` — model catalog, resolution, downloads, local model storage, and model metadata.
-- `closedmesh/src/mesh/` — peer membership, gossip, identity, peer state, and mesh node behavior.
-- `closedmesh/src/plugin/` — plugin host, plugin runtime, transport, config, and MCP bridge support.
-- `closedmesh/src/api/` — management API surface and route handling.
-- `closedmesh/src/protocol/` — wire protocol types, encoding/decoding, and conversions.
+- `senda/src/cli/` — Clap types, command parsing, command dispatch, and user-facing command handlers.
+- `senda/src/runtime/` — top-level process orchestration and startup/runtime coordination.
+- `senda/src/network/` — request routing, proxying, tunneling, relay/discovery networking, request-affinity logic, and endpoint rewrite support.
+- `senda/src/inference/` — model-serving logic, election, launch, pipeline, and MoE behavior.
+- `senda/src/system/` — machine-local environment and platform concerns such as hardware detection, benchmarking, self-update, and local system integration.
+- `senda/src/models/` — model catalog, resolution, downloads, local model storage, and model metadata.
+- `senda/src/mesh/` — peer membership, gossip, identity, peer state, and mesh node behavior.
+- `senda/src/plugin/` — plugin host, plugin runtime, transport, config, and MCP bridge support.
+- `senda/src/api/` — management API surface and route handling.
+- `senda/src/protocol/` — wire protocol types, encoding/decoding, and conversions.
 
 CLI ownership rule.
 
-- All command handlers belong under `closedmesh/src/cli/`, usually `closedmesh/src/cli/commands/`.
+- All command handlers belong under `senda/src/cli/`, usually `senda/src/cli/commands/`.
 - Domain modules should not own Clap parsing or top-level command dispatch.
 - Domain modules may expose reusable functions that CLI handlers call.
 
@@ -136,32 +136,32 @@ Naming rule.
 Current structure notes.
 
 - Request-affinity code belongs with networking/routing behavior, not `system/`.
-- Plugin MCP support belongs inside `closedmesh/src/plugin/`, not as a separate root module.
-- Model command handlers belong in `closedmesh/src/cli/commands/`; `closedmesh/src/models/` should stay domain-focused.
+- Plugin MCP support belongs inside `senda/src/plugin/`, not as a separate root module.
+- Model command handlers belong in `senda/src/cli/commands/`; `senda/src/models/` should stay domain-focused.
 
 ## Key Source Files
 
-- `closedmesh/src/main.rs` — Binary entrypoint; calls `closedmesh::run_main()`
-- `closedmesh/src/runtime/mod.rs` — Top-level startup flows, runtime orchestration, and command dispatch
-- `closedmesh/src/mesh/mod.rs` — `Node` struct, gossip, mesh_id, peer management
-- `closedmesh/src/inference/election.rs` — Host election, tensor split calculation
-- `closedmesh/src/inference/launch.rs` — llama-server/rpc-server process management
-- `closedmesh/src/inference/moe.rs` — MoE detection, expert rankings, split orchestration
-- `closedmesh/src/network/proxy.rs` — HTTP proxy: request parsing, model routing, response helpers
-- `closedmesh/src/network/router.rs` — Request classification, model scoring, multimodal routing
-- `closedmesh/src/network/nostr.rs` — Nostr discovery, `score_mesh()`, `smart_auto()`
-- `closedmesh/src/network/tunnel.rs` — TCP ↔ QUIC relay (RPC + HTTP)
-- `closedmesh/src/api/mod.rs` — Management API (:3131): `/api/status`, `/api/events`, `/api/discover`, `/api/join`
-- `closedmesh/src/models/catalog.rs` — Model catalog, HuggingFace downloads
-- `closedmesh/src/models/capabilities.rs` — Multimodal/vision/audio/reasoning capability inference
-- `closedmesh/src/plugins/blobstore/mod.rs` — Request-scoped media object storage for multimodal
-- `closedmesh/src/runtime/instance.rs` — Per-instance runtime directory management: `InstanceRuntime`, pidfiles, flock liveness, scoped orphan reaping, local instance scanning
+- `senda/src/main.rs` — Binary entrypoint; calls `senda::run_main()`
+- `senda/src/runtime/mod.rs` — Top-level startup flows, runtime orchestration, and command dispatch
+- `senda/src/mesh/mod.rs` — `Node` struct, gossip, mesh_id, peer management
+- `senda/src/inference/election.rs` — Host election, tensor split calculation
+- `senda/src/inference/launch.rs` — llama-server/rpc-server process management
+- `senda/src/inference/moe.rs` — MoE detection, expert rankings, split orchestration
+- `senda/src/network/proxy.rs` — HTTP proxy: request parsing, model routing, response helpers
+- `senda/src/network/router.rs` — Request classification, model scoring, multimodal routing
+- `senda/src/network/nostr.rs` — Nostr discovery, `score_mesh()`, `smart_auto()`
+- `senda/src/network/tunnel.rs` — TCP ↔ QUIC relay (RPC + HTTP)
+- `senda/src/api/mod.rs` — Management API (:3131): `/api/status`, `/api/events`, `/api/discover`, `/api/join`
+- `senda/src/models/catalog.rs` — Model catalog, HuggingFace downloads
+- `senda/src/models/capabilities.rs` — Multimodal/vision/audio/reasoning capability inference
+- `senda/src/plugins/blobstore/mod.rs` — Request-scoped media object storage for multimodal
+- `senda/src/runtime/instance.rs` — Per-instance runtime directory management: `InstanceRuntime`, pidfiles, flock liveness, scoped orphan reaping, local instance scanning
 
 ## Mesh Protocol Compatibility
 
 Mesh compatibility across versions is critical. Nodes in the wild run different versions and must interoperate.
 
-- The mesh supports mixed-version operation: QUIC ALPN `closedmesh/1` (protobuf) and `closedmesh/0` (legacy JSON) nodes coexist. Do not break this.
+- The mesh supports mixed-version operation: QUIC ALPN `senda/1` (protobuf) and `senda/0` (legacy JSON) nodes coexist. Do not break this.
 - Gossip fields, stream types, and protobuf schemas must be additive. New fields should be optional and ignored by older nodes. Do not repurpose or remove existing fields.
 - When adding new gossip fields, stream types, or changing wire format, explicitly consider what happens when an older node receives the new data and when a newer node talks to an older peer.
 - Capability advertisement (vision, audio, multimodal, reasoning, tool_use, moe) is gossiped to all peers and consumed by routing, the API, and the UI. Changes to capability semantics affect the whole mesh, not just the local node.
@@ -178,11 +178,11 @@ When iterating on the plugin protocol, always consider protocol compatibility.
 
 ## UI Notes
 
-For changes in `closedmesh/ui/`, use components and compose interfaces consistently with shadcn/ui patterns. Prefer extending existing primitives in `ui/src/components/ui/` over ad-hoc markup.
+For changes in `senda/ui/`, use components and compose interfaces consistently with shadcn/ui patterns. Prefer extending existing primitives in `ui/src/components/ui/` over ad-hoc markup.
 
 ## Testing
 
-Read `closedmesh/docs/TESTING.md` before running tests. It has all test scenarios, remote deploy instructions, and cleanup commands.
+Read `senda/docs/TESTING.md` before running tests. It has all test scenarios, remote deploy instructions, and cleanup commands.
 
 Testing matters more than usual in this project because:
 
@@ -203,7 +203,7 @@ Before committing, run the local checks most likely to fail in CI for the files 
 
 ### Minimum bar before every commit
 
-- Rust-only change — format the changed Rust files and run `cargo check -p closedmesh`.
+- Rust-only change — format the changed Rust files and run `cargo check -p senda`.
 - UI-only change — run `just build`.
 - Mixed Rust and UI change — run `just build`.
 
@@ -211,9 +211,9 @@ Before committing, run the local checks most likely to fail in CI for the files 
 
 - Format only the changed Rust files from the repo root, for example with `cargo fmt --all -- path/to/file.rs`, and include those formatting changes in the commit.
 - Before committing Rust changes, ensure the formatting check passes with `cargo fmt --all -- --check`.
-- After Rust changes, run `cargo check -p closedmesh`.
+- After Rust changes, run `cargo check -p senda`.
 - If you touched tests, public APIs, routing, inference, gossip, plugin protocol, or CLI behavior, run the relevant tests before committing.
-- If you touched `proto/`, `closedmesh/src/protocol/`, `closedmesh/src/mesh/gossip.rs`, `closedmesh/src/mesh/mod.rs`, routing, election, or API serialization, do not stop at build-only validation: run at least `cargo test -p closedmesh --lib` and wait for it to exit successfully before committing.
+- If you touched `proto/`, `senda/src/protocol/`, `senda/src/mesh/gossip.rs`, `senda/src/mesh/mod.rs`, routing, election, or API serialization, do not stop at build-only validation: run at least `cargo test -p senda --lib` and wait for it to exit successfully before committing.
 - Do not report a build or test step as complete until the command has actually exited with code `0`.
 - Run Rust validation serially. Do not run multiple `cargo` commands at the same time.
 
@@ -260,16 +260,16 @@ just bundle
 Clean shutdown removes the instance's runtime directory automatically. Prefer the scoped runtime-aware commands first:
 
 ```bash
-closedmesh stop
+senda stop
 just stop
 ```
 
-Those paths use the runtime metadata under `~/.closedmesh/runtime/` to stop the tracked closedmesh instance and its child servers cleanly.
+Those paths use the runtime metadata under `~/.senda/runtime/` to stop the tracked senda instance and its child servers cleanly.
 
 If an instance is wedged badly enough that the scoped stop path cannot reach it, fall back to an emergency kill:
 
 ```bash
-pkill -f closedmesh; pkill -f rpc-server; pkill -f llama-server
+pkill -f senda; pkill -f rpc-server; pkill -f llama-server
 ```
 
 ## Deploy Checklist — MANDATORY
@@ -279,14 +279,14 @@ pkill -f closedmesh; pkill -f rpc-server; pkill -f llama-server
 ### Before starting nodes
 1. **Bump VERSION** in `main.rs` so you can verify the running binary is new code.
 2. `just build && just bundle`
-3. Kill ALL processes on ALL nodes — `pkill -9 -f closedmesh; pkill -9 -f llama-server; pkill -9 -f rpc-server`
-4. Verify clean — `ps -eo pid,args | grep -E 'closedmesh|llama-server|rpc-server' | grep -v grep` must be empty.
+3. Kill ALL processes on ALL nodes — `pkill -9 -f senda; pkill -9 -f llama-server; pkill -9 -f rpc-server`
+4. Verify clean — `ps -eo pid,args | grep -E 'senda|llama-server|rpc-server' | grep -v grep` must be empty.
 5. Deploy bundle — scp + tar + codesign on remote nodes.
-6. Verify version — `closedmesh --version` on every node.
+6. Verify version — `senda --version` on every node.
 
 ### After starting nodes
-7. Verify exactly 1 closedmesh process per node.
-8. Verify child processes (at most 1 rpc-server + 1 llama-server per closedmesh).
+7. Verify exactly 1 senda process per node.
+8. Verify child processes (at most 1 rpc-server + 1 llama-server per senda).
 9. `curl -s http://localhost:3131/api/status` returns valid JSON on every node.
 10. Check `/api/status` peers for new version string.
 11. Verify expected peer count.
@@ -299,24 +299,24 @@ If llama-server fails to start (stuck at "⏳ Starting llama-server..."), check 
 
 ```bash
 # Default location
-ls ~/.closedmesh/runtime/
-# Your instance ID is the closedmesh process PID
-cat ~/.closedmesh/runtime/$(pgrep -f closedmesh | head -1)/logs/llama-server.log
+ls ~/.senda/runtime/
+# Your instance ID is the senda process PID
+cat ~/.senda/runtime/$(pgrep -f senda | head -1)/logs/llama-server.log
 
-# Or look at the stderr output from closedmesh itself — it now prints
+# Or look at the stderr output from senda itself — it now prints
 # the absolute log path when spawning llama-server / rpc-server.
 ```
 
-rpc-server logs live at `~/.closedmesh/runtime/{pid}/logs/rpc-server-{port}.log`.
+rpc-server logs live at `~/.senda/runtime/{pid}/logs/rpc-server-{port}.log`.
 
 To override the runtime root (e.g., for tests or systemd):
-- `CLOSEDMESH_RUNTIME_ROOT=/path/to/custom/root` — highest priority
-- `XDG_RUNTIME_DIR` — if set (typical on systemd: `/run/user/{uid}/closedmesh/runtime`)
-- `$HOME/.closedmesh/runtime` — default fallback
+- `SENDA_RUNTIME_ROOT=/path/to/custom/root` — highest priority
+- `XDG_RUNTIME_DIR` — if set (typical on systemd: `/run/user/{uid}/senda/runtime`)
+- `$HOME/.senda/runtime` — default fallback
 
-For stale instances (crashed closedmesh leaving behind a runtime dir):
-- Other running closedmesh instances GC dead-owner dirs older than 1 hour on startup
-- Manual cleanup: `rm -rf ~/.closedmesh/runtime/<stale_pid>/`
+For stale instances (crashed senda leaving behind a runtime dir):
+- Other running senda instances GC dead-owner dirs older than 1 hour on startup
+- Manual cleanup: `rm -rf ~/.senda/runtime/<stale_pid>/`
 
 ### Common failures
 - **nohup over SSH doesn't stick** — use `bash -c "nohup ... & disown"`, verify process survives disconnect.

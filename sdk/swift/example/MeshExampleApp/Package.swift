@@ -13,7 +13,7 @@ let package = Package(
         .executableTarget(
             name: "MeshExampleApp",
             dependencies: [
-                .product(name: "ClosedMesh", package: "closedmesh-llm"),
+                .product(name: "Senda", package: "senda-llm"),
             ],
             path: "Sources/MeshExampleApp"
         ),

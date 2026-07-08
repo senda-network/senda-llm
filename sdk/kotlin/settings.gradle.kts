@@ -1,1 +1,1 @@
-rootProject.name = "ClosedMesh"
+rootProject.name = "Senda"

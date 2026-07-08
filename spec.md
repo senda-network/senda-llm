@@ -2,7 +2,7 @@
 
 ## Background
 
-When `closedmesh serve --auto` launches llama-server, it picks two key resource parameters:
+When `senda serve --auto` launches llama-server, it picks two key resource parameters:
 
 1. **Context size (`-c`)** — token budget for all active sequences combined.
 2. **Parallel slots (`--parallel`)** — number of concurrent decode streams.

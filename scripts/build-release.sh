@@ -5,9 +5,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-LLAMA_DIR="${CLOSEDMESH_LLAMA_DIR:-$REPO_ROOT/.deps/llama.cpp}"
+LLAMA_DIR="${SENDA_LLAMA_DIR:-$REPO_ROOT/.deps/llama.cpp}"
 BUILD_DIR="$LLAMA_DIR/build"
-UI_DIR="$REPO_ROOT/closedmesh/ui"
+UI_DIR="$REPO_ROOT/senda/ui"
 
 detect_jobs() {
     if command -v nproc >/dev/null 2>&1; then
@@ -76,7 +76,7 @@ fi
 configure_compiler_cache
 cmake_flags+=("${compiler_launcher_flags[@]}")
 
-LLAMA_WORKDIR="$LLAMA_DIR" "$SCRIPT_DIR/prepare-llama.sh" "${CLOSEDMESH_LLAMA_PIN_SHA:-pinned}"
+LLAMA_WORKDIR="$LLAMA_DIR" "$SCRIPT_DIR/prepare-llama.sh" "${SENDA_LLAMA_PIN_SHA:-pinned}"
 
 echo "Configuring llama.cpp for $os_name..."
 cmake "${cmake_flags[@]}"
@@ -87,8 +87,8 @@ cmake --build "$BUILD_DIR" --config Release --parallel "$(detect_jobs)"
 echo "Building UI..."
 "$SCRIPT_DIR/build-ui.sh" "$UI_DIR"
 
-echo "Building closedmesh..."
+echo "Building senda..."
 (
     cd "$REPO_ROOT"
-    cargo build --release --locked -p closedmesh
+    cargo build --release --locked -p senda
 )

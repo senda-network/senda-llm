@@ -1,4 +1,4 @@
-package com.closedmesh
+package com.senda
 
 import io.mockk.every
 import io.mockk.just

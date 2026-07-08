@@ -80,7 +80,7 @@ fn fixture_rows(repo_root: &Path) -> DynResult<Vec<FixtureRow>> {
 
 fn fixture_path(repo_root: &Path) -> PathBuf {
     repo_root
-        .join("closedmesh")
+        .join("senda")
         .join("tests")
         .join("fixtures")
         .join("release-target-matrix.json")
@@ -93,11 +93,11 @@ fn fixture_release_tag(rows: &[FixtureRow]) -> DynResult<String> {
         };
 
         let stable_tail = stable
-            .strip_prefix("closedmesh-")
-            .ok_or("stable asset missing closedmesh- prefix")?;
+            .strip_prefix("senda-")
+            .ok_or("stable asset missing senda- prefix")?;
         let versioned_tail = versioned
-            .strip_prefix("closedmesh-")
-            .ok_or("versioned asset missing closedmesh- prefix")?;
+            .strip_prefix("senda-")
+            .ok_or("versioned asset missing senda- prefix")?;
         let suffix = format!("-{stable_tail}");
         if let Some(version) = versioned_tail.strip_suffix(&suffix) {
             return Ok(version.to_string());
@@ -160,8 +160,8 @@ fn check_installer_outcomes(repo_root: &Path, rows: &[FixtureRow]) -> DynResult<
 
     for case in cases {
         let envs = [
-            ("CLOSEDMESH_TEST_UNAME_S", case.raw_os),
-            ("CLOSEDMESH_TEST_UNAME_M", case.raw_arch),
+            ("SENDA_TEST_UNAME_S", case.raw_os),
+            ("SENDA_TEST_UNAME_M", case.raw_arch),
         ];
         let actual_platform =
             sourced_script_stdout(repo_root, "install.sh", "platform_id", &envs, &[])?;
@@ -195,8 +195,8 @@ fn check_installer_outcomes(repo_root: &Path, rows: &[FixtureRow]) -> DynResult<
 
     let arm_fixture = fixture_row(rows, "linux", "arm", "cpu")?;
     let arm_envs = [
-        ("CLOSEDMESH_TEST_UNAME_S", "Linux"),
-        ("CLOSEDMESH_TEST_UNAME_M", "armv7l"),
+        ("SENDA_TEST_UNAME_S", "Linux"),
+        ("SENDA_TEST_UNAME_M", "armv7l"),
     ];
     let actual_support = sourced_script_stdout(
         repo_root,
@@ -476,9 +476,9 @@ fn windows_asset_name(flavor: &str, version_prefix: &str) -> String {
     };
 
     if suffix.is_empty() {
-        format!("closedmesh{version_prefix}-windows-x86_64.zip")
+        format!("senda{version_prefix}-windows-x86_64.zip")
     } else {
-        format!("closedmesh{version_prefix}-windows-x86_64-{suffix}.zip")
+        format!("senda{version_prefix}-windows-x86_64-{suffix}.zip")
     }
 }
 
@@ -491,7 +491,7 @@ fn check_docs_and_workflow_invariants(repo_root: &Path) -> DynResult<()> {
 
     ensure_contains(
         &release,
-        "closedmesh-linux-aarch64.tar.gz",
+        "senda-linux-aarch64.tar.gz",
         "RELEASE Linux ARM64 asset note",
     )?;
     ensure_contains(
@@ -504,7 +504,7 @@ fn check_docs_and_workflow_invariants(repo_root: &Path) -> DynResult<()> {
         "name: release-linux-arm64",
         "release workflow ARM64 artifact",
     )?;
-    // Windows release publishing is active in the ClosedMesh fork
+    // Windows release publishing is active in the Senda fork
     // (`build_windows:` job at top level of release.yml). The previous
     // "publish block stays commented out" invariants are intentionally
     // removed.

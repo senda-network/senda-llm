@@ -8,7 +8,7 @@ probe_available_devices() {
     [[ -n "$binary" && -x "$binary" ]] || return 0
 
     local output
-    output="$("$binary" -d __closedmesh_probe_invalid__ -p 0 2>&1 || true)"
+    output="$("$binary" -d __senda_probe_invalid__ -p 0 2>&1 || true)"
 
     awk '
         BEGIN { in_devices = 0 }

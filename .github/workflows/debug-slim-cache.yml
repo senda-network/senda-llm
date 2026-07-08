@@ -32,10 +32,10 @@ permissions:
   actions: read
 
 env:
-  CACHE_NAMESPACE: closedmesh
+  CACHE_NAMESPACE: senda
   DEBUG_CACHE_PATH: llama.cpp/build/bin
   DEBUG_CACHE_VERSION: ${{ vars.DEBUG_SLIM_CACHE_VERSION || 'v1' }}
-  DEBUG_CACHE_KEY: closedmesh-cache-debug-slim-linux-${{ vars.DEBUG_SLIM_CACHE_VERSION || 'v1' }}-shared
+  DEBUG_CACHE_KEY: senda-cache-debug-slim-linux-${{ vars.DEBUG_SLIM_CACHE_VERSION || 'v1' }}-shared
 
 jobs:
   reject-non-main-warm:

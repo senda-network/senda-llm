@@ -9,7 +9,7 @@ LLAMA_UPSTREAM_URL="${LLAMA_UPSTREAM_URL:-https://github.com/ggml-org/llama.cpp.
 LLAMA_WORKDIR="${LLAMA_WORKDIR:-$REPO_ROOT/.deps/llama.cpp}"
 PIN_FILE="${LLAMA_PIN_FILE:-$REPO_ROOT/third_party/llama.cpp/upstream.txt}"
 PATCH_DIR="${LLAMA_PATCH_DIR:-$REPO_ROOT/third_party/llama.cpp/patches}"
-LEGACY_LINK="${CLOSEDMESH_LLAMA_COMPAT_LINK:-1}"
+LEGACY_LINK="${SENDA_LLAMA_COMPAT_LINK:-1}"
 
 if [[ ! -f "$PIN_FILE" ]]; then
     echo "missing llama.cpp upstream pin: $PIN_FILE" >&2
@@ -38,8 +38,8 @@ if [[ "$(git -C "$LLAMA_WORKDIR" config --bool remote.origin.promisor || true)" 
         git -C "$LLAMA_WORKDIR" fetch --refetch --filter=blob:limit=1g origin
     fi
 fi
-git -C "$LLAMA_WORKDIR" config user.name "${GIT_AUTHOR_NAME:-ClosedMesh CI}"
-git -C "$LLAMA_WORKDIR" config user.email "${GIT_AUTHOR_EMAIL:-ci@closedmesh.local}"
+git -C "$LLAMA_WORKDIR" config user.name "${GIT_AUTHOR_NAME:-Senda CI}"
+git -C "$LLAMA_WORKDIR" config user.email "${GIT_AUTHOR_EMAIL:-ci@senda.local}"
 
 case "$MODE" in
     pinned)
@@ -59,7 +59,7 @@ git -C "$LLAMA_WORKDIR" reset --hard --quiet "$TARGET_SHA"
 # compiler output. Build scripts own explicit clean behavior.
 git -C "$LLAMA_WORKDIR" clean -fdx -e build/
 
-printf '%s\n' "$TARGET_SHA" > "$LLAMA_WORKDIR/.git/closedmesh-upstream-sha"
+printf '%s\n' "$TARGET_SHA" > "$LLAMA_WORKDIR/.git/senda-upstream-sha"
 
 PATCHES=()
 while IFS= read -r patch; do
@@ -75,7 +75,7 @@ elif (( ${#PATCHES[@]} > 0 )); then
     git -C "$LLAMA_WORKDIR" am --3way "${PATCHES[@]}"
 fi
 
-git -C "$LLAMA_WORKDIR" rev-parse HEAD > "$LLAMA_WORKDIR/.git/closedmesh-patched-sha"
+git -C "$LLAMA_WORKDIR" rev-parse HEAD > "$LLAMA_WORKDIR/.git/senda-patched-sha"
 
 if [[ "$LEGACY_LINK" != "0" && "$LLAMA_WORKDIR" == "$REPO_ROOT/.deps/llama.cpp" ]]; then
     if [[ -L "$REPO_ROOT/llama.cpp" ]]; then
@@ -89,5 +89,5 @@ fi
 
 echo "prepared llama.cpp"
 echo "  upstream: $TARGET_SHA"
-echo "  patched:  $(cat "$LLAMA_WORKDIR/.git/closedmesh-patched-sha")"
+echo "  patched:  $(cat "$LLAMA_WORKDIR/.git/senda-patched-sha")"
 echo "  workdir:  $LLAMA_WORKDIR"

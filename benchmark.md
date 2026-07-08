@@ -1,8 +1,8 @@
-# Plan: add `closedmesh gpu benchmark`
+# Plan: add `senda gpu benchmark`
 
 ## Goal
 
-Add a CLI command at `closedmesh gpu benchmark` that forces a fresh benchmark run on the current platform and rewrites `~/.closedmesh/benchmark-fingerprint.json`.
+Add a CLI command at `senda gpu benchmark` that forces a fresh benchmark run on the current platform and rewrites `~/.senda/benchmark-fingerprint.json`.
 
 ## Proposed approach
 
@@ -10,40 +10,40 @@ Add a CLI command at `closedmesh gpu benchmark` that forces a fresh benchmark ru
 
 Update the existing GPU command from a bare top-level variant into a real subcommand surface.
 
-- Today, `closedmesh/src/cli/mod.rs` defines `Command::Gpus` as a bare variant with the alias `gpu`.
-- Change that to a subcommand-bearing variant so `closedmesh gpu benchmark` becomes valid.
+- Today, `senda/src/cli/mod.rs` defines `Command::Gpus` as a bare variant with the alias `gpu`.
+- Change that to a subcommand-bearing variant so `senda gpu benchmark` becomes valid.
 - Add a new `GpuCommand` enum for GPU-specific actions.
 
 Expected command shape:
 
-- `closedmesh gpus` — keep existing GPU inspection behavior
-- `closedmesh gpu benchmark` — force rerun benchmark and rewrite cache
+- `senda gpus` — keep existing GPU inspection behavior
+- `senda gpu benchmark` — force rerun benchmark and rewrite cache
 
 Optional compatibility decision during implementation:
 
-- either preserve bare `closedmesh gpu` as an alias for listing GPUs
-- or require an explicit listing subcommand such as `closedmesh gpu list`
+- either preserve bare `senda gpu` as an alias for listing GPUs
+- or require an explicit listing subcommand such as `senda gpu list`
 
 ## Files to change
 
-### `closedmesh/src/cli/mod.rs`
+### `senda/src/cli/mod.rs`
 
 - Replace the bare `Command::Gpus` variant with a subcommand-bearing form.
 - Add a `GpuCommand` enum.
 - Keep user-facing help text concise and consistent with nearby commands.
 
-### `closedmesh/src/cli/commands/mod.rs`
+### `senda/src/cli/commands/mod.rs`
 
 - Change dispatch from direct `run_gpus()` invocation to a GPU command dispatcher.
 - Route `gpu benchmark` to a dedicated handler.
 
-### `closedmesh/src/cli/commands/gpus.rs`
+### `senda/src/cli/commands/gpus.rs`
 
 - Keep `run_gpus()` for the current read-only inspection path.
 - Add something like `dispatch_gpu_command()`.
 - Add `run_gpu_benchmark()` to perform the forced benchmark flow and print a short result summary.
 
-### `closedmesh/src/system/benchmark.rs`
+### `senda/src/system/benchmark.rs`
 
 - Add a helper for a forced rerun path.
 - Do not reuse `run_or_load()` unchanged, because it prefers the cache when hardware matches.
@@ -63,13 +63,13 @@ Preferred direction: extract a dedicated helper rather than overloading `run_or_
 
 ## Desired CLI behavior
 
-`closedmesh gpu benchmark` should:
+`senda gpu benchmark` should:
 
 1. Survey current hardware.
 2. Exit cleanly with a clear message if no GPUs are present.
 3. Detect the correct platform-specific benchmark binary.
 4. Run the benchmark with the existing timeout behavior.
-5. Atomically rewrite `~/.closedmesh/benchmark-fingerprint.json`.
+5. Atomically rewrite `~/.senda/benchmark-fingerprint.json`.
 6. Print a short success summary including:
    - GPU count
    - total measured bandwidth
@@ -77,7 +77,7 @@ Preferred direction: extract a dedicated helper rather than overloading `run_or_
 
 ## Important constraints
 
-- Keep `closedmesh gpus` read-only.
+- Keep `senda gpus` read-only.
 - Do not silently reuse the cache for `gpu benchmark`.
 - Reuse existing benchmark binary discovery and parsing logic.
 - Preserve current atomic write behavior using the temp-file-plus-rename path.
@@ -113,7 +113,7 @@ Preferred direction: extract a dedicated helper rather than overloading `run_or_
 
 ### Unit tests
 
-Add or extend tests in `closedmesh/src/system/benchmark.rs` to cover:
+Add or extend tests in `senda/src/system/benchmark.rs` to cover:
 
 - forced rerun path bypasses cache reuse
 - forced path rewrites the fingerprint file
@@ -124,9 +124,9 @@ Add or extend tests in `closedmesh/src/system/benchmark.rs` to cover:
 
 Verify manually or with command-level tests that:
 
-- `closedmesh gpus` still shows current GPU inspection output
-- `closedmesh gpu benchmark` is accepted by clap
-- `closedmesh gpu benchmark` rewrites the fingerprint file even when one already exists
+- `senda gpus` still shows current GPU inspection output
+- `senda gpu benchmark` is accepted by clap
+- `senda gpu benchmark` rewrites the fingerprint file even when one already exists
 - error cases produce clear output
 
 ### Regression checks
@@ -136,4 +136,4 @@ Verify manually or with command-level tests that:
 
 ## Summary
 
-This should be implemented as a small CLI expansion plus a focused benchmark helper in `system/benchmark.rs`. The key design requirement is that `closedmesh gpu benchmark` must bypass cache reuse and always regenerate and rewrite `benchmark-fingerprint.json`, while the existing `closedmesh gpus` path remains a read-only inspector of cached data.
+This should be implemented as a small CLI expansion plus a focused benchmark helper in `system/benchmark.rs`. The key design requirement is that `senda gpu benchmark` must bypass cache reuse and always regenerate and rewrite `benchmark-fingerprint.json`, while the existing `senda gpus` path remains a read-only inspector of cached data.

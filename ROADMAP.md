@@ -1,9 +1,9 @@
 # Roadmap
 
-High-level directions for closedmesh. Not promises — just things we're thinking about.
+High-level directions for senda. Not promises — just things we're thinking about.
 
 > **Status (2026-07):** the active roadmap is the phased plan tracked on
-> [closedmesh.com/updates](https://closedmesh.com/updates). Current phase:
+> [senda.network/updates](https://senda.network/updates). Current phase:
 > **catalog + reputation** — peer-signed model advertisements, a reputation
 > accumulator, and routing demotion for peers that miss their advertised
 > performance, on top of the shipped model-identity verification
@@ -17,7 +17,7 @@ High-level directions for closedmesh. Not promises — just things we're thinkin
 
 Implemented. Heuristic classifier detects Code/Reasoning/Chat/Creative/ToolCall with Quick/Moderate/Deep complexity. Task-dominant scoring ensures the right model handles each request. Tool capability is a hard filter. Multi-model per node with auto packs by VRAM tier.
 
-Next: static speed estimates in model profiles, response quality checks (retry on garbage), complexity-aware token budgets. See [closedmesh/docs/ROUTER_V2.md](closedmesh/docs/ROUTER_V2.md) for the full phased plan.
+Next: static speed estimates in model profiles, response quality checks (retry on garbage), complexity-aware token budgets. See [senda/docs/ROUTER_V2.md](senda/docs/ROUTER_V2.md) for the full phased plan.
 
 ## Mobile chat app (exemplar)
 
@@ -29,39 +29,39 @@ A native mobile app that joins a mesh by scanning a QR code. Client-only — no 
 - iOS first (Swift + iroh-ffi), Android follow-up
 - "AirDrop for AI" — one scan and you're talking to a 235B parameter model
 
-This is the best way to show what closedmesh does: zero setup, zero config, just scan and chat.
+This is the best way to show what senda does: zero setup, zero config, just scan and chat.
 
 ## Connection stability
 
-Relay connections degrade over hours on some nodes (Studio pattern: fresh=250ms, 10h=isolated). Need relay health monitoring, periodic reconnect, and better understanding of iroh's relay lifecycle. See [closedmesh/TODO.md](closedmesh/TODO.md) for investigation notes.
+Relay connections degrade over hours on some nodes (Studio pattern: fresh=250ms, 10h=isolated). Need relay health monitoring, periodic reconnect, and better understanding of iroh's relay lifecycle. See [senda/TODO.md](senda/TODO.md) for investigation notes.
 
 ## Production relay infrastructure
 
-closedmesh now uses managed iroh relays via [services.iroh.computer](https://services.iroh.computer) as the default:
-- `usw1-2.relay.michaelneale.closedmesh.iroh.link` (US West)
-- `aps1-1.relay.michaelneale.closedmesh.iroh.link` (Asia-Pacific South)
+senda now uses managed iroh relays via [services.iroh.computer](https://services.iroh.computer) as the default:
+- `usw1-2.relay.michaelneale.senda.iroh.link` (US West)
+- `aps1-1.relay.michaelneale.senda.iroh.link` (Asia-Pacific South)
 
 The old self-hosted Fly.io relay (`tools/relay-fly-legacy/`) is no longer in use. Adding more relay regions may help with the relay decay issue above.
 
 ## Agent launcher
 
-`closedmesh run` as a one-command way to launch AI agents talking to the mesh:
+`senda run` as a one-command way to launch AI agents talking to the mesh:
 
 ```bash
-closedmesh run goose          # launch goose session with mesh backend
-closedmesh run pi             # launch pi with --provider mesh
-closedmesh run opencode       # opencode pointed at mesh API
+senda run goose          # launch goose session with mesh backend
+senda run pi             # launch pi with --provider mesh
+senda run opencode       # opencode pointed at mesh API
 ```
 
 We already print launch commands when the mesh is ready and show them in the web console. There's also a native Goose provider (`micn/mesh-provider-v2` branch on `block/goose`) with emulated tool calling.
 
 ## Single binary distribution
 
-Currently ships as a 3-binary bundle (`closedmesh` + `llama-server` + `rpc-server`). Could compile llama.cpp directly into the Rust binary via [llama-cpp-2](https://crates.io/crates/llama-cpp-2) — one binary, no bundle.
+Currently ships as a 3-binary bundle (`senda` + `llama-server` + `rpc-server`). Could compile llama.cpp directly into the Rust binary via [llama-cpp-2](https://crates.io/crates/llama-cpp-2) — one binary, no bundle.
 
 ## MoE expert sharding ✅
 
-Implemented. Auto-detects MoE, computes overlapping expert assignments, splits locally, session-sticky routing. Zero cross-node traffic. See [MoE_PLAN.md](closedmesh/docs/MoE_PLAN.md).
+Implemented. Auto-detects MoE, computes overlapping expert assignments, splits locally, session-sticky routing. Zero cross-node traffic. See [MoE_PLAN.md](senda/docs/MoE_PLAN.md).
 
 Remaining: optimized rankings for unknown models, scale testing on Mixtral 8×22B / Qwen3-235B.
 
@@ -88,9 +88,9 @@ This is a single-node strategy. The goal is running e.g. Qwen3.5-397B-A17B (~209
 - **2MB-aligned DMA buffers give 3.6× better throughput** for page-cache-resident reads (free optimization via `posix_memalign`).
 - **Speculative routing and prefetching don't work.** 65-80% of predictions are wrong, waste bandwidth.
 
-**How this fits closedmesh:**
+**How this fits senda:**
 
-Today closedmesh has two MoE modes: **solo** (model fits in memory, run it whole) and **split** (model doesn't fit, shard experts across nodes). SSD streaming would be a third mode: model doesn't fit in memory but *does* fit on one node's SSD. No mesh coordination, no cross-node traffic, no splitting — just one machine streaming experts from disk.
+Today senda has two MoE modes: **solo** (model fits in memory, run it whole) and **split** (model doesn't fit, shard experts across nodes). SSD streaming would be a third mode: model doesn't fit in memory but *does* fit on one node's SSD. No mesh coordination, no cross-node traffic, no splitting — just one machine streaming experts from disk.
 
 **Plan:** Use flash-moe directly as an alternative backend, not hack SSD streaming into llama.cpp. llama.cpp's `ggml_mul_mat_id` assumes all expert weights resident in one contiguous tensor — changing that is deep surgery across ggml, the Metal backend, and the model loader. Flash-moe is a working engine. Mesh-llm spawns it like it spawns llama-server — process management + HTTP wrapper.
 
@@ -98,7 +98,7 @@ Only supports Qwen3.5-397B for now (hardcoded architecture). That's fine — it'
 
 ## Blackboard ✅
 
-Implemented. Shared ephemeral text messages across the mesh — agents post status, findings, questions, and answers. Multi-term OR search, convention prefixes (STATUS/QUESTION/FINDING/TIP/DONE), PII auto-scrub, flood-fill propagation with digest sync. Works on any node with or without models. MCP server (`closedmesh blackboard --mcp`) exposes tools for agent integration. Agent skill installable via `closedmesh blackboard install-skill`.
+Implemented. Shared ephemeral text messages across the mesh — agents post status, findings, questions, and answers. Multi-term OR search, convention prefixes (STATUS/QUESTION/FINDING/TIP/DONE), PII auto-scrub, flood-fill propagation with digest sync. Works on any node with or without models. MCP server (`senda blackboard --mcp`) exposes tools for agent integration. Agent skill installable via `senda blackboard install-skill`.
 
 ## Demand-based rebalancing
 

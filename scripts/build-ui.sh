@@ -54,7 +54,7 @@ npm_install_is_stale() {
 }
 
 if ui_build_is_stale; then
-    echo "Building closedmesh UI..."
+    echo "Building senda UI..."
     cd "$UI_DIR"
 
     if npm_install_is_stale; then
@@ -63,5 +63,5 @@ if ui_build_is_stale; then
 
     npm run build
 else
-    echo "Skipping closedmesh UI build; dist is up to date."
+    echo "Skipping senda UI build; dist is up to date."
 fi

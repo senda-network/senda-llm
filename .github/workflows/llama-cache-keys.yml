@@ -35,7 +35,7 @@ permissions:
   contents: read
 
 env:
-  CACHE_NAMESPACE: closedmesh
+  CACHE_NAMESPACE: senda
 
 jobs:
   resolve:

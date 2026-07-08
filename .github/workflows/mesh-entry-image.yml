@@ -1,7 +1,7 @@
 name: mesh-entry-image
 
-# Standalone workflow for the always-on closedmesh "mesh-entry" runtime
-# (the public Lightsail / Fly / VPS box that fronts closedmesh.com).
+# Standalone workflow for the always-on senda "mesh-entry" runtime
+# (the public Lightsail / Fly / VPS box that fronts senda.network).
 #
 # Builds docker/Dockerfile.client (CPU-only client/console image — no llama
 # binaries, no GPU) and publishes to GHCR so the entry box just runs
@@ -19,8 +19,8 @@ on:
       - 'docker/Dockerfile.client'
       - 'docker/entrypoint.sh'
       - 'docker/Caddyfile'
-      - 'closedmesh/**'
-      - 'closedmesh-client/**'
+      - 'senda/**'
+      - 'senda-client/**'
       - 'mesh-api/**'
       - 'mesh-host-core/**'
       - 'mesh-api-ffi/**'
@@ -35,7 +35,7 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: closedmesh/closedmesh-llm/mesh-entry
+  IMAGE_NAME: senda-network/senda-llm/mesh-entry
 
 permissions:
   contents: read

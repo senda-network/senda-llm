@@ -1,6 +1,6 @@
 ---
 name: llama-patch-changes
-description: Use when changing closedmesh's llama.cpp patch queue, upstream pin, prepare/build scripts, or carried RPC, MoE, and mesh-hook llama.cpp patches.
+description: Use when changing senda's llama.cpp patch queue, upstream pin, prepare/build scripts, or carried RPC, MoE, and mesh-hook llama.cpp patches.
 ---
 
 # llama-patch-changes
@@ -39,10 +39,10 @@ After editing and committing in that llama checkout, regenerate the patch queue
 from its upstream merge base:
 
 ```bash
-rm -rf /path/to/closedmesh/third_party/llama.cpp/patches
-mkdir -p /path/to/closedmesh/third_party/llama.cpp/patches
+rm -rf /path/to/senda/third_party/llama.cpp/patches
+mkdir -p /path/to/senda/third_party/llama.cpp/patches
 git format-patch \
-  --output-directory /path/to/closedmesh/third_party/llama.cpp/patches \
+  --output-directory /path/to/senda/third_party/llama.cpp/patches \
   "$(git merge-base HEAD upstream/master)..HEAD"
 ```
 
@@ -54,12 +54,12 @@ If the llama checkout uses `origin` for upstream instead of `upstream`, replace
 Validate that patches apply in a clean checkout:
 
 ```bash
-tmp_llama="$(mktemp -d /tmp/closedmesh-llama.XXXXXX)"
+tmp_llama="$(mktemp -d /tmp/senda-llama.XXXXXX)"
 rm -rf "$tmp_llama"
 LLAMA_WORKDIR="$tmp_llama" scripts/prepare-llama.sh pinned
 ```
 
-For normal closedmesh validation, use the repository build workflow:
+For normal senda validation, use the repository build workflow:
 
 ```bash
 just build
@@ -69,7 +69,7 @@ For Rust-only fallout from build-system or runtime call-site changes:
 
 ```bash
 cargo fmt --all -- --check
-cargo check -p closedmesh
+cargo check -p senda
 ```
 
 Run Cargo commands serially. This repo frequently hits Cargo lock conflicts
@@ -82,14 +82,14 @@ Test the queue against current upstream without moving the pin:
 ```bash
 scripts/prepare-llama.sh latest
 just build
-cargo test -p closedmesh --lib
+cargo test -p senda --lib
 ```
 
 If the queue applies and validation passes, update both pin files:
 
 ```bash
 cp third_party/llama.cpp/upstream.txt /tmp/old-llama-upstream.txt
-git -C .deps/llama.cpp rev-parse "$(cat .deps/llama.cpp/.git/closedmesh-upstream-sha)" > third_party/llama.cpp/upstream.txt
+git -C .deps/llama.cpp rev-parse "$(cat .deps/llama.cpp/.git/senda-upstream-sha)" > third_party/llama.cpp/upstream.txt
 cp third_party/llama.cpp/upstream.txt LLAMA_CPP_SHA
 ```
 
@@ -107,6 +107,6 @@ Commit the pin update with any patch refreshes.
 - Important backend flags include `GGML_RPC=ON`, `BUILD_SHARED_LIBS=OFF`, and
   `LLAMA_OPENSSL=OFF`; preserve CPU, Metal, CUDA, Vulkan, and ROCm behavior
   when touching build scripts.
-- See `closedmesh/docs/LLAMA_CPP_FORK.md` for the full patch-queue maintenance
-  notes and `closedmesh/docs/LLAMA_STAGE_INTEGRATION_PLAN.md` for deferred
+- See `senda/docs/LLAMA_CPP_FORK.md` for the full patch-queue maintenance
+  notes and `senda/docs/LLAMA_STAGE_INTEGRATION_PLAN.md` for deferred
   llama-stage integration.

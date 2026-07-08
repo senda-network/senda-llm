@@ -12,7 +12,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  CACHE_NAMESPACE: closedmesh
+  CACHE_NAMESPACE: senda
   # Tiny model for integration tests (~138MB Q8_0, has chat template)
   MODEL_URL: https://huggingface.co/unsloth/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q8_0.gguf
   MODEL_FILE: SmolLM2-135M-Instruct-Q8_0.gguf
@@ -41,14 +41,14 @@ jobs:
         with:
           filters: |
             rust:
-              - 'closedmesh/src/**'
-              - 'closedmesh/build.rs'
-              - 'closedmesh/plugin/**'
-              - 'closedmesh/tests/**'
-              - 'closedmesh/proto/**'
+              - 'senda/src/**'
+              - 'senda/build.rs'
+              - 'senda/plugin/**'
+              - 'senda/tests/**'
+              - 'senda/proto/**'
               - 'tools/xtask/**'
-              - 'closedmesh/Cargo.toml'
-              - 'closedmesh/Cargo.lock'
+              - 'senda/Cargo.toml'
+              - 'senda/Cargo.lock'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'Justfile'
@@ -60,14 +60,14 @@ jobs:
               - '.github/workflows/llama-cache-keys.yml'
               - '.github/workflows/smoke.yml'
             benchmarks:
-              - 'closedmesh/benchmarks/**'
+              - 'senda/benchmarks/**'
               - '.github/workflows/ci.yml'
             ui:
-              - 'closedmesh/ui/**'
+              - 'senda/ui/**'
             sdk:
               - 'mesh-api/**'
               - 'mesh-api-ffi/**'
-              - 'closedmesh-client/**'
+              - 'senda-client/**'
               - 'sdk/**'
               - 'Package.swift'
               - 'scripts/ci-native-sdk-smoke.sh'
@@ -95,7 +95,7 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - uses: actions/setup-python@v6
         with:
@@ -107,12 +107,12 @@ jobs:
 
       - name: Build UI
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.ui == 'true' }}
-        working-directory: closedmesh/ui
+        working-directory: senda/ui
         run: npm ci && npm run build
 
       - name: Test UI
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.ui == 'true' }}
-        working-directory: closedmesh/ui
+        working-directory: senda/ui
         run: npm test
 
       - name: Install Python SDKs
@@ -130,8 +130,8 @@ jobs:
       - uses: mozilla-actions/sccache-action@v0.0.9
 
       # Workspace `. -> target` because the cargo workspace is at repo root
-      # (`Cargo.toml` members = ["closedmesh", ...]) and cargo writes to
-      # `./target/`, NOT `closedmesh/target/`. Using `workspaces: closedmesh`
+      # (`Cargo.toml` members = ["senda", ...]) and cargo writes to
+      # `./target/`, NOT `senda/target/`. Using `workspaces: senda`
       # silently caches an empty dir and gives zero PR cache hits — we
       # measured a 4-minute regression from this exact misconfiguration.
       - uses: Swatinem/rust-cache@v2
@@ -149,7 +149,7 @@ jobs:
 
       - name: Check embedded client dependency purity
         run: |
-          cargo tree -p closedmesh-client --prefix=none --no-dedupe > /tmp/mesh-client-deps.txt
+          cargo tree -p senda-client --prefix=none --no-dedupe > /tmp/mesh-client-deps.txt
           FORBIDDEN="keyring|rpassword|hf-hub|dirs|clap|include_dir|rmcp|keyring-core"
           if grep -E "^[[:space:]│├└─-]*($FORBIDDEN)([[:space:]]|$)" /tmp/mesh-client-deps.txt; then
             echo "ERROR: Forbidden dependency found in mesh-client"
@@ -163,22 +163,22 @@ jobs:
       #     incremental cache — zero duplicated codegen.
       #  2. debug has `incremental = true`; release has `incremental = false`.
       #     Warm rebuild after a lib edit: release ~43s, debug ~4s (M4 Pro).
-      # closedmesh is a thin orchestrator around llama-server; the hot loop is
+      # senda is a thin orchestrator around llama-server; the hot loop is
       # inside llama-server C++, so debug vs release binary perf is
       # negligible for smoke tests. Integration steps below use target/debug.
-      - name: Build closedmesh binary (debug)
-        run: cargo build -p closedmesh --bin closedmesh
+      - name: Build senda binary (debug)
+        run: cargo build -p senda --bin senda
 
       - name: Unit tests
         run: cargo test --lib --tests
 
       - name: Protocol compatibility matrix
         run: |
-          cargo test -p closedmesh --test protocol_compat_v0_client
-          cargo test -p closedmesh --test protocol_convert_matrix
+          cargo test -p senda --test protocol_compat_v0_client
+          cargo test -p senda --test protocol_convert_matrix
 
       - name: Clippy
-        working-directory: closedmesh
+        working-directory: senda
         run: cargo clippy -- -D warnings || true
 
       # ── llama.cpp (CPU-only for CI) ──
@@ -207,18 +207,18 @@ jobs:
 
       - name: CLI smoke test
         run: |
-          target/debug/closedmesh --version
-          target/debug/closedmesh --help | head -5
+          target/debug/senda --version
+          target/debug/senda --help | head -5
 
       - name: Client-auto boot test
-        run: scripts/ci-client-auto-test.sh target/debug/closedmesh
+        run: scripts/ci-client-auto-test.sh target/debug/senda
 
       - name: Upload Linux inference binaries
         uses: actions/upload-artifact@v6
         with:
           name: ci-linux-inference-binaries
           path: |
-            target/debug/closedmesh
+            target/debug/senda
             llama.cpp/build/bin/rpc-server
             llama.cpp/build/bin/llama-server
             llama.cpp/build/bin/llama-moe-analyze
@@ -235,7 +235,7 @@ jobs:
     uses: ./.github/workflows/smoke.yml
     with:
       artifact_name: ci-linux-inference-binaries
-      mesh_binary_target: target/debug/closedmesh
+      mesh_binary_target: target/debug/senda
       cache_key_prefix: ''
       workflow_cache_file: .github/workflows/ci.yml
 
@@ -262,10 +262,10 @@ jobs:
       - name: Stage binaries for native SDK smoke
         run: |
           mkdir -p target/debug llama.cpp/build/bin
-          cp ci-artifacts/linux/target/debug/closedmesh target/debug/closedmesh
+          cp ci-artifacts/linux/target/debug/senda target/debug/senda
           cp ci-artifacts/linux/llama.cpp/build/bin/rpc-server llama.cpp/build/bin/rpc-server
           cp ci-artifacts/linux/llama.cpp/build/bin/llama-server llama.cpp/build/bin/llama-server
-          chmod +x target/debug/closedmesh llama.cpp/build/bin/rpc-server llama.cpp/build/bin/llama-server
+          chmod +x target/debug/senda llama.cpp/build/bin/rpc-server llama.cpp/build/bin/llama-server
 
       - name: Cache integration model
         id: cache-model-native-sdk
@@ -284,7 +284,7 @@ jobs:
       - name: Native SDK smoke test
         run: |
           scripts/ci-native-sdk-smoke.sh \
-            target/debug/closedmesh \
+            target/debug/senda \
             llama.cpp/build/bin \
             ~/.models/$MODEL_FILE
 
@@ -316,10 +316,10 @@ jobs:
       - name: Stage binaries for Kotlin SDK smoke
         run: |
           mkdir -p target/debug llama.cpp/build/bin
-          cp ci-artifacts/linux/target/debug/closedmesh target/debug/closedmesh
+          cp ci-artifacts/linux/target/debug/senda target/debug/senda
           cp ci-artifacts/linux/llama.cpp/build/bin/rpc-server llama.cpp/build/bin/rpc-server
           cp ci-artifacts/linux/llama.cpp/build/bin/llama-server llama.cpp/build/bin/llama-server
-          chmod +x target/debug/closedmesh llama.cpp/build/bin/rpc-server llama.cpp/build/bin/llama-server
+          chmod +x target/debug/senda llama.cpp/build/bin/rpc-server llama.cpp/build/bin/llama-server
 
       - name: Cache integration model
         id: cache-model-kotlin-sdk
@@ -338,7 +338,7 @@ jobs:
       - name: Kotlin SDK smoke test
         run: |
           scripts/ci-kotlin-sdk-smoke.sh \
-            target/debug/closedmesh \
+            target/debug/senda \
             llama.cpp/build/bin \
             ~/.models/$MODEL_FILE
 
@@ -358,8 +358,8 @@ jobs:
           workspaces: . -> target
           prefix-key: ${{ env.CACHE_NAMESPACE }}-rust-${{ hashFiles('.github/cache-version.txt') }}
 
-      - name: Build closedmesh binary (debug)
-        run: cargo build -p closedmesh --bin closedmesh
+      - name: Build senda binary (debug)
+        run: cargo build -p senda --bin senda
 
       - name: Prepare patched llama.cpp
         run: |
@@ -400,7 +400,7 @@ jobs:
       - name: Swift SDK smoke test
         run: |
           scripts/ci-swift-sdk-smoke.sh \
-            target/debug/closedmesh \
+            target/debug/senda \
             llama.cpp/build/bin \
             ~/.models/$MODEL_FILE
 
@@ -430,16 +430,16 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - name: Build UI
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.ui == 'true' }}
-        working-directory: closedmesh/ui
+        working-directory: senda/ui
         run: npm ci && npm run build
 
       - name: Test UI
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.ui == 'true' }}
-        working-directory: closedmesh/ui
+        working-directory: senda/ui
         run: npm test
 
       # ── Rust ──
@@ -463,13 +463,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       # See linux job for rationale on building in dev/debug, not release.
-      - name: Build closedmesh binary (debug)
+      - name: Build senda binary (debug)
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
-        run: cargo build -p closedmesh --bin closedmesh
+        run: cargo build -p senda --bin senda
 
       - name: Unit tests
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
-        run: cargo test -p closedmesh --lib --tests
+        run: cargo test -p senda --lib --tests
 
       # ── llama.cpp (Metal + RPC) ──
       - name: Prepare patched llama.cpp
@@ -524,7 +524,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
         run: |
           scripts/ci-smoke-test.sh \
-            target/debug/closedmesh \
+            target/debug/senda \
             llama.cpp/build/bin \
             ~/.models/$MODEL_FILE
 
@@ -537,9 +537,9 @@ jobs:
         run: |
           # `~` is not expanded inside GHA `env:` values, so set the env
           # var here in the run script where bash does the expansion.
-          export CLOSEDMESH_DRAFT_MODEL="$HOME/.models/$MODEL_FILE"
+          export SENDA_DRAFT_MODEL="$HOME/.models/$MODEL_FILE"
           scripts/ci-smoke-test.sh \
-            target/debug/closedmesh \
+            target/debug/senda \
             llama.cpp/build/bin \
             ~/.models/$MODEL_FILE
 
@@ -547,7 +547,7 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
         run: |
           scripts/ci-split-test.sh \
-            target/debug/closedmesh \
+            target/debug/senda \
             llama.cpp/build/bin \
             ~/.models/$MODEL_FILE
 
@@ -585,30 +585,30 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
         run: |
           scripts/ci-moe-mesh-test.sh \
-            target/debug/closedmesh \
+            target/debug/senda \
             llama.cpp/build/bin \
             ~/.models/$MOE_MODEL_FILE
 
       - name: Virtual LLM hook test
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' }}
-        run: cargo test -p closedmesh --test virtual_llm_injection -- --nocapture
+        run: cargo test -p senda --test virtual_llm_injection -- --nocapture
         timeout-minutes: 5
 
       - name: CLI smoke test
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
         run: |
-          target/debug/closedmesh --version
-          target/debug/closedmesh --help | head -5
+          target/debug/senda --version
+          target/debug/senda --help | head -5
 
       - name: Client-auto boot test
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ui == 'true' }}
-        run: scripts/ci-client-auto-test.sh target/debug/closedmesh
+        run: scripts/ci-client-auto-test.sh target/debug/senda
 
       - name: Build Swift benchmark binary
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.benchmarks == 'true' }}
         run: |
           mkdir -p target/release
-          swiftc -O closedmesh/benchmarks/membench-fingerprint.swift -o target/release/membench-fingerprint
+          swiftc -O senda/benchmarks/membench-fingerprint.swift -o target/release/membench-fingerprint
 
       - name: Upload Swift benchmark artifact
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.benchmarks == 'true' }}
@@ -674,11 +674,11 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - name: Build UI
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' }}
-        working-directory: closedmesh/ui
+        working-directory: senda/ui
         shell: bash
         run: |
           npm ci
@@ -704,7 +704,7 @@ jobs:
       # this cache the CUDA job pays ~194s warm (sccache hit) or ~26m cold
       # (sccache eviction) on every PR. With it, the llama.cpp build is
       # skipped entirely on cache hit and the only remaining work is the
-      # closedmesh cargo build.
+      # senda cargo build.
       #
       # This job RESTORES ONLY. It never writes the cache. All writes
       # happen in .github/workflows/warm-caches.yml, which runs on push
@@ -749,41 +749,41 @@ jobs:
       # profile, and GGML_CUDA_FA_ALL_QUANTS=ON. Here we pass four CI-only
       # opt-outs, all documented in scripts/build-linux.sh:
       #   1. single cuda_arch 89 (Ada Lovelace) — ~3.7x faster llama.cpp build
-      #   2. CLOSEDMESH_BUILD_PROFILE=dev — debug profile for closedmesh itself
-      #   3. CLOSEDMESH_CUDA_FA_ALL_QUANTS=off — skip the full FlashAttention
+      #   2. SENDA_BUILD_PROFILE=dev — debug profile for senda itself
+      #   3. SENDA_CUDA_FA_ALL_QUANTS=off — skip the full FlashAttention
       #      kernel matrix. Safe ONLY because the CUDA smoke test is
-      #      `closedmesh --version` — the asymmetric K/V cache path that would
+      #      `senda --version` — the asymmetric K/V cache path that would
       #      crash rpc-server with BEST_FATTN_KERNEL_NONE is never exercised.
       #      NEVER set this in release.yml.
-      #   4. CLOSEDMESH_LLAMA_PIN_SHA — pin the llama.cpp checkout to the SHA
+      #   4. SENDA_LLAMA_PIN_SHA — pin the llama.cpp checkout to the SHA
       #      embedded in the artifact cache key (above). NEVER set this in
       #      release.yml; release artifacts must build the current
       #      master tip.
       #
       # Split into two mutually exclusive steps keyed off the artifact cache:
       #
-      #   - Cache miss → do the fast PR-only llama.cpp + closedmesh build via the
+      #   - Cache miss → do the fast PR-only llama.cpp + senda build via the
       #     build script. This validates the same arch89/fa-off shape that
       #     main warms, but PR runs never write the shared cache.
       #   - Cache hit  → skip llama.cpp entirely (we already proved it builds
-      #     at this SHA + flag combo) and run only the closedmesh cargo build.
+      #     at this SHA + flag combo) and run only the senda cargo build.
       #     This is the warm path every PR hits when main has already run.
       - name: Build Linux CUDA backend (cache miss — full llama.cpp build)
         if: ${{ (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true') && steps.llama_cuda_cache.outputs.cache-hit != 'true' }}
         shell: bash
         env:
-          CLOSEDMESH_BUILD_PROFILE: dev
-          CLOSEDMESH_CUDA_FA_ALL_QUANTS: off
-          CLOSEDMESH_LLAMA_PIN_SHA: ${{ needs.resolve_llama_cache_keys.outputs.sha }}
-          CLOSEDMESH_LLAMA_TARGETS: "rpc-server llama-server llama-moe-analyze llama-moe-split"
+          SENDA_BUILD_PROFILE: dev
+          SENDA_CUDA_FA_ALL_QUANTS: off
+          SENDA_LLAMA_PIN_SHA: ${{ needs.resolve_llama_cache_keys.outputs.sha }}
+          SENDA_LLAMA_TARGETS: "rpc-server llama-server llama-moe-analyze llama-moe-split"
         run: |
           just --shell bash --shell-arg -lc release-build-cuda 89
 
-      - name: Build closedmesh binary only (cache hit — llama.cpp skipped)
+      - name: Build senda binary only (cache hit — llama.cpp skipped)
         if: ${{ (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true') && steps.llama_cuda_cache.outputs.cache-hit == 'true' }}
         shell: bash
         env:
-          CLOSEDMESH_BUILD_PROFILE: dev
+          SENDA_BUILD_PROFILE: dev
         run: |
           set -euo pipefail
           echo "✓ llama.cpp CUDA build restored from cache (SHA ${{ needs.resolve_llama_cache_keys.outputs.sha }})"
@@ -796,22 +796,22 @@ jobs:
             exit 1
           fi
           ls -lh llama.cpp/build/bin/ | head -20
-          cargo build -p closedmesh --bin closedmesh
-          ls -lh target/debug/closedmesh
+          cargo build -p senda --bin senda
+          ls -lh target/debug/senda
 
       - name: CLI smoke test
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: |
-          target/debug/closedmesh --version
-          target/debug/closedmesh --help | head -5
+          target/debug/senda --version
+          target/debug/senda --help | head -5
 
       - name: Build CUDA benchmark binary
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.benchmarks == 'true' }}
         shell: bash
         run: |
           mkdir -p target/release
-          nvcc -O3 -o target/release/membench-fingerprint-cuda closedmesh/benchmarks/membench-fingerprint.cu
+          nvcc -O3 -o target/release/membench-fingerprint-cuda senda/benchmarks/membench-fingerprint.cu
 
       - name: Upload CUDA benchmark artifact
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.benchmarks == 'true' }}
@@ -874,11 +874,11 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - name: Build UI
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' }}
-        working-directory: closedmesh/ui
+        working-directory: senda/ui
         shell: bash
         run: |
           npm ci
@@ -915,11 +915,11 @@ jobs:
         if: ${{ (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true') && steps.llama_rocm_cache.outputs.cache-hit != 'true' }}
         shell: bash
         env:
-          CLOSEDMESH_LLAMA_PIN_SHA: ${{ needs.resolve_llama_cache_keys.outputs.sha }}
+          SENDA_LLAMA_PIN_SHA: ${{ needs.resolve_llama_cache_keys.outputs.sha }}
         run: |
           just --shell bash --shell-arg -lc release-build-rocm gfx1100
 
-      - name: Build closedmesh binary only (cache hit — llama.cpp skipped)
+      - name: Build senda binary only (cache hit — llama.cpp skipped)
         if: ${{ (github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true') && steps.llama_rocm_cache.outputs.cache-hit == 'true' }}
         shell: bash
         run: |
@@ -934,22 +934,22 @@ jobs:
             exit 1
           fi
           ls -lh llama.cpp/build/bin/ | head -20
-          cargo build --release --locked -p closedmesh --bin closedmesh
-          ls -lh target/release/closedmesh
+          cargo build --release --locked -p senda --bin senda
+          ls -lh target/release/senda
 
       - name: CLI smoke test
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.rust == 'true' }}
         shell: bash
         run: |
-          target/release/closedmesh --version
-          target/release/closedmesh --help | head -5
+          target/release/senda --version
+          target/release/senda --help | head -5
 
       - name: Build ROCm benchmark binary
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.benchmarks == 'true' }}
         shell: bash
         run: |
           mkdir -p target/release
-          hipcc -O3 -std=c++17 -o target/release/membench-fingerprint-hip closedmesh/benchmarks/membench-fingerprint.hip
+          hipcc -O3 -std=c++17 -o target/release/membench-fingerprint-hip senda/benchmarks/membench-fingerprint.hip
 
       - name: Upload ROCm benchmark artifact
         if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.benchmarks == 'true' }}
@@ -1036,10 +1036,10 @@ jobs:
           cache: npm
           cache-dependency-path: |
             .github/cache-version.txt
-            closedmesh/ui/package-lock.json
+            senda/ui/package-lock.json
 
       - name: Build UI
-        working-directory: closedmesh/ui
+        working-directory: senda/ui
         shell: bash
         run: |
           npm ci
@@ -1063,8 +1063,8 @@ jobs:
       - name: CLI smoke test
         shell: bash
         run: |
-          target/release/closedmesh --version
-          target/release/closedmesh --help | head -5
+          target/release/senda --version
+          target/release/senda --help | head -5
 
       - name: Show sccache stats
         if: always()

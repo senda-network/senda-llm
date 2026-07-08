@@ -6,8 +6,8 @@ LLAMA_WORKDIR="${LLAMA_WORKDIR:-$ROOT/.deps/llama.cpp}"
 PIN_FILE="${LLAMA_PIN_FILE:-$ROOT/third_party/llama.cpp/upstream.txt}"
 MIRROR_FILE="${LLAMA_MIRROR_FILE:-$ROOT/LLAMA_CPP_SHA}"
 
-if [[ -f "$LLAMA_WORKDIR/.git/closedmesh-upstream-sha" ]]; then
-    NEW_SHA="$(tr -d '[:space:]' < "$LLAMA_WORKDIR/.git/closedmesh-upstream-sha")"
+if [[ -f "$LLAMA_WORKDIR/.git/senda-upstream-sha" ]]; then
+    NEW_SHA="$(tr -d '[:space:]' < "$LLAMA_WORKDIR/.git/senda-upstream-sha")"
 elif [[ -d "$LLAMA_WORKDIR/.git" ]]; then
     NEW_SHA="$(git -C "$LLAMA_WORKDIR" rev-parse HEAD)"
 else

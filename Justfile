@@ -1,8 +1,8 @@
 # Distributed LLM Inference — build & run tasks
 
-llama_dir := env("CLOSEDMESH_LLAMA_DIR", ".deps/llama.cpp")
+llama_dir := env("SENDA_LLAMA_DIR", ".deps/llama.cpp")
 build_dir := llama_dir / "build"
-mesh_dir := "closedmesh"
+mesh_dir := "senda"
 ui_dir := mesh_dir / "ui"
 benchmark_src_dir := mesh_dir / "benchmarks"
 home_dir := if os_family() == "windows" { env("USERPROFILE") } else { env("HOME") }
@@ -144,7 +144,7 @@ local: build download-model
 
 # ── QUIC Mesh ──────────────────────────────────────────────────
 
-mesh_bin := "target/release/closedmesh"
+mesh_bin := "target/release/senda"
 
 # Start a mesh worker (no llama-server, just rpc-server + mesh)
 
@@ -192,7 +192,7 @@ bundle output="/tmp/mesh-bundle.tar.gz":
         cp "$lib" "$BUNDLE/" 2>/dev/null || true
     done
     # Fix rpaths for portability
-    for bin in "$BUNDLE/closedmesh" "$BUNDLE/$rpc_name" "$BUNDLE/$llama_name" "$BUNDLE/llama-moe-analyze" "$BUNDLE/llama-moe-split"; do
+    for bin in "$BUNDLE/senda" "$BUNDLE/$rpc_name" "$BUNDLE/$llama_name" "$BUNDLE/llama-moe-analyze" "$BUNDLE/llama-moe-split"; do
         [ -f "$bin" ] || continue
         install_name_tool -add_rpath @executable_path/ "$bin" 2>/dev/null || true
     done
@@ -288,7 +288,7 @@ benchmark-build-intel-windows:
     @echo "WARNING: Intel Arc benchmark is unvalidated — no Intel Arc hardware has been tested"
     @powershell -NoProfile -ExecutionPolicy Bypass -Command "icpx -O3 -fsycl -o 'target/release/membench-fingerprint-intel.exe' '{{ benchmark_src_dir }}/membench-fingerprint-intel.cpp'; if (`$LASTEXITCODE -ne 0) { exit `$LASTEXITCODE }; Write-Host 'Built: target/release/membench-fingerprint-intel.exe'"
 
-# Run the UI with Vite HMR and proxy /api to closedmesh (default: http://127.0.0.1:3131)
+# Run the UI with Vite HMR and proxy /api to senda (default: http://127.0.0.1:3131)
 ui-dev api="http://127.0.0.1:3131" port="5173":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -304,7 +304,7 @@ ui-test:
 
 # Start a lite client — no GPU, no model, just a local HTTP proxy to the mesh host.
 
-# Only needs the closedmesh binary (no llama.cpp binaries or model).
+# Only needs the senda binary (no llama.cpp binaries or model).
 mesh-client join="" port="9337":
     {{ mesh_bin }} --client --port {{ port }} --join {{ join }}
 
@@ -342,7 +342,7 @@ clean-ui:
     echo "Cleaned UI: node_modules + dist removed"
 # Stop all running servers
 stop:
-    pkill -f "closedmesh" 2>/dev/null || true
+    pkill -f "senda" 2>/dev/null || true
     pkill -f "rpc-server" 2>/dev/null || true
     pkill -f "llama-server" 2>/dev/null || true
     echo "Stopped"
@@ -356,7 +356,7 @@ test port="9337":
 
 # Optional SDK compatibility smoke: 2 mesh nodes + 1 lite client.
 compat-smoke model mmproj="":
-    scripts/ci-compat-smoke.sh "target/release/closedmesh" "{{ build_dir }}/bin" "{{ model }}" "{{ mmproj }}"
+    scripts/ci-compat-smoke.sh "target/release/senda" "{{ build_dir }}/bin" "{{ model }}" "{{ mmproj }}"
 
 # Direct splitter smoke for the MoE families we actively use.
 moe-split-smoke families="all":
@@ -376,59 +376,59 @@ diff:
 
 # Build the client-only Docker image (no GPU, no llama.cpp)
 [unix]
-docker-build-client tag="closedmesh:client":
+docker-build-client tag="senda:client":
     DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.client -t {{ tag }} .
 
 [windows]
-docker-build-client tag="closedmesh:client":
+docker-build-client tag="senda:client":
     @powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:DOCKER_BUILDKIT='1'; docker build -f docker/Dockerfile.client -t '{{ tag }}' ."
 
 # Build the CPU full-node Docker image
 [unix]
-docker-build-cpu tag="closedmesh:cpu":
+docker-build-cpu tag="senda:cpu":
     DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.cpu -t {{ tag }} .
 
 [windows]
-docker-build-cpu tag="closedmesh:cpu":
+docker-build-cpu tag="senda:cpu":
     @powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:DOCKER_BUILDKIT='1'; docker build -f docker/Dockerfile.cpu -t '{{ tag }}' ."
 
 # Build the CUDA full-node Docker image
 [unix]
-docker-build-cuda tag="closedmesh:cuda" cuda_arch="75;80;86;87;89;90;100;120":
+docker-build-cuda tag="senda:cuda" cuda_arch="75;80;86;87;89;90;100;120":
     DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.cuda \
         --build-arg CUDA_ARCH="{{ cuda_arch }}" \
         -t {{ tag }} .
 
 [windows]
-docker-build-cuda tag="closedmesh:cuda" cuda_arch="75;80;86;87;89;90;100;120":
+docker-build-cuda tag="senda:cuda" cuda_arch="75;80;86;87;89;90;100;120":
     @powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:DOCKER_BUILDKIT='1'; docker build -f docker/Dockerfile.cuda --build-arg CUDA_ARCH='{{ cuda_arch }}' -t '{{ tag }}' ."
 
 # Build the ROCm full-node Docker image
 [unix]
-docker-build-rocm tag="closedmesh:rocm" rocm_arch="gfx90a;gfx942;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201":
+docker-build-rocm tag="senda:rocm" rocm_arch="gfx90a;gfx942;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201":
     DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.rocm \
         --build-arg ROCM_ARCH="{{ rocm_arch }}" \
         -t {{ tag }} .
 
 [windows]
-docker-build-rocm tag="closedmesh:rocm" rocm_arch="gfx90a;gfx942;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201":
+docker-build-rocm tag="senda:rocm" rocm_arch="gfx90a;gfx942;gfx1100;gfx1101;gfx1102;gfx1200;gfx1201":
     @powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:DOCKER_BUILDKIT='1'; docker build -f docker/Dockerfile.rocm --build-arg ROCM_ARCH='{{ rocm_arch }}' -t '{{ tag }}' ."
 
 # Build the Vulkan full-node Docker image
 [unix]
-docker-build-vulkan tag="closedmesh:vulkan":
+docker-build-vulkan tag="senda:vulkan":
     DOCKER_BUILDKIT=1 docker build -f docker/Dockerfile.vulkan -t {{ tag }} .
 
 [windows]
-docker-build-vulkan tag="closedmesh:vulkan":
+docker-build-vulkan tag="senda:vulkan":
     @powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:DOCKER_BUILDKIT='1'; docker build -f docker/Dockerfile.vulkan -t '{{ tag }}' ."
 
 # Run the client console image locally
-docker-run-client tag="closedmesh:client":
+docker-run-client tag="senda:client":
     docker run --rm -p 3131:3131 -p 9337:9337 -e APP_MODE=console {{ tag }}
 
 # Run a CPU worker node locally (requires model volume mount)
-docker-run-cpu models=(home_dir / ".models") tag="closedmesh:cpu":
+docker-run-cpu models=(home_dir / ".models") tag="senda:cpu":
     docker run --rm -p 9337:9337 \
         -v {{ models }}:/root/.models \
         -e APP_MODE=worker {{ tag }}

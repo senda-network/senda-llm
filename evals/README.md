@@ -1,13 +1,13 @@
-# closedmesh Router Evals
+# senda Router Evals
 
-A/B comparison of pi agent performance through closedmesh's multi-model router vs a frontier cloud model.
+A/B comparison of pi agent performance through senda's multi-model router vs a frontier cloud model.
 
 ## Setup
 
 ### Mesh (local multi-model)
 ```bash
 # 3 models on M4 Max 52GB (~27GB total, room for KV cache)
-CLOSEDMESH_EPHEMERAL_KEY=1 closedmesh \
+SENDA_EPHEMERAL_KEY=1 senda \
   --model Qwen2.5-32B-Instruct-Q4_K_M \
   --model Qwen2.5-Coder-7B-Instruct-Q4_K_M \
   --model Hermes-2-Pro-Mistral-7B-Q4_K_M
@@ -18,7 +18,7 @@ Router auto-classifies each request and picks the best model:
 - **Qwen2.5-Coder-7B** (tier 2) — code generation/review, fast (85 tok/s)
 - **Hermes-7B** (tier 2) — fast chat, simple Q&A (87 tok/s, no tool use)
 
-`CLOSEDMESH_EPHEMERAL_KEY=1` uses a fresh identity so no external peers connect.
+`SENDA_EPHEMERAL_KEY=1` uses a fresh identity so no external peers connect.
 
 ### Cloud baseline
 Sonnet via `pi --provider anthropic --model claude-sonnet-4-20250514`.
@@ -67,7 +67,7 @@ Results go to `evals/results/<provider>/<scenario>/`:
 
 1. **Correctness** — Did it complete all turns? Are edits right?
 2. **Tool use** — Did it use read/edit/bash appropriately?
-3. **Routing** — Check `/tmp/closedmesh-local.log` for which model handled each turn
+3. **Routing** — Check `/tmp/senda-local.log` for which model handled each turn
 4. **Speed** — Wall clock per scenario
 5. **Model switching** — Does quality degrade when router changes models mid-conversation?
 6. **Chat quality** — Are quick chat responses from Hermes comparable to 32B?

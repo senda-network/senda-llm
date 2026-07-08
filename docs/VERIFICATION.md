@@ -1,6 +1,6 @@
 # Peer verification
 
-ClosedMesh is an open network: anyone can run the runtime and advertise that
+Senda is an open network: anyone can run the runtime and advertise that
 they serve a model. Verification answers one question — **is a peer that claims
 to serve model X actually running model X, honestly?** — without trusting the
 peer's self-report and without ever touching real user traffic.
@@ -91,7 +91,7 @@ Replaying a real user request against a second node would be more robust against
 a peer that fingerprints synthetic probes — but it would fan a user's private
 prompt out to a node that played no part in serving that request, expanding
 plaintext exposure beyond the minimal serving path (the entry plus the one
-host). That conflicts with ClosedMesh's privacy promise, so it is deliberately
+host). That conflicts with Senda's privacy promise, so it is deliberately
 not done. This boundary is intentional; do not "improve" verification by
 sampling organic traffic.
 
@@ -100,7 +100,7 @@ sampling organic traffic.
 Demotion is the one consequential lever — a false positive punishes an honest
 contributor — so it is gated three ways:
 
-1. **Off unless `CLOSEDMESH_VERIFY_ENFORCE` is set** to a truthy value
+1. **Off unless `SENDA_VERIFY_ENFORCE` is set** to a truthy value
    (`1`/`true`/`yes`/`on`). Default is observe-only: verdicts are logged, nothing
    is demoted.
 2. **Requires several *consecutive* `Mismatch` verdicts** for the same
@@ -111,7 +111,7 @@ contributor — so it is gated three ways:
    re-probed, and is reinstated on the next `Match` or when the cooldown lapses.
    This is route demotion, not slashing.
 
-| `CLOSEDMESH_VERIFY_ENFORCE` | Behaviour |
+| `SENDA_VERIFY_ENFORCE` | Behaviour |
 |---|---|
 | unset / falsey (default) | Observe-only. Verdicts logged; routing unaffected. |
 | `1` / `true` / `yes` / `on` | A peer with sustained mismatch is demoted from the routable set for that model, reversibly. |
@@ -122,10 +122,10 @@ An auditor can capture a ground-truth reference for a `(model, quant)` from a
 known-good local server:
 
 ```bash
-closedmesh benchmark capture-reference --model <model-id>
+senda benchmark capture-reference --model <model-id>
 ```
 
-The embedded defaults live in `closedmesh/src/inference/reference_fingerprints.json`
+The embedded defaults live in `senda/src/inference/reference_fingerprints.json`
 and now carry `top_k_tokens` so the fixed-reference path (used by CPU-only entry
 nodes) gets the distributional classifier rather than the legacy prefix gate.
 Recapture them against the current production server config when the bundled
@@ -143,8 +143,8 @@ decode drifts from what honest peers produce.
 
 ## See also
 
-- `closedmesh/src/inference/verify.rs` — the oracle, the verifier loop, and the
+- `senda/src/inference/verify.rs` — the oracle, the verifier loop, and the
   authoritative module docstring (including the privacy boundary).
-- `closedmesh/src/inference/native_baseline.rs` — fingerprint capture and the
+- `senda/src/inference/native_baseline.rs` — fingerprint capture and the
   native timing baseline it rides alongside.
-- [closedmesh/docs/DESIGN.md](../closedmesh/docs/DESIGN.md) — architecture and module map.
+- [senda/docs/DESIGN.md](../senda/docs/DESIGN.md) — architecture and module map.
