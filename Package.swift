@@ -6,8 +6,8 @@ let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path
 let swiftSDKRelativePath = "sdk/swift"
 let ffiXCFrameworkRelativePath = "\(swiftSDKRelativePath)/Generated/SendaFFI.xcframework"
 let ffiXCFrameworkPath = "\(repoRoot)/\(ffiXCFrameworkRelativePath)"
-let remoteFFIXCFrameworkURL = "https://github.com/senda-network/senda-llm/releases/download/v0.66.80/SendaFFI.xcframework.zip"
-let remoteFFIXCFrameworkChecksum = "1531fe8fc3a1adec164dcb4d8712ad87749bcb284efaed69eae6c91f5426ebd0"
+let remoteFFIXCFrameworkURL = "https://github.com/senda-network/senda-llm/releases/download/v0.66.81/SendaFFI.xcframework.zip"
+let remoteFFIXCFrameworkChecksum = "6beceed5a41d46f3236a3e25e2a88c434c24e41f54a56c880d559fbde32ccc83"
 let forceStubFFI = ProcessInfo.processInfo.environment["MESH_SWIFT_FORCE_STUB"] == "1"
 let hasLocalFFIXCFramework = FileManager.default.fileExists(atPath: ffiXCFrameworkPath)
 let hasRemoteFFIXCFramework = !forceStubFFI
