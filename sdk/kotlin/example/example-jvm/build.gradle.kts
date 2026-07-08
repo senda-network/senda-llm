@@ -24,7 +24,7 @@ dependencies {
 sourceSets {
     main {
         kotlin {
-            srcDir("../../src/main/kotlin/com/senda")
+            srcDir("../../src/main/kotlin/network/senda")
         }
     }
 }

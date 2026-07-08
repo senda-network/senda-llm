@@ -115,7 +115,7 @@ Running `.github/workflows/release.yml` via `workflow_dispatch` triggers the rel
 - keeps the Windows publish block commented out for now, so GitHub release publishing does not currently upload Windows bundles
 - still leaves the local Windows bundle recipes available in `Justfile` for manual builds
 - uploads `SendaFFI.xcframework.zip` for Swift Package Manager consumers
-- publishes the Android AAR to GitHub Packages as `ai.meshllm:meshllm-android:<version>`
+- publishes the Android AAR to GitHub Packages as `network.senda:senda-android:<version>`
 - uploads versioned assets such as `senda-v0.X.0-darwin-aarch64.tar.gz`
 - uploads the Linux ARM64 CPU asset as `senda-linux-aarch64.tar.gz`
 - uploads stable `latest` assets such as `senda-linux-x86_64.tar.gz`
@@ -141,7 +141,7 @@ Running `.github/workflows/release.yml` via `workflow_dispatch` triggers the rel
 After the workflow finishes, verify:
 
 - `SendaFFI.xcframework.zip` exists for Swift Package Manager installs
-- `ai.meshllm:meshllm-android:<version>` is visible in the GitHub Packages Maven registry for the repo
+- `network.senda:senda-android:<version>` is visible in the GitHub Packages Maven registry for the repo
 - `mesh-bundle.tar.gz` still exists for direct macOS archive installs
 - `senda-darwin-aarch64.tar.gz` exists
 - `senda-linux-aarch64.tar.gz` exists

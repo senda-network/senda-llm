@@ -7,7 +7,7 @@ Kotlin/Android bindings for connecting to senda meshes.
 Release workflow publishes the Android AAR to this repository's GitHub Packages Maven registry as:
 
 ```text
-ai.meshllm:meshllm-android:<version>
+network.senda:senda-android:<version>
 ```
 
 Add the GitHub Packages Maven repository:
@@ -28,7 +28,7 @@ Then depend on the SDK:
 
 ```kotlin
 dependencies {
-    implementation("ai.meshllm:meshllm-android:0.1.0")
+    implementation("network.senda:senda-android:0.1.0")
 }
 ```
 
@@ -40,4 +40,4 @@ To build the Android artifact locally:
 ./gradlew assembleAar
 ```
 
-This writes the AAR to `sdk/kotlin/build/outputs/aar/meshllm-android.aar`.
+This writes the AAR to `sdk/kotlin/build/outputs/aar/senda-android.aar`.

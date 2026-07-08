@@ -5,7 +5,7 @@ plugins {
     `maven-publish`
 }
 
-group = "com.senda"
+group = "network.senda"
 version = "0.66.81"
 
 val androidArtifactId = "senda-android"

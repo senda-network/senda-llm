@@ -1,4 +1,4 @@
-package com.senda
+package network.senda
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose

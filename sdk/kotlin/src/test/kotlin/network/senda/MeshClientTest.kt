@@ -1,4 +1,4 @@
-package com.senda
+package network.senda
 
 import io.mockk.every
 import io.mockk.just
