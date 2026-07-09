@@ -3472,7 +3472,7 @@ dependencies = [
 
 [[package]]
 name = "mesh-api"
-version = "0.66.83"
+version = "0.66.84"
 dependencies = [
  "hex",
  "senda-client",
@@ -5828,7 +5828,7 @@ checksum = "cd0b0ec5f1c1ca621c432a25813d8d60c88abe6d3e08a3eb9cf37d97a0fe3d73"
 
 [[package]]
 name = "senda"
-version = "0.66.83"
+version = "0.66.84"
 dependencies = [
  "ansi-to-tui",
  "anyhow",
@@ -5886,7 +5886,7 @@ dependencies = [
 
 [[package]]
 name = "senda-client"
-version = "0.66.83"
+version = "0.66.84"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5911,7 +5911,7 @@ dependencies = [
 
 [[package]]
 name = "senda-plugin"
-version = "0.66.83"
+version = "0.66.84"
 dependencies = [
  "anyhow",
  "async-trait",

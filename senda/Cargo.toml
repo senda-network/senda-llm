@@ -1,6 +1,6 @@
 [package]
 name = "senda"
-version = "0.66.83"
+version = "0.66.84"
 edition = "2021"
 
 [[bin]]
