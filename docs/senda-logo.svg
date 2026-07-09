@@ -1,9 +1,9 @@
 <svg width="440" height="96" viewBox="0 0 440 96" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Senda logo">
   <title>Senda</title>
 
-  <!-- S-path mark: a trail that curves into an S with waypoint nodes — the
-       route a session takes across peers in the mesh. Mirrors
-       app/components/Logo.tsx in the senda web repo. Dark-theme variant. -->
+  <!-- S-path mark for the docs site nav (dark background). Mirrors
+       senda-logo-dark.svg; kept as a separate file because docs/index.html
+       references senda-logo.svg directly. -->
   <g transform="translate(8 11) scale(3.0)">
     <path d="M16.2 6.5 C13 4.4 8.4 5.2 8.4 9 C8.4 12.4 15.6 11.6 15.6 15 C15.6 18.8 11 19.6 7.8 17.5"
           fill="none" stroke="#34d18a" stroke-width="1.9" stroke-linecap="round" stroke-opacity="0.6"/>
