@@ -292,7 +292,7 @@ function AlertPreview() {
   >("primary");
   const [title, setTitle] = useState("Welcome to the public mesh");
   const [description, setDescription] = useState(
-    "Mesh LLM is a project to let people contribute spare compute.",
+    "Senda is a project to let people contribute spare compute.",
   );
 
   return (

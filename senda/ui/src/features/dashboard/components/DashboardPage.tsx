@@ -350,8 +350,8 @@ export function DashboardPage({
         </AlertTitle>
         <AlertDescription className="text-xs text-muted-foreground">
           {isPublicMesh
-            ? "Mesh LLM is a project to let people contribute spare compute, build private personal AI, using open models."
-            : "Mesh LLM lets you build private personal AI, using open models. Pool machines across your home, office, or friends, no cloud needed."}{" "}
+            ? "Senda is a project to let people contribute spare compute, build private personal AI, using open models."
+            : "Senda lets you build private personal AI, using open models. Pool machines across your home, office, or friends, no cloud needed."}{" "}
           <a
             href={DOCS_URL}
             target="_blank"

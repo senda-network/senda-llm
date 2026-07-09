@@ -146,7 +146,7 @@ function InviteFriendEmptyState({
           <BrandIcon className="h-12 w-12 text-primary/50 animate-wiggle" />
         </div>
         <p className="text-sm text-muted-foreground">
-          Mesh LLM is a project to let people contribute spare compute, build
+          Senda is a project to let people contribute spare compute, build
           private personal AI, using open models.
         </p>
         <button
@@ -247,7 +247,7 @@ function InviteFriendEmptyState({
         <BrandIcon className="h-12 w-12 text-primary/50 animate-wiggle" />
       </div>
       <p className="text-sm text-muted-foreground">
-        Mesh LLM lets you build private personal AI, using open models.{" "}
+        Senda lets you build private personal AI, using open models.{" "}
         <a
           href={DOCS_URL}
           target="_blank"
