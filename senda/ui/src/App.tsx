@@ -741,13 +741,13 @@ export function App() {
               )}
             >
               <div className="mx-auto flex h-8 w-full max-w-7xl items-center justify-center gap-2 px-4 text-xs text-muted-foreground">
-                Mesh LLM{" "}
+                Senda{" "}
                 {status?.version ? `v${status.version}` : "version loading..."}
                 {status?.latest_version ? (
                   <>
                     <span>·</span>
                     <a
-                      href="https://github.com/Mesh-LLM/senda/releases"
+                      href="https://github.com/senda-network/senda-llm/releases"
                       target="_blank"
                       rel="noreferrer"
                       className="underline-offset-2 hover:text-foreground hover:underline"
@@ -761,7 +761,7 @@ export function App() {
                 ) : null}
                 <span>·</span>
                 <a
-                  href="https://github.com/Mesh-LLM/senda"
+                  href="https://github.com/senda-network/senda-llm"
                   target="_blank"
                   rel="noreferrer"
                   className="inline-flex h-5 w-5 items-center justify-center hover:text-foreground"

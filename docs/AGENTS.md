@@ -1,6 +1,6 @@
 # Agents And Blackboard
 
-Mesh LLM exposes an OpenAI-compatible API on `http://localhost:9337/v1`, so most agent tools can talk to it directly.
+Senda exposes an OpenAI-compatible API on `http://localhost:9337/v1`, so most agent tools can talk to it directly.
 
 `/v1/models` lists the models currently available on the mesh. Requests are routed by the `model` field.
 
@@ -31,7 +31,7 @@ This writes or updates `~/.config/goose/custom_providers/mesh.json` and launches
 
 ## Claude Code
 
-Launch Claude Code directly through Mesh LLM:
+Launch Claude Code directly through Senda:
 
 ```bash
 senda claude
@@ -45,7 +45,7 @@ senda claude --model MiniMax-M2.5-Q4_K_M
 
 ## OpenCode
 
-Launch OpenCode directly through Mesh LLM:
+Launch OpenCode directly through Senda:
 
 ```bash
 senda opencode
@@ -69,11 +69,11 @@ Write a merged persistent OpenCode config to `~/.config/opencode/opencode.json`:
 senda opencode --write --host 127.0.0.1:9337
 ```
 
-If only `~/.config/opencode/opencode.jsonc` exists, Mesh LLM stops with a clear error telling you to rename or migrate it to `opencode.json` first.
+If only `~/.config/opencode/opencode.jsonc` exists, Senda stops with a clear error telling you to rename or migrate it to `opencode.json` first.
 
-Mesh LLM injects a temporary OpenCode config with `OPENCODE_CONFIG_CONTENT` when it launches OpenCode, so it does not edit your persistent OpenCode config files.
+Senda injects a temporary OpenCode config with `OPENCODE_CONFIG_CONTENT` when it launches OpenCode, so it does not edit your persistent OpenCode config files.
 
-If you want to rerun OpenCode manually, use the same config contract Mesh LLM generates:
+If you want to rerun OpenCode manually, use the same config contract Senda generates:
 
 ```bash
 OPENCODE_CONFIG_CONTENT='{
@@ -156,9 +156,9 @@ curl http://localhost:9337/v1/chat/completions \
 
 ## Blackboard
 
-Mesh LLM can also share status, findings, and questions across the mesh through the built-in `blackboard` plugin.
+Senda can also share status, findings, and questions across the mesh through the built-in `blackboard` plugin.
 
-This works even if you are not using Mesh LLM for model serving. A client-only node is enough:
+This works even if you are not using Senda for model serving. A client-only node is enough:
 
 ```bash
 senda client

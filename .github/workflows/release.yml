@@ -426,6 +426,12 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.prepare_release.outputs.tag }}
+          # Only build the llama.cpp binaries we actually ship. Building the
+          # full example/tool set links binaries we don't bundle (llama-parallel,
+          # llama-speculative, llama-save-load-state, …), and on the CUDA runner
+          # those extra links exhausted the disk and failed the v0.66.82 release
+          # with "ld: No space left on device". Matches ci.yml's target list.
+          SENDA_LLAMA_TARGETS: "rpc-server llama-server llama-moe-analyze llama-moe-split"
         run: |
           just --shell bash --shell-arg -lc release-build-cuda
           just --shell bash --shell-arg -lc release-bundle-cuda "$RELEASE_TAG" dist
@@ -502,6 +508,8 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.prepare_release.outputs.tag }}
+          # Only build the llama.cpp binaries we ship (see CUDA job note on disk).
+          SENDA_LLAMA_TARGETS: "rpc-server llama-server llama-moe-analyze llama-moe-split"
         run: |
           just --shell bash --shell-arg -lc release-build-rocm
           just --shell bash --shell-arg -lc release-bundle-rocm "$RELEASE_TAG" dist
@@ -579,6 +587,8 @@ jobs:
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.prepare_release.outputs.tag }}
+          # Only build the llama.cpp binaries we ship (see CUDA job note on disk).
+          SENDA_LLAMA_TARGETS: "rpc-server llama-server llama-moe-analyze llama-moe-split"
         run: |
           just --shell bash --shell-arg -lc release-build-vulkan
           just --shell bash --shell-arg -lc release-bundle-vulkan "$RELEASE_TAG" dist

@@ -2,7 +2,7 @@
 name = "senda-client"
 version = "0.66.82"
 edition = "2021"
-description = "Low-level Rust client implementation for Mesh LLM embedded integrations"
+description = "Low-level Rust client implementation for Senda embedded integrations"
 license = "Apache-2.0"
 repository = "https://github.com/senda-network/senda-llm"
 homepage = "https://github.com/senda-network/senda-llm"

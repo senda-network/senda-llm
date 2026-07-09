@@ -9,13 +9,13 @@ For command-by-command CLI usage, model resolution rules, and JSON automation ex
 Install the latest release bundle:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/senda-network/senda-llm/main/install.sh | bash
 ```
 
 To opt into the latest published prerelease bundle instead:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh | bash -s -- --pre-release
+curl -fsSL https://raw.githubusercontent.com/senda-network/senda-llm/main/install.sh | bash -s -- --pre-release
 ```
 
 The installer probes your machine, recommends a flavor, and asks what to install.
@@ -23,7 +23,7 @@ The installer probes your machine, recommends a flavor, and asks what to install
 For a non-interactive install, set the flavor explicitly:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh | SENDA_INSTALL_FLAVOR=vulkan bash
+curl -fsSL https://raw.githubusercontent.com/senda-network/senda-llm/main/install.sh | SENDA_INSTALL_FLAVOR=vulkan bash
 ```
 
 Release bundles install flavor-specific llama.cpp binaries:
@@ -80,15 +80,15 @@ Bare `senda serve` loads startup models from `[[models]]` in `~/.senda/config.to
 
 ## Background service
 
-To install Mesh LLM as a per-user background service:
+To install Senda as a per-user background service:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh | bash -s -- --service
+curl -fsSL https://raw.githubusercontent.com/senda-network/senda-llm/main/install.sh | bash -s -- --service
 ```
 
 Service installs are user-scoped:
 
-- macOS installs a `launchd` agent at `~/Library/LaunchAgents/network.senda.senda.plist`
+- macOS installs a `launchd` agent at `~/Library/LaunchAgents/network.senda.runtime.plist`
 - Linux installs a `systemd --user` unit at `~/.config/systemd/user/senda.service`
 - Shared environment config lives in `~/.config/senda/service.env`
 - Startup models live in `~/.senda/config.toml`

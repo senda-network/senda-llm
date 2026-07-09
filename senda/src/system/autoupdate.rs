@@ -12,11 +12,11 @@ use crate::process_util::HideConsole;
 use crate::system::release_target::{CanonicalArch, CanonicalOs, ReleaseTarget};
 use crate::VERSION;
 
-const DEFAULT_RELEASE_REPO: &str = "Mesh-LLM/senda";
+const DEFAULT_RELEASE_REPO: &str = "senda-network/senda-llm";
 #[cfg(not(windows))]
 const INSTALL_SCRIPT_URL: &str =
-    "https://raw.githubusercontent.com/Mesh-LLM/senda/main/install.sh";
-const RELEASES_URL: &str = "https://github.com/Mesh-LLM/senda/releases/latest";
+    "https://raw.githubusercontent.com/senda-network/senda-llm/main/install.sh";
+const RELEASES_URL: &str = "https://github.com/senda-network/senda-llm/releases/latest";
 const SELF_UPDATE_ATTEMPTED_ENV: &str = "SENDA_SELF_UPDATE_ATTEMPTED";
 const SELF_UPDATE_REPO_ENV: &str = "SENDA_SELF_UPDATE_REPO";
 
@@ -1151,7 +1151,7 @@ mod tests {
         std::env::remove_var(SELF_UPDATE_REPO_ENV);
         assert_eq!(
             release_asset_url("v0.60.0", "senda-darwin-aarch64.tar.gz"),
-            "https://github.com/Mesh-LLM/senda/releases/download/v0.60.0/senda-darwin-aarch64.tar.gz"
+            "https://github.com/senda-network/senda-llm/releases/download/v0.60.0/senda-darwin-aarch64.tar.gz"
         );
     }
 
@@ -1159,10 +1159,10 @@ mod tests {
     #[serial]
     fn test_release_repo_defaults_to_main_repo() {
         std::env::remove_var(SELF_UPDATE_REPO_ENV);
-        assert_eq!(release_repo(), "Mesh-LLM/senda");
+        assert_eq!(release_repo(), "senda-network/senda-llm");
         assert_eq!(
             latest_release_api_url(),
-            "https://api.github.com/repos/Mesh-LLM/senda/releases/latest"
+            "https://api.github.com/repos/senda-network/senda-llm/releases/latest"
         );
     }
 

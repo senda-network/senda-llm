@@ -102,7 +102,7 @@ pub(crate) struct HfJobArgs {
     #[arg(long)]
     pub(crate) hf_job_namespace: Option<String>,
     /// GitHub repo that hosts the senda release bundle used by the remote job.
-    #[arg(long, default_value = "Mesh-LLM/senda")]
+    #[arg(long, default_value = "senda-network/senda-llm")]
     pub(crate) hf_job_release_repo: String,
     /// Release tag to download inside the remote job. Use `latest` for the latest GitHub release.
     #[arg(long, default_value = "latest")]

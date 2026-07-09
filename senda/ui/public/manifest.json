@@ -1,6 +1,6 @@
 {
-  "name": "Mesh LLM",
-  "short_name": "Mesh LLM",
+  "name": "Senda",
+  "short_name": "Senda",
   "description": "Distributed LLM inference over QUIC",
   "start_url": "/chat",
   "display": "standalone",

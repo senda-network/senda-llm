@@ -362,7 +362,7 @@ export function DashboardPage({
           </a>
           {" · "}
           <a
-            href="https://github.com/Mesh-LLM/senda"
+            href="https://github.com/senda-network/senda-llm"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 underline hover:text-foreground"

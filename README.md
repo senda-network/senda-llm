@@ -45,7 +45,7 @@ M-series unified memory turns a $2.5–4.5k laptop into a 30B–70B-capable infe
 
 The two are versioned and released independently. Most teams only ever install the runtime — the chat product talks to it for them.
 
-> Senda LLM is a fork of [Mesh-LLM/senda](https://github.com/senda-network/senda-llm). The Rust crate names are kept upstream-compatible (`senda`, `mesh-client`, etc.) so we can rebase cleanly; the **shipped binary**, **service label**, and **data directory** are all `senda`-branded.
+> Senda LLM is a fork of the upstream `mesh-llm` project. The Rust crate names are kept upstream-compatible (`senda`, `mesh-client`, etc.) so we can rebase cleanly; the **shipped binary**, **service label**, and **data directory** are all `senda`-branded.
 
 ## Quick start
 
@@ -354,4 +354,4 @@ scripts/                 Release, install, smoke-test scripts
 
 Apache-2.0 / MIT, dual-licensed. See [LICENSE](LICENSE).
 
-Senda LLM is a fork of [Mesh-LLM/senda](https://github.com/senda-network/senda-llm) under the same dual-license terms.
+Senda LLM is a fork of the upstream `mesh-llm` project under the same dual-license terms.

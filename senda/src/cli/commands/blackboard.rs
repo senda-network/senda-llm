@@ -24,7 +24,7 @@ pub(crate) async fn run_blackboard(
         eprintln!("  Join a mesh:   senda client --join <token>");
         eprintln!("  Public mesh:   senda client --auto");
         eprintln!();
-        eprintln!("See https://github.com/Mesh-LLM/senda for setup guide.");
+        eprintln!("See https://github.com/senda-network/senda-llm for setup guide.");
         std::process::exit(1);
     }
 

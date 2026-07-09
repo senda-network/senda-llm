@@ -31,15 +31,16 @@ pub const VERSION: &str = "0.66.82";
 ///
 /// Runs once on startup. If `~/.senda/` does not yet exist but a legacy
 /// directory does, rename it in place so existing keys, models, and configs
-/// survive the rebrand. The chain is `~/.senda` -> `~/.forgemesh` ->
-/// `~/.senda`; we pick the newest legacy dir present.
+/// survive the rebrand. The rename chain is `~/.forgemesh` -> `~/.closedmesh`
+/// -> `~/.senda`; we pick the newest legacy dir present (most recent brand
+/// first).
 fn migrate_legacy_dir() {
     let Some(home) = dirs::home_dir() else { return };
     let target = home.join(".senda");
     if target.exists() {
         return;
     }
-    for legacy in [".forgemesh", ".senda"] {
+    for legacy in [".closedmesh", ".forgemesh"] {
         let candidate = home.join(legacy);
         if candidate.exists() {
             let _ = std::fs::rename(&candidate, &target);

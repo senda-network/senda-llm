@@ -12,7 +12,7 @@ INSTALL_SERVICE_ARGS="${SENDA_INSTALL_SERVICE_ARGS:-}"
 INSTALL_SERVICE_START="${SENDA_INSTALL_SERVICE_START:-1}"
 
 SERVICE_NAME="senda"
-SERVICE_LABEL="com.senda"
+SERVICE_LABEL="network.senda.runtime"
 MESH_CONFIG_FILE="$HOME/.senda/config.toml"
 SERVICE_CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/senda"
 SERVICE_ENV_FILE="$SERVICE_CONFIG_DIR/service.env"
@@ -315,7 +315,7 @@ choose_flavor() {
         return 0
     fi
 
-    echo "Mesh LLM installer"
+    echo "Senda installer"
     echo "Platform: $(platform_id)"
     echo "Recommended flavor: $recommended"
     echo "Reason: $(recommendation_reason)"
@@ -638,7 +638,7 @@ if [[ -f "\$ENV_FILE" ]]; then
     set +a
 fi
 
-exec "\$BIN" serve
+exec "\$BIN" serve --auto --mesh-name senda --headless
 EOF
 
     chmod +x "$SERVICE_RUNNER"
