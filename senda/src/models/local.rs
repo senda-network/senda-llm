@@ -460,6 +460,15 @@ pub fn find_model_path(stem: &str) -> PathBuf {
         return found;
     }
 
+    // A catalog ref and its upstream Hugging Face filename can differ (e.g.
+    // catalog `Gemma-3-27B-it-Q4_K_M` vs upstream `google_gemma-3-27b-it-Q4_K_M`).
+    // Probe the alternate stems so a model downloaded under either name is found.
+    for alias in crate::models::catalog::catalog_path_lookup_aliases(stem) {
+        if let Some(found) = find_hf_cache_model_path(&canonical_dir, &alias) {
+            return found;
+        }
+    }
+
     canonical_dir.join(format!("{stem}.gguf"))
 }
 

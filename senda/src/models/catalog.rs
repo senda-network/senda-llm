@@ -156,6 +156,63 @@ pub fn find_model(query: &str) -> Option<&'static CatalogModel> {
         })
 }
 
+/// True when `query` names this catalog row by its id, its managed filename,
+/// or the upstream Hugging Face filename stem. The upstream stem frequently
+/// differs from the catalog id — e.g. bartowski publishes Gemma 3 27B as
+/// `google_gemma-3-27b-it-Q4_K_M.gguf`, while the catalog id is
+/// `Gemma-3-27B-it-Q4_K_M`. Users (and the desktop "Set as startup" flow when
+/// fed a raw filename) hit the second form, and without this the runtime
+/// rejected it with "Expected an exact model ref" and crash-looped on boot.
+pub fn catalog_query_matches(model: &CatalogModel, query: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return false;
+    }
+    let stem = |value: &str| value.trim_end_matches(".gguf").to_lowercase();
+    if model.name.to_lowercase() == q {
+        return true;
+    }
+    if model.file.to_lowercase() == q || stem(&model.file) == q {
+        return true;
+    }
+    if let Some(source) = model.source_file() {
+        if source.to_lowercase() == q || stem(source) == q {
+            return true;
+        }
+    }
+    false
+}
+
+/// Catalog lookup that also accepts the upstream Hugging Face filename stem,
+/// not just the catalog id / managed filename.
+pub fn find_catalog_model_by_query(query: &str) -> Option<&'static CatalogModel> {
+    MODEL_CATALOG
+        .iter()
+        .find(|model| catalog_query_matches(model, query))
+}
+
+/// Alternate GGUF filename stems to probe in the HF cache when resolving a
+/// catalog ref by name. Lets `find_model_path("Gemma-3-27B-it-Q4_K_M")` locate
+/// weights stored under the upstream stem `google_gemma-3-27b-it-Q4_K_M`, and
+/// vice versa. Returns stems other than the one already queried.
+pub fn catalog_path_lookup_aliases(stem: &str) -> Vec<String> {
+    let Some(model) = find_catalog_model_by_query(stem) else {
+        return Vec::new();
+    };
+    let mut aliases: Vec<String> = Vec::new();
+    let mut push = |candidate: &str| {
+        let candidate = candidate.trim_end_matches(".gguf").to_string();
+        if candidate != stem && !aliases.contains(&candidate) {
+            aliases.push(candidate);
+        }
+    };
+    push(&model.file);
+    if let Some(source) = model.source_file() {
+        push(source);
+    }
+    aliases
+}
+
 fn parse_hf_resolve_url_parts(url: &str) -> Option<(&str, Option<&str>, &str)> {
     let tail = url
         .strip_prefix("https://huggingface.co/")
@@ -1685,6 +1742,44 @@ mod tests {
         assert_eq!(model.source_revision(), None);
         assert_eq!(model.source_file(), None);
         assert!(model.source_repo().is_none());
+    }
+
+    #[test]
+    fn find_catalog_model_by_query_maps_upstream_hf_filename() {
+        let by_id = find_catalog_model_by_query("Gemma-3-27B-it-Q4_K_M").unwrap();
+        let by_upstream = find_catalog_model_by_query("google_gemma-3-27b-it-Q4_K_M").unwrap();
+        let by_upstream_file =
+            find_catalog_model_by_query("google_gemma-3-27b-it-Q4_K_M.gguf").unwrap();
+        assert_eq!(by_id.name, "Gemma-3-27B-it-Q4_K_M");
+        assert_eq!(by_upstream.name, by_id.name);
+        assert_eq!(by_upstream_file.name, by_id.name);
+        assert!(find_catalog_model_by_query("").is_none());
+    }
+
+    #[test]
+    fn catalog_path_lookup_aliases_bridges_id_and_upstream_stems() {
+        // Querying by catalog id yields the upstream stem as an alias to probe.
+        let from_id = catalog_path_lookup_aliases("Gemma-3-27B-it-Q4_K_M");
+        assert!(
+            from_id
+                .iter()
+                .any(|alias| alias == "google_gemma-3-27b-it-Q4_K_M"),
+            "expected upstream stem alias, got {from_id:?}"
+        );
+        // And querying by the upstream stem yields the catalog stem.
+        let from_upstream = catalog_path_lookup_aliases("google_gemma-3-27b-it-Q4_K_M");
+        assert!(
+            from_upstream
+                .iter()
+                .any(|alias| alias == "Gemma-3-27B-it-Q4_K_M"),
+            "expected catalog stem alias, got {from_upstream:?}"
+        );
+        // The queried stem itself is never returned as its own alias.
+        assert!(from_id
+            .iter()
+            .all(|alias| alias != "Gemma-3-27B-it-Q4_K_M"));
+        // Unknown refs produce no aliases.
+        assert!(catalog_path_lookup_aliases("not-a-real-model").is_empty());
     }
 
     #[test]

@@ -140,4 +140,22 @@ mod tests {
         let model = find_catalog_model_exact("Qwen3-8B-Q4_K_M").unwrap();
         assert_eq!(model.name, "Qwen3-8B-Q4_K_M");
     }
+
+    #[test]
+    fn find_catalog_model_exact_matches_upstream_hf_filename_stem() {
+        // Regression: the desktop "Set as startup" flow (and hand-edited
+        // config.toml) sometimes carries the upstream Hugging Face filename
+        // rather than the catalog id. Gemma 3 27B is the canonical case —
+        // bartowski ships it as `google_gemma-3-27b-it-Q4_K_M.gguf`, but the
+        // catalog id is `Gemma-3-27B-it-Q4_K_M`. Before this mapped, the
+        // runtime rejected the ref with "Expected an exact model ref" and
+        // crash-looped on boot.
+        let model =
+            find_catalog_model_exact("google_gemma-3-27b-it-Q4_K_M").expect("upstream stem maps");
+        assert_eq!(model.name, "Gemma-3-27B-it-Q4_K_M");
+
+        let with_ext = find_catalog_model_exact("google_gemma-3-27b-it-Q4_K_M.gguf")
+            .expect("upstream filename maps");
+        assert_eq!(with_ext.name, "Gemma-3-27B-it-Q4_K_M");
+    }
 }

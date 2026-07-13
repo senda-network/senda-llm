@@ -84,12 +84,7 @@ pub(super) fn merge_capabilities(
 }
 
 pub fn find_catalog_model_exact(query: &str) -> Option<&'static catalog::CatalogModel> {
-    let q = query.to_lowercase();
-    catalog::MODEL_CATALOG.iter().find(|model| {
-        model.name.to_lowercase() == q
-            || model.file.to_lowercase() == q
-            || model.file.trim_end_matches(".gguf").to_lowercase() == q
-    })
+    catalog::find_catalog_model_by_query(query)
 }
 
 pub fn canonicalize_interest_model_ref(input: &str) -> Result<String> {
@@ -789,13 +784,8 @@ fn matching_catalog_model_by_basename(repo_file: &str) -> Option<&'static catalo
     let basename = Path::new(repo_file)
         .file_name()
         .and_then(|value| value.to_str())
-        .unwrap_or(repo_file)
-        .to_lowercase();
-    catalog::MODEL_CATALOG.iter().find(|model| {
-        model.file.to_lowercase() == basename
-            || model.file.trim_end_matches(".gguf").to_lowercase()
-                == basename.trim_end_matches(".gguf")
-    })
+        .unwrap_or(repo_file);
+    find_catalog_model_exact(basename)
 }
 
 pub(super) fn parse_hf_resolve_url(url: &str) -> Option<(String, Option<String>, String)> {
