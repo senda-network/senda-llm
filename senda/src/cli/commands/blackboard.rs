@@ -159,8 +159,6 @@ pub(crate) fn install_skill() -> Result<()> {
     std::fs::write(&skill_path, skill_content)?;
     eprintln!("✅ Installed blackboard skill to {}", skill_path.display());
     eprintln!("   Works with pi, Goose, and other agents that read ~/.agents/skills/");
-    eprintln!(
-        "   Make sure senda is running and the blackboard plugin is not disabled in config."
-    );
+    eprintln!("   Make sure senda is running and the blackboard plugin is not disabled in config.");
     Ok(())
 }

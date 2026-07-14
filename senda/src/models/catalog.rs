@@ -1775,9 +1775,7 @@ mod tests {
             "expected catalog stem alias, got {from_upstream:?}"
         );
         // The queried stem itself is never returned as its own alias.
-        assert!(from_id
-            .iter()
-            .all(|alias| alias != "Gemma-3-27B-it-Q4_K_M"));
+        assert!(from_id.iter().all(|alias| alias != "Gemma-3-27B-it-Q4_K_M"));
         // Unknown refs produce no aliases.
         assert!(catalog_path_lookup_aliases("not-a-real-model").is_empty());
     }

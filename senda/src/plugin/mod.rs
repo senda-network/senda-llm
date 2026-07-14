@@ -6,12 +6,12 @@ mod support;
 mod transport;
 
 use anyhow::{anyhow, bail, Context, Result};
-pub use senda_plugin::proto;
 use rmcp::model::ServerInfo;
 use rmcp::model::{
     CompleteRequestParams, CompleteResult, GetPromptRequestParams, GetPromptResult,
     ReadResourceRequestParams, ReadResourceResult,
 };
+pub use senda_plugin::proto;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;

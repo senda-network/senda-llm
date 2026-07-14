@@ -20,8 +20,8 @@ use hf_hub::{HFClient, HFClientBuilder, HFClientSync};
 pub use capabilities::{CapabilityLevel, ModelCapabilities};
 pub use inventory::{scan_local_inventory_snapshot_with_progress, LocalModelInventorySnapshot};
 pub use local::{
-    senda_cache_dir, find_mmproj_path, find_model_path, huggingface_hub_cache_dir,
-    huggingface_identity_for_path, resolve_mmproj_path, scan_installed_models, scan_local_models,
+    find_mmproj_path, find_model_path, huggingface_hub_cache_dir, huggingface_identity_for_path,
+    resolve_mmproj_path, scan_installed_models, scan_local_models, senda_cache_dir,
 };
 pub use maintenance::{run_update, warn_about_updates_for_paths};
 pub(crate) use resolve::resolve_model_spec_with_progress;

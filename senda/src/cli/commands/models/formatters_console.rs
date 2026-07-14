@@ -257,11 +257,7 @@ impl ModelsFormatter for ConsoleFormatter {
             }
             writeln!(&mut output, "   capabilities: {}", caps.join("  "))?;
             writeln!(&mut output, "   ref: {}", row.model_ref)?;
-            writeln!(
-                &mut output,
-                "   show: senda models show {}",
-                row.model_ref
-            )?;
+            writeln!(&mut output, "   show: senda models show {}", row.model_ref)?;
             writeln!(
                 &mut output,
                 "   download: senda models download {}",

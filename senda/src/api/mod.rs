@@ -2084,8 +2084,8 @@ mod tests {
     use crate::api::status::decode_runtime_model_path;
     use crate::plugin;
     use crate::plugins::{blackboard, blobstore};
-    use senda_plugin::MeshVisibility;
     use rmcp::model::ErrorCode;
+    use senda_plugin::MeshVisibility;
     use serde_json::json;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -3440,9 +3440,8 @@ mod tests {
                     )));
                 }
 
-                let request: senda_plugin::OperationRequest =
-                    serde_json::from_str(&params_json)
-                        .map_err(|err| Self::error_response(err.to_string()))?;
+                let request: senda_plugin::OperationRequest = serde_json::from_str(&params_json)
+                    .map_err(|err| Self::error_response(err.to_string()))?;
                 let result_json = match request.name.as_str() {
                     blobstore::PUT_REQUEST_OBJECT_TOOL => {
                         let request: blobstore::PutRequestObjectRequest =
@@ -3515,9 +3514,8 @@ mod tests {
                     )));
                 }
 
-                let request: senda_plugin::OperationRequest =
-                    serde_json::from_str(&params_json)
-                        .map_err(|err| Self::error_response(err.to_string()))?;
+                let request: senda_plugin::OperationRequest = serde_json::from_str(&params_json)
+                    .map_err(|err| Self::error_response(err.to_string()))?;
                 let result_json = match request.name.as_str() {
                     "feed" => {
                         let request: blackboard::FeedRequest =

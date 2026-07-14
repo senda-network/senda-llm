@@ -231,10 +231,7 @@ pub async fn discover(
 
     let nostr_filter = Filter::new()
         .kind(Kind::Custom(MESH_SERVICE_KIND))
-        .custom_tag(
-            SingleLetterTag::lowercase(Alphabet::K),
-            "senda".to_string(),
-        )
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::K), "senda".to_string())
         .limit(100);
 
     let events = match client

@@ -23,10 +23,7 @@ fn configure_console_dist() {
     let fallback =
         Path::new(&std::env::var("OUT_DIR").expect("cargo out dir")).join("empty-console-dist");
     fs::create_dir_all(&fallback).expect("create fallback console dist dir");
-    println!(
-        "cargo:rustc-env=SENDA_CONSOLE_DIST={}",
-        fallback.display()
-    );
+    println!("cargo:rustc-env=SENDA_CONSOLE_DIST={}", fallback.display());
 }
 
 fn watch_path(path: &Path) {

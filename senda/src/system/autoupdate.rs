@@ -1207,13 +1207,10 @@ mod tests {
     #[test]
     fn test_stable_release_asset_name_matches_platform() {
         let expected = match (std::env::consts::OS, std::env::consts::ARCH) {
-            ("macos", "aarch64") => Some((
-                launch::BinaryFlavor::Metal,
-                "senda-darwin-aarch64.tar.gz",
-            )),
-            ("linux", "x86_64") => {
-                Some((launch::BinaryFlavor::Cpu, "senda-linux-x86_64.tar.gz"))
+            ("macos", "aarch64") => {
+                Some((launch::BinaryFlavor::Metal, "senda-darwin-aarch64.tar.gz"))
             }
+            ("linux", "x86_64") => Some((launch::BinaryFlavor::Cpu, "senda-linux-x86_64.tar.gz")),
             _ => None,
         };
 
@@ -1304,10 +1301,7 @@ mod tests {
         let aarch64_asset =
             stable_release_asset_name_for("linux", "aarch64", launch::BinaryFlavor::Cpu);
         assert_eq!(arm64_asset, aarch64_asset);
-        assert_eq!(
-            arm64_asset,
-            Some("senda-linux-aarch64.tar.gz".to_string())
-        );
+        assert_eq!(arm64_asset, Some("senda-linux-aarch64.tar.gz".to_string()));
     }
 
     #[test]

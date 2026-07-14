@@ -7,8 +7,8 @@ use super::{
     CONNECT_TIMEOUT_SECS, PROTOCOL_VERSION, REQUEST_TIMEOUT_SECS,
 };
 use anyhow::{bail, Context, Result};
-use senda_plugin::{MeshVisibility, STARTUP_DISABLED_ERROR_CODE};
 use rmcp::model::{InitializeRequestParams, ServerInfo};
+use senda_plugin::{MeshVisibility, STARTUP_DISABLED_ERROR_CODE};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};

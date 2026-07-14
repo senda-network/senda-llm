@@ -567,10 +567,7 @@ mod tests {
     #[test]
     fn protocol_from_alpn_defaults_to_v1() {
         assert_eq!(protocol_from_alpn(ALPN_V1), ControlProtocol::ProtoV1);
-        assert_eq!(
-            protocol_from_alpn(b"senda/999"),
-            ControlProtocol::ProtoV1
-        );
+        assert_eq!(protocol_from_alpn(b"senda/999"), ControlProtocol::ProtoV1);
     }
     #[test]
     fn control_frame_roundtrip() {

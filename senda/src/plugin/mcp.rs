@@ -1651,8 +1651,7 @@ mod tests {
 
     #[cfg(unix)]
     async fn spawn_fake_external_unix_endpoint() -> PathBuf {
-        let path =
-            std::env::temp_dir().join(format!("senda-mcp-{}.sock", rand::random::<u64>()));
+        let path = std::env::temp_dir().join(format!("senda-mcp-{}.sock", rand::random::<u64>()));
         let _ = std::fs::remove_file(&path);
         let listener = tokio::net::UnixListener::bind(&path).unwrap();
         tokio::spawn(async move {

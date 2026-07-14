@@ -175,9 +175,7 @@ impl ReleaseTarget {
         };
 
         match release_tag {
-            Some(tag) => Some(format!(
-                "senda-{tag}-{os}-{arch}{flavor_suffix}.{archive}"
-            )),
+            Some(tag) => Some(format!("senda-{tag}-{os}-{arch}{flavor_suffix}.{archive}")),
             None => Some(format!("senda-{os}-{arch}{flavor_suffix}.{archive}")),
         }
     }

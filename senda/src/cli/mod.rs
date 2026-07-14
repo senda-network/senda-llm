@@ -1071,14 +1071,7 @@ mod tests {
 
     #[test]
     fn moe_analyze_micro_accepts_share_flag() {
-        let cli = Cli::parse_from([
-            "senda",
-            "moe",
-            "analyze",
-            "micro",
-            "Qwen/Qwen3",
-            "--share",
-        ]);
+        let cli = Cli::parse_from(["senda", "moe", "analyze", "micro", "Qwen/Qwen3", "--share"]);
 
         match cli.command.expect("moe command expected") {
             Command::Moe {
@@ -1207,13 +1200,8 @@ mod tests {
 
     #[test]
     fn cli_accepts_json_log_format() {
-        let normalized = normalize_runtime_surface_args([
-            "senda",
-            "serve",
-            "--log-format",
-            "json",
-            "--auto",
-        ]);
+        let normalized =
+            normalize_runtime_surface_args(["senda", "serve", "--log-format", "json", "--auto"]);
         let cli = Cli::parse_from(normalized.normalized);
 
         assert_eq!(cli.log_format, LogFormat::Json);
@@ -1221,13 +1209,8 @@ mod tests {
 
     #[test]
     fn cli_accepts_global_log_format_before_serve() {
-        let normalized = normalize_runtime_surface_args([
-            "senda",
-            "--log-format",
-            "json",
-            "serve",
-            "--auto",
-        ]);
+        let normalized =
+            normalize_runtime_surface_args(["senda", "--log-format", "json", "serve", "--auto"]);
         let cli = Cli::parse_from(normalized.normalized);
 
         assert_eq!(cli.log_format, LogFormat::Json);
@@ -1263,13 +1246,8 @@ mod tests {
 
     #[test]
     fn cli_accepts_global_log_format_before_client() {
-        let normalized = normalize_runtime_surface_args([
-            "senda",
-            "--log-format",
-            "json",
-            "client",
-            "--auto",
-        ]);
+        let normalized =
+            normalize_runtime_surface_args(["senda", "--log-format", "json", "client", "--auto"]);
         let cli = Cli::parse_from(normalized.normalized);
 
         assert_eq!(cli.log_format, LogFormat::Json);
@@ -1374,13 +1352,8 @@ mod tests {
 
     #[test]
     fn cli_private_only_allows_explicit_invite_join() {
-        let normalized = normalize_runtime_surface_args([
-            "senda",
-            "serve",
-            "--private-only",
-            "--join",
-            "TOKEN",
-        ]);
+        let normalized =
+            normalize_runtime_surface_args(["senda", "serve", "--private-only", "--join", "TOKEN"]);
         let cli = Cli::parse_from(normalized.normalized);
         assert!(cli.private_only);
         assert_eq!(cli.join, vec!["TOKEN".to_string()]);
@@ -1437,13 +1410,8 @@ mod tests {
 
     #[test]
     fn cli_private_only_conflicts_with_region() {
-        let normalized = normalize_runtime_surface_args([
-            "senda",
-            "serve",
-            "--private-only",
-            "--region",
-            "EU",
-        ]);
+        let normalized =
+            normalize_runtime_surface_args(["senda", "serve", "--private-only", "--region", "EU"]);
         let err = Cli::try_parse_from(normalized.normalized)
             .expect_err("--private-only --region must err");
         assert_eq!(err.kind(), ErrorKind::ArgumentConflict);

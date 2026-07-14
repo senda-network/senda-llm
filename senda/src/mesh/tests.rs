@@ -674,10 +674,7 @@ fn make_valid_gossip_frame() -> GossipFrame {
 #[test]
 fn protocol_from_alpn_defaults_to_v1() {
     assert_eq!(protocol_from_alpn(ALPN_V1), ControlProtocol::ProtoV1);
-    assert_eq!(
-        protocol_from_alpn(b"senda/999"),
-        ControlProtocol::ProtoV1
-    );
+    assert_eq!(protocol_from_alpn(b"senda/999"), ControlProtocol::ProtoV1);
 }
 
 #[test]
@@ -4122,8 +4119,7 @@ async fn config_subscribe_wrong_owner_returns_error() -> Result<()> {
 async fn config_subscribe_unowned_node_returns_error() -> Result<()> {
     let client_owner = test_owner_keypair(0x44, 0x45);
 
-    let tmp =
-        std::env::temp_dir().join(format!("senda-cfg-unowned-{}", rand::random::<u64>()));
+    let tmp = std::env::temp_dir().join(format!("senda-cfg-unowned-{}", rand::random::<u64>()));
     std::fs::create_dir_all(tmp.join("client")).ok();
 
     // server has NO owner key (make_test_node, not make_test_node_with_owner)
@@ -4174,8 +4170,7 @@ async fn config_subscribe_unowned_node_returns_error() -> Result<()> {
 async fn config_subscribe_rejects_pinned_snapshot_for_older_peer() -> Result<()> {
     let owner_keypair = test_owner_keypair(0x13, 0x14);
 
-    let tmp =
-        std::env::temp_dir().join(format!("senda-cfg-sub-old-{}", rand::random::<u64>()));
+    let tmp = std::env::temp_dir().join(format!("senda-cfg-sub-old-{}", rand::random::<u64>()));
     std::fs::create_dir_all(tmp.join("server")).ok();
     std::fs::create_dir_all(tmp.join("client")).ok();
 
@@ -4267,10 +4262,7 @@ async fn config_subscribe_rejects_pinned_snapshot_for_older_peer() -> Result<()>
 async fn config_subscribe_rejects_pinned_snapshot_for_malformed_peer_version() -> Result<()> {
     let owner_keypair = test_owner_keypair(0x33, 0x34);
 
-    let tmp = std::env::temp_dir().join(format!(
-        "senda-cfg-sub-bad-ver-{}",
-        rand::random::<u64>()
-    ));
+    let tmp = std::env::temp_dir().join(format!("senda-cfg-sub-bad-ver-{}", rand::random::<u64>()));
     std::fs::create_dir_all(tmp.join("server")).ok();
     std::fs::create_dir_all(tmp.join("client")).ok();
 
@@ -4366,10 +4358,7 @@ async fn config_subscribe_rejects_pinned_snapshot_for_malformed_peer_version() -
 async fn config_subscribe_allows_pinned_snapshot_for_same_release_prerelease_peer() -> Result<()> {
     let owner_keypair = test_owner_keypair(0x37, 0x38);
 
-    let tmp = std::env::temp_dir().join(format!(
-        "senda-cfg-sub-rc-ver-{}",
-        rand::random::<u64>()
-    ));
+    let tmp = std::env::temp_dir().join(format!("senda-cfg-sub-rc-ver-{}", rand::random::<u64>()));
     std::fs::create_dir_all(tmp.join("server")).ok();
     std::fs::create_dir_all(tmp.join("client")).ok();
 
@@ -4462,10 +4451,8 @@ async fn config_subscribe_allows_pinned_snapshot_for_same_release_prerelease_pee
 async fn config_subscribe_auto_snapshot_still_allowed_for_older_peer() -> Result<()> {
     let owner_keypair = test_owner_keypair(0x15, 0x16);
 
-    let tmp = std::env::temp_dir().join(format!(
-        "senda-cfg-sub-auto-old-{}",
-        rand::random::<u64>()
-    ));
+    let tmp =
+        std::env::temp_dir().join(format!("senda-cfg-sub-auto-old-{}", rand::random::<u64>()));
     std::fs::create_dir_all(tmp.join("server")).ok();
     std::fs::create_dir_all(tmp.join("client")).ok();
 
@@ -4836,8 +4823,7 @@ async fn config_push_valid_signature_accepted() -> Result<()> {
 
     let owner_keypair = test_owner_keypair(0x55, 0x56);
 
-    let tmp =
-        std::env::temp_dir().join(format!("senda-cfg-push-ok-{}", rand::random::<u64>()));
+    let tmp = std::env::temp_dir().join(format!("senda-cfg-push-ok-{}", rand::random::<u64>()));
     std::fs::create_dir_all(tmp.join("server")).ok();
     std::fs::create_dir_all(tmp.join("client")).ok();
 
@@ -4926,8 +4912,7 @@ async fn config_push_revision_conflict_rejected() -> Result<()> {
 
     let owner_keypair = test_owner_keypair(0x66, 0x67);
 
-    let tmp =
-        std::env::temp_dir().join(format!("senda-cfg-conflict-{}", rand::random::<u64>()));
+    let tmp = std::env::temp_dir().join(format!("senda-cfg-conflict-{}", rand::random::<u64>()));
     std::fs::create_dir_all(tmp.join("server")).ok();
     std::fs::create_dir_all(tmp.join("client")).ok();
 

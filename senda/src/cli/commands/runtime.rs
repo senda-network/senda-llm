@@ -17,10 +17,11 @@ pub(crate) async fn run_drop(model_name: &str, port: u16) -> Result<()> {
         .build()?;
     let encoded = percent_encode_path_segment(model_name);
     let url = format!("http://127.0.0.1:{port}/api/runtime/models/{encoded}");
-    let resp =
-        client.delete(&url).send().await.with_context(|| {
-            format!("Can't connect to senda on port {port}. Is it running?")
-        })?;
+    let resp = client
+        .delete(&url)
+        .send()
+        .await
+        .with_context(|| format!("Can't connect to senda on port {port}. Is it running?"))?;
     display_runtime_result(resp, model_name, "Unloaded").await
 }
 
@@ -169,9 +170,7 @@ async fn fetch_runtime_payload(
         .get(&url)
         .send()
         .await
-        .with_context(|| {
-            format!("Can't connect to senda console on port {port}. Is it running?")
-        })?
+        .with_context(|| format!("Can't connect to senda console on port {port}. Is it running?"))?
         .error_for_status()?
         .json::<serde_json::Value>()
         .await

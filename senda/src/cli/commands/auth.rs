@@ -244,10 +244,7 @@ pub(crate) fn run_init(
     }
     eprintln!("- Start senda and it will automatically attest nodes from this keystore.");
     if custom_owner_key {
-        eprintln!(
-            "- Pass --owner-key {} when starting senda.",
-            path.display()
-        );
+        eprintln!("- Pass --owner-key {} when starting senda.", path.display());
     }
 
     Ok(())
@@ -540,9 +537,7 @@ pub(crate) const RUN_ROTATE_NODE: RunRotateNodeFn =
         let owner_key_path = resolve_owner_key_path(owner_key)?;
         if !owner_key_path.exists() {
             eprintln!("No owner keystore found at {}", owner_key_path.display());
-            eprintln!(
-                "Run `senda auth init` or `senda auth sign-node` later to attest this node."
-            );
+            eprintln!("Run `senda auth init` or `senda auth sign-node` later to attest this node.");
             return Ok(());
         }
 
@@ -823,10 +818,8 @@ mod tests {
             return;
         }
 
-        let tmp_dir = std::env::temp_dir().join(format!(
-            "senda-force-rollback-{}",
-            rand::random::<u64>()
-        ));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("senda-force-rollback-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let blocking_file = tmp_dir.join("blocker");
         std::fs::write(&blocking_file, b"not a directory").unwrap();
@@ -861,10 +854,8 @@ mod tests {
             return;
         }
 
-        let tmp_dir = std::env::temp_dir().join(format!(
-            "senda-fresh-rollback-{}",
-            rand::random::<u64>()
-        ));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("senda-fresh-rollback-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&tmp_dir).unwrap();
         let blocking_file = tmp_dir.join("blocker");
         std::fs::write(&blocking_file, b"not a directory").unwrap();
@@ -896,8 +887,7 @@ mod tests {
             return;
         }
 
-        let dir =
-            std::env::temp_dir().join(format!("senda-keychain-rt-{}", rand::random::<u64>()));
+        let dir = std::env::temp_dir().join(format!("senda-keychain-rt-{}", rand::random::<u64>()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("owner-keystore.json");
 

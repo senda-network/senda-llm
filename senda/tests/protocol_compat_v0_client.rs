@@ -35,10 +35,7 @@ fn protocol_from_alpn_v1_yields_proto_v1() {
 /// Unknown or future ALPNs must fall back to ProtoV1 without panicking.
 #[test]
 fn protocol_from_alpn_unknown_falls_back_to_proto_v1() {
-    assert_eq!(
-        protocol_from_alpn(b"senda/999"),
-        ControlProtocol::ProtoV1
-    );
+    assert_eq!(protocol_from_alpn(b"senda/999"), ControlProtocol::ProtoV1);
     assert_eq!(protocol_from_alpn(b"unknown"), ControlProtocol::ProtoV1);
     assert_eq!(protocol_from_alpn(b""), ControlProtocol::ProtoV1);
 }

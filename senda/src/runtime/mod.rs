@@ -5045,13 +5045,7 @@ mod tests {
 
     #[test]
     fn test_build_startup_model_specs_prefers_cli_models_over_config() {
-        let cli = Cli::parse_from([
-            "senda",
-            "--model",
-            "Qwen3-8B-Q4_K_M",
-            "--ctx-size",
-            "4096",
-        ]);
+        let cli = Cli::parse_from(["senda", "--model", "Qwen3-8B-Q4_K_M", "--ctx-size", "4096"]);
         let config = plugin::MeshConfig {
             models: vec![plugin::ModelConfigEntry {
                 model: "Ignored-Model".into(),
@@ -5998,13 +5992,7 @@ mod tests {
 
     #[test]
     fn mesh_name_does_not_force_publish() {
-        let cli = make_cli(&[
-            "senda",
-            "--model",
-            "dummy-model",
-            "--mesh-name",
-            "my-mesh",
-        ]);
+        let cli = make_cli(&["senda", "--model", "dummy-model", "--mesh-name", "my-mesh"]);
         assert!(!cli.publish, "mesh_name alone must not set publish");
         assert_eq!(cli.mesh_name.as_deref(), Some("my-mesh"));
     }

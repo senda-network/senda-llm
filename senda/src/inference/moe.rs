@@ -1279,8 +1279,7 @@ mod tests {
     #[serial]
     fn split_path_migrates_legacy_split_if_present() {
         let prev_xdg = std::env::var_os("XDG_CACHE_HOME");
-        let base =
-            std::env::temp_dir().join(format!("senda-moe-migrate-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("senda-moe-migrate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let cache_root = base.join("cache");
         let model_root = base.join("models");

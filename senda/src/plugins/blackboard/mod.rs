@@ -7,10 +7,10 @@
 pub mod mcp;
 
 use anyhow::Result;
+use schemars::JsonSchema;
 use senda_plugin::{
     capability, plugin_server_info, PluginMetadata, PluginRuntime, PluginStartupPolicy,
 };
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::sync::atomic::{AtomicU64, Ordering};

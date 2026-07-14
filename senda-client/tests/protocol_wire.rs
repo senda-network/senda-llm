@@ -40,10 +40,7 @@ fn protocol_from_alpn_v0() {
 #[test]
 fn protocol_from_alpn_unknown_defaults_to_v1() {
     use mesh_client::protocol::protocol_from_alpn;
-    assert_eq!(
-        protocol_from_alpn(b"senda/999"),
-        ControlProtocol::ProtoV1
-    );
+    assert_eq!(protocol_from_alpn(b"senda/999"), ControlProtocol::ProtoV1);
 }
 
 // ── Wire constants sanity ────────────────────────────────────────────────────

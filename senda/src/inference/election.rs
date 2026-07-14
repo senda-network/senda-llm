@@ -382,10 +382,7 @@ fn inflight_for_target(target: &InferenceTarget, peers: &[mesh::PeerInfo]) -> u6
 }
 
 fn force_split_routing_enabled() -> bool {
-    std::env::var("SENDA_FORCE_SPLIT_ROUTING")
-        .ok()
-        .as_deref()
-        == Some("1")
+    std::env::var("SENDA_FORCE_SPLIT_ROUTING").ok().as_deref() == Some("1")
 }
 
 fn sort_targets_for_model(
@@ -2846,10 +2843,8 @@ pub async fn election_loop(
                 .get(&model_name)
                 .map(|d| d.request_count)
                 .unwrap_or(0);
-            let force_duplicate_host = std::env::var("SENDA_FORCE_DUPLICATE_HOSTS")
-                .ok()
-                .as_deref()
-                == Some("1");
+            let force_duplicate_host =
+                std::env::var("SENDA_FORCE_DUPLICATE_HOSTS").ok().as_deref() == Some("1");
             let should_dup = force_duplicate_host || n_clients >= 2 || req_count >= 10;
             if !should_dup {
                 emit_info(

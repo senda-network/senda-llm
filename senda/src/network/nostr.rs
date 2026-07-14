@@ -790,10 +790,7 @@ pub async fn discover(
 
     let nostr_filter = Filter::new()
         .kind(Kind::Custom(MESH_SERVICE_KIND))
-        .custom_tag(
-            SingleLetterTag::lowercase(Alphabet::K),
-            "senda".to_string(),
-        )
+        .custom_tag(SingleLetterTag::lowercase(Alphabet::K), "senda".to_string())
         .limit(100);
 
     let events = match client
@@ -1366,15 +1363,7 @@ mod scoring_tests {
         // "senda" is a defensive alias for the community mesh and must
         // score identically to an unnamed listing with equivalent stats.
         let unnamed = make_mesh(None, Some("u"), &["m1"], 2, 24_000_000_000, 0, 0);
-        let alias = make_mesh(
-            Some("senda"),
-            Some("a"),
-            &["m1"],
-            2,
-            24_000_000_000,
-            0,
-            0,
-        );
+        let alias = make_mesh(Some("senda"), Some("a"), &["m1"], 2, 24_000_000_000, 0, 0);
         assert_eq!(
             score_mesh(&unnamed, 1500, None),
             score_mesh(&alias, 1500, None)

@@ -1,12 +1,12 @@
 use anyhow::{bail, Context, Result};
 use base64::Engine;
+use rand::RngExt;
+use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
+use schemars::JsonSchema;
 use senda_plugin::{
     capability, json_response, json_schema_operation, parse_rpc_params, InternalRpcPluginBuilder,
     OperationRouter, PluginError, PluginMetadata, PluginResult, PluginRuntime,
 };
-use rand::RngExt;
-use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
-use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -679,10 +679,7 @@ mod tests {
     use super::*;
 
     fn temp_blobstore_root(name: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "senda-blobstore-{name}-{}",
-            rand::random::<u64>()
-        ))
+        std::env::temp_dir().join(format!("senda-blobstore-{name}-{}", rand::random::<u64>()))
     }
 
     #[test]

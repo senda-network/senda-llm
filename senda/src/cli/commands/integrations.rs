@@ -173,8 +173,7 @@ fn opencode_missing_binary_guidance(
         spec.install_hint.to_string(),
         "Then rerun through senda:".to_string(),
         format!("  senda opencode --host {host} --model {chosen}"),
-        "senda injects OPENCODE_CONFIG_CONTENT automatically when launching OpenCode."
-            .to_string(),
+        "senda injects OPENCODE_CONFIG_CONTENT automatically when launching OpenCode.".to_string(),
     ]
 }
 
@@ -297,9 +296,7 @@ pub(crate) async fn run_goose(model: Option<String>, port: u16) -> Result<()> {
             .env("GOOSE_MODEL", &chosen)
             .spawn()?;
         if mesh_child.is_some() {
-            eprintln!(
-                "ℹ️  senda node running in background (kill manually or use `senda stop`)"
-            );
+            eprintln!("ℹ️  senda node running in background (kill manually or use `senda stop`)");
         }
     } else {
         eprintln!("🪿 Launching goose session...");
@@ -882,10 +879,7 @@ mod tests {
             spec["npm"], "@ai-sdk/openai-compatible",
             "npm package should match opencode format"
         );
-        assert_eq!(
-            spec["name"], "senda",
-            "name field should be senda"
-        );
+        assert_eq!(spec["name"], "senda", "name field should be senda");
         assert!(spec["options"].is_object(), "options should be an object");
         assert_eq!(
             spec["options"]["baseURL"], "http://127.0.0.1:9337/v1",

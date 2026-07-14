@@ -1805,10 +1805,8 @@ impl Node {
     /// `verify_by_model` verdict. Pruning happens at load time, not here.
     pub async fn reputation_snapshot(
         &self,
-    ) -> HashMap<
-        crate::inference::reputation::RepKey,
-        crate::inference::reputation::ReputationScore,
-    > {
+    ) -> HashMap<crate::inference::reputation::RepKey, crate::inference::reputation::ReputationScore>
+    {
         self.reputation.lock().await.clone()
     }
 
