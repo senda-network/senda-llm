@@ -868,7 +868,15 @@ fn build_dense_launch_plan(
     // 42.5 GB model, llama.cpp paged weights through PCIe at ~0.2 t/s,
     // and the mesh entry node showed every peer Loading indefinitely
     // while no chat request ever completed.
-    if !force_split && my_vram >= min_vram {
+    //
+    // `force_split` is deliberately NOT consulted here: a model that fits in
+    // local fast memory always serves solo. Forcing a pipeline split on a
+    // fits-solo model (the old "Run on the mesh" toggle wrote `force_split =
+    // true`) only added fragility — an rpc-worker handshake, cross-node
+    // tunnels, and host election — for zero benefit, and when the split
+    // couldn't stabilize the model wouldn't serve at all. Splitting is now
+    // driven purely by fit; `force_split` no longer overrides solo.
+    if my_vram >= min_vram {
         return DenseLaunchPlan::Solo;
     }
 
@@ -2704,11 +2712,13 @@ pub async fn election_loop(
             .cloned()
             .collect();
 
-        // Splitting decision: only split when forced OR when the model
-        // genuinely doesn't fit on this node alone. If it fits, every
-        // node serving this model runs its own independent llama-server
-        // (no election needed — everyone is a host).
-        let requires_split = force_split || !model_fits_locally;
+        // Splitting decision: split only when the model genuinely doesn't
+        // fit on this node alone. If it fits, every node serving this model
+        // runs its own independent llama-server (no election needed —
+        // everyone is a host). `force_split` is intentionally not an input:
+        // forcing a split on a fits-solo model was pure downside (see
+        // `build_dense_launch_plan`), so a model that fits always serves solo.
+        let requires_split = !model_fits_locally;
         let election_peers = if requires_split {
             peers_for_pipeline_election(&model_peers)
         } else {
