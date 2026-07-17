@@ -2,7 +2,10 @@
 # ci-split-test.sh — verify that split-mode routes chat requests to the Host, not the Worker.
 #
 # Starts three senda nodes on the same machine:
-#   Node A + B — compute nodes (CPU) with --split (one becomes Host, one becomes Worker)
+#   Node A + B — compute nodes (CPU) capped below the smoke-model size so the
+#                planner must pick a pipeline split (one Host + one Worker).
+#                `--max-vram` is the fit knob; `--split` alone is inert when the
+#                model fits solo (v0.66.89+).
 #   Node C    — client-only node (routes via target map built from peer gossip)
 #
 # The bug: Node C's target map could pick the Worker as an HTTP target.
@@ -64,6 +67,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Cap each compute node below the SmolLM2-135M Q8 size (~0.14 GB) so
+# `build_dense_launch_plan` cannot pick Solo. Two 0.1 GB peers still clear
+# the ~0.15 GB min for a Split. Same pattern as ci-moe-mesh-test.sh.
+SPLIT_MAX_VRAM=0.1
+
 # ── Start Node A ──
 echo ""
 echo "Starting Node A..."
@@ -71,6 +79,7 @@ SENDA_EPHEMERAL_KEY=1 "$MESH_LLM" \
     serve \
     --model "$MODEL" \
     --split \
+    --max-vram "$SPLIT_MAX_VRAM" \
     --no-draft \
     --bin-dir "$BIN_DIR" \
     --device CPU \
@@ -110,6 +119,7 @@ SENDA_EPHEMERAL_KEY=1 "$MESH_LLM" \
     serve \
     --model "$MODEL" \
     --split \
+    --max-vram "$SPLIT_MAX_VRAM" \
     --no-draft \
     --bin-dir "$BIN_DIR" \
     --device CPU \
