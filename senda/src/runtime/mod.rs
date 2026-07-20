@@ -1901,7 +1901,12 @@ async fn pick_model_assignment(node: &mesh::Node, local_models: &[String]) -> Op
         }
     }
 
-    let my_vram = node.vram_bytes();
+    // Fit checks must use fast memory (GPU / Apple working set), not the
+    // RAM-inflated `vram_bytes()` figure — otherwise a mid-range discrete
+    // GPU looks like a 100 GB host and we download models that can never
+    // solo-serve (and shouldn't be surprise-fetched for a split either
+    // unless the user opted in via startup config).
+    let my_vram = node.fast_memory_bytes();
 
     /// Check if a model fits in our VRAM. Returns false and logs if it doesn't.
     fn model_fits(model: &str, my_vram: u64) -> bool {
@@ -2708,30 +2713,68 @@ async fn run_auto(
         // Give gossip a moment to propagate
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-        let assignment = pick_model_assignment(&node, &local_models).await;
-        // If no demand-based assignment but we have VRAM, use auto pack's primary model
-        let assignment = if assignment.is_none() && cli.auto && !is_client {
-            let pack = nostr::auto_model_pack(node.vram_bytes() as f64 / 1e9);
-            if !pack.is_empty() {
-                Some(pack[0].clone())
-            } else {
-                assignment
+        let demand_assignment = pick_model_assignment(&node, &local_models).await;
+        // If no demand-based assignment but we have VRAM, optionally fall
+        // back to the opinionated `--auto` pack. CRITICAL: size the pack
+        // with *fast* memory (GPU / Apple working set), never
+        // `vram_bytes()` — that includes a host-RAM offload allowance and
+        // made a 13 GB RTX 4080 SUPER report ~106 GB, which selected
+        // Qwen3-Coder-Next and surprise-downloaded tens of GB the user
+        // never asked for (LYU 2026-07-20).
+        //
+        // Equally critical: only elect a pack model that is *already on
+        // disk*. Auto-pack is a hint for "serve something you already
+        // have when the mesh is quiet", not a license to pull frontier
+        // weights without an explicit `[[models]]` / `--model` / mesh
+        // demand assignment.
+        let (assignment, from_auto_pack) = if demand_assignment.is_none() && cli.auto && !is_client
+        {
+            let pack =
+                nostr::auto_model_pack(node.fast_memory_bytes() as f64 / 1e9);
+            let on_disk = pack
+                .into_iter()
+                .find(|m| models::find_model_path(m).exists());
+            if let Some(ref pick) = on_disk {
+                let _ = emit_event(OutputEvent::Info {
+                    message: format!(
+                        "No mesh demand assignment — serving on-disk auto-pack model {pick}"
+                    ),
+                    context: None,
+                });
             }
+            (on_disk, true)
         } else {
-            assignment
+            (demand_assignment, false)
         };
         if let Some(model_name) = assignment {
             let _ = emit_event(OutputEvent::HostElected {
                 model: model_name.clone(),
                 host: node.id().fmt_short().to_string(),
                 role: Some("host".to_string()),
-                capacity_gb: Some(node.vram_bytes() as f64 / 1e9),
+                capacity_gb: Some(node.fast_memory_bytes() as f64 / 1e9),
             });
             let model_path = models::find_model_path(&model_name);
             if model_path.exists() {
                 model_path
+            } else if from_auto_pack {
+                // Belt-and-braces: auto-pack path must never download.
+                let _ = emit_event(OutputEvent::Warning {
+                    message: format!(
+                        "Auto-pack selected {model_name} but it is not on disk — \
+                         staying standby instead of downloading. Set a startup \
+                         model explicitly if you want this node to fetch weights."
+                    ),
+                    context: None,
+                });
+                drop(bootstrap_listener_tx.take());
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                match run_passive(&cli, node.clone(), is_client, plugin_manager.clone()).await? {
+                    Some(promoted) => models::find_model_path(&promoted),
+                    None => return Ok(()),
+                }
             } else if let Some(cat) = catalog::find_model(&model_name) {
-                // Model not on disk but in catalog — download it
+                // Demand-assigned and in catalog — download only what the
+                // mesh actually asked for.
                 let _ = emit_event(OutputEvent::Info {
                     message: format!("Downloading {model_name} for mesh..."),
                     context: None,
