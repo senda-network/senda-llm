@@ -25,7 +25,7 @@ pub(crate) use plugins::blackboard;
 use anyhow::Result;
 use std::time::Duration;
 
-pub const VERSION: &str = "0.66.90";
+pub const VERSION: &str = "0.66.91";
 
 /// Migrate legacy data directories to `~/.senda/`.
 ///
