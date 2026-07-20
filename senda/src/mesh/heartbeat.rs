@@ -62,9 +62,13 @@ pub(super) fn heartbeat_failure_policy_for_peer(
             failure_threshold: 2,
         }
     } else {
+        // Home-NAT / relay meshes miss outbound probes routinely while the
+        // peer is still alive inbound or via another bridge. Two misses
+        // (~2 min) was enough to flap LYU off the entry during Gemma split
+        // formation; require four consecutive misses (~4 min) before kill.
         HeartbeatFailurePolicy {
             allow_recent_inbound_grace: true,
-            failure_threshold: 2,
+            failure_threshold: 4,
         }
     }
 }
@@ -527,7 +531,7 @@ impl Node {
                     if alive {
                         if fail_counts.contains_key(&peer_id) {
                             super::emit_mesh_info(format!(
-                                "💚 Heartbeat: {} recovered (was {}/2)",
+                                "💚 Heartbeat: {} recovered (was {} failures)",
                                 peer_id.fmt_short(),
                                 fail_counts.get(&peer_id).unwrap_or(&0)
                             ));
@@ -536,7 +540,7 @@ impl Node {
                         }
                         fail_counts.remove(&peer_id);
                     } else {
-                        let (recently_seen, failure_policy) = {
+                        let (recently_alive, failure_policy) = {
                             let state = node.state.lock().await;
                             let peer = state.peers.get(&peer_id).cloned();
                             drop(state);
@@ -554,21 +558,21 @@ impl Node {
                                 })
                                 .unwrap_or(HeartbeatFailurePolicy {
                                     allow_recent_inbound_grace: true,
-                                    failure_threshold: 2,
+                                    failure_threshold: 4,
                                 });
-                            let recently_seen = peer
+                            let recently_alive = peer
                                 .as_ref()
-                                .map(|peer| peer.last_seen.elapsed().as_secs() < PEER_STALE_SECS)
+                                .map(PeerInfo::has_recent_liveness)
                                 .unwrap_or(false);
-                            (recently_seen, policy)
+                            (recently_alive, policy)
                         };
-                        // Check if peer has contacted US recently (inbound gossip).
-                        // If so, peer is alive — we just can't reach them outbound (NAT).
-                        if recently_seen && failure_policy.allow_recent_inbound_grace {
-                            // Peer is alive via inbound, don't count as failure
+                        // Direct inbound OR transitive mention within the stale
+                        // window means the peer is still on the mesh — we just
+                        // can't reach them outbound (NAT / relay asymmetry).
+                        if recently_alive && failure_policy.allow_recent_inbound_grace {
                             if fail_counts.contains_key(&peer_id) {
                                 super::emit_mesh_info(format!(
-                                    "💚 Heartbeat: {} outbound failed but seen recently (inbound alive)",
+                                    "💚 Heartbeat: {} outbound failed but seen recently (mesh alive)",
                                     peer_id.fmt_short()
                                 ));
                                 fail_counts.remove(&peer_id);
@@ -577,9 +581,6 @@ impl Node {
                             let count = fail_counts.entry(peer_id).or_default();
                             *count += 1;
                             if *count >= failure_policy.failure_threshold {
-                                // Generic peers require 2 misses so a single timeout doesn't
-                                // evict an otherwise-alive inbound-only peer. Shared MoE peers
-                                // are stricter: one missed heartbeat should trigger re-election.
                                 node.state.lock().await.dead_peers.insert(peer_id);
                                 super::emit_mesh_warning(format!(
                                     "💔 Heartbeat: {} unreachable ({} failure{}), removing + broadcasting death",

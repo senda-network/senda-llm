@@ -979,8 +979,27 @@ fn non_matching_or_non_moe_peers_keep_default_heartbeat_grace() {
         policy,
         HeartbeatFailurePolicy {
             allow_recent_inbound_grace: true,
-            failure_threshold: 2,
+            failure_threshold: 4,
         }
+    );
+}
+
+#[test]
+fn peer_has_recent_liveness_accepts_transitive_mention() {
+    let mut peer = make_test_peer_info(make_test_endpoint_id(21));
+    peer.last_seen =
+        std::time::Instant::now() - std::time::Duration::from_secs(PEER_STALE_SECS + 30);
+    peer.last_mentioned = std::time::Instant::now();
+    assert!(
+        peer.has_recent_liveness(),
+        "fresh last_mentioned must keep PeerDown/tunnel from killing a NAT peer"
+    );
+
+    peer.last_mentioned =
+        std::time::Instant::now() - std::time::Duration::from_secs(PEER_STALE_SECS + 30);
+    assert!(
+        !peer.has_recent_liveness(),
+        "stale direct + transitive timestamps must not count as alive"
     );
 }
 
@@ -2188,9 +2207,9 @@ fn peer_lifecycle_rejects_forged_sender_or_unverified_down() {
 
 // ── Gossip consistency tests ──────────────────────────────────────────────
 
-/// PeerDown for a recently-seen (direct) peer should be ignored regardless
-/// of connection state — the peer is alive from our direct gossip even if
-/// the connection is broken or absent (NAT, relay-only, stale QUIC conn).
+/// PeerDown for a recently-alive peer (direct OR transitive) should be
+/// ignored regardless of connection state — NAT/relay asymmetry often
+/// breaks one observer's outbound path while the mesh still sees the peer.
 #[test]
 fn peer_down_ignored_when_recently_seen_direct() {
     let self_id = EndpointId::from(SecretKey::from_bytes(&[0xA0; 32]).public());
@@ -2202,16 +2221,14 @@ fn peer_down_ignored_when_recently_seen_direct() {
     peer.last_seen = std::time::Instant::now();
     peers.insert(target_id, peer);
 
-    let recently_seen = peers
+    let recently_alive = peers
         .get(&target_id)
-        .map(|p| p.last_seen.elapsed().as_secs() < PEER_STALE_SECS)
+        .map(PeerInfo::has_recent_liveness)
         .unwrap_or(false);
 
-    // The fix: when recently_seen (direct), ignore the death report
-    // regardless of whether we have a connection.
     assert!(
-        recently_seen,
-        "precondition: peer must be recently seen (direct)"
+        recently_alive,
+        "precondition: peer must be recently alive (direct)"
     );
     // We should NOT call resolve_peer_down in this case.
     // Verify that resolve_peer_down with should_remove=true would remove,
@@ -2224,7 +2241,20 @@ fn peer_down_ignored_when_recently_seen_direct() {
     // The peer stays in our peer list.
     assert!(
         peers.contains_key(&target_id),
-        "recently-seen peer must survive PeerDown from another node"
+        "recently-alive peer must survive PeerDown from another node"
+    );
+}
+
+#[test]
+fn peer_down_ignored_when_only_transitively_mentioned() {
+    let target_id = EndpointId::from(SecretKey::from_bytes(&[0xA2; 32]).public());
+    let mut peer = make_test_peer_info(target_id);
+    peer.last_seen =
+        std::time::Instant::now() - std::time::Duration::from_secs(PEER_STALE_SECS + 60);
+    peer.last_mentioned = std::time::Instant::now();
+    assert!(
+        peer.has_recent_liveness(),
+        "transitive mention alone must silence PeerDown (home-NAT flap)"
     );
 }
 

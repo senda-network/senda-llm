@@ -821,12 +821,13 @@ pub struct PeerInfo {
     /// Last time we directly communicated with this peer (gossip, heartbeat, tunnel).
     /// Only updated by direct bi-directional gossip exchanges, heartbeat probes,
     /// and inbound connections — never by transitive mentions.
-    /// Used by PeerDown silencing to require independent proof-of-life.
     pub last_seen: std::time::Instant,
     /// Last time a bridge peer mentioned this peer in gossip.
     /// Updated on every transitive gossip update. Used together with `last_seen`
-    /// for pruning and `collect_announcements`: a peer is included/kept as long
-    /// as either timestamp is fresh.
+    /// for pruning, PeerDown silencing, and heartbeat grace: a peer is treated
+    /// as still alive as long as either timestamp is fresh. Home-NAT / relay
+    /// meshes often have asymmetric reachability — one peer failing an outbound
+    /// probe must not kill a node that other mesh members still see.
     pub last_mentioned: std::time::Instant,
     /// When this peer returned after being considered dead. MoE scale-up should
     /// wait briefly before treating the peer as eligible again.
@@ -909,6 +910,14 @@ pub struct MeshCatalogEntry {
 }
 
 impl PeerInfo {
+    /// True when this peer has been observed (directly or transitively)
+    /// within [`PEER_STALE_SECS`]. Used to silence false PeerDown / tunnel
+    /// death on flaky home-NAT and relay paths.
+    pub fn has_recent_liveness(&self) -> bool {
+        self.last_seen.elapsed().as_secs() < PEER_STALE_SECS
+            || self.last_mentioned.elapsed().as_secs() < PEER_STALE_SECS
+    }
+
     /// Bytes of fast memory on this peer — the GPU/unified-memory budget
     /// only, NOT inflated with a RAM-offload allowance.
     ///
@@ -3805,11 +3814,27 @@ impl Node {
         &self,
         peer_id: EndpointId,
     ) -> Result<(iroh::endpoint::SendStream, iroh::endpoint::RecvStream)> {
-        // Helper to mark the peer dead when any tunnel-open path fails. Without
-        // this, dense-model election keeps picking a ghost host for minutes
-        // (until heartbeat / stale prune catches up). Tunnel failure is by far
-        // the earliest and most reliable signal that a peer is unreachable.
+        // Mark the peer dead when a tunnel-open path fails — but only when we
+        // have no recent proof of life. On home-NAT / relay meshes, a single
+        // outbound tunnel miss is often asymmetric reachability, not death;
+        // broadcasting PeerDown in that case is what kept LYU flapping off
+        // the entry while MSI tried (and failed) to open a split tunnel.
         async fn mark_dead(node: &Node, peer_id: EndpointId, reason: &str) {
+            let recently_alive = {
+                let state = node.state.lock().await;
+                state
+                    .peers
+                    .get(&peer_id)
+                    .map(PeerInfo::has_recent_liveness)
+                    .unwrap_or(false)
+            };
+            if recently_alive {
+                tracing::info!(
+                    "Tunnel to {} failed ({reason}) — peer recently alive, not broadcasting death",
+                    peer_id.fmt_short()
+                );
+                return;
+            }
             tracing::info!(
                 "Tunnel to {} failed ({reason}) — broadcasting peer death",
                 peer_id.fmt_short()
@@ -4268,25 +4293,23 @@ impl Node {
                         let dead_id = EndpointId::from(pk);
 
                         // Check existing state before deciding.
-                        let (conn_opt, peer_addr, recently_seen) = {
+                        let (conn_opt, peer_addr, recently_alive) = {
                             let state = node.state.lock().await;
                             let conn = state.connections.get(&dead_id).cloned();
                             let peer = state.peers.get(&dead_id);
                             let addr = peer.map(|p| p.addr.clone());
-                            let seen = peer
-                                .map(|p| p.last_seen.elapsed().as_secs() < PEER_STALE_SECS)
-                                .unwrap_or(false);
-                            (conn, addr, seen)
+                            let alive = peer.map(PeerInfo::has_recent_liveness).unwrap_or(false);
+                            (conn, addr, alive)
                         };
 
-                        // If we've heard from this peer recently via direct gossip,
-                        // they're alive from our perspective — ignore the death report
-                        // regardless of whether we have a connection (the connection
-                        // may be broken/stale while the peer is genuinely alive on
-                        // a different path).
-                        if recently_seen {
+                        // If we've heard from this peer recently — directly OR
+                        // via transitive gossip — they're alive from the mesh's
+                        // perspective. Ignore the death report. A single peer
+                        // failing an outbound probe (common on home NAT) must
+                        // not evict a node other members still see.
+                        if recently_alive {
                             emit_mesh_info(format!(
-                                "ℹ️  Peer {} reported dead by {} but seen recently (direct alive), ignoring",
+                                "ℹ️  Peer {} reported dead by {} but seen recently (mesh alive), ignoring",
                                 dead_id.fmt_short(),
                                 remote.fmt_short()
                             ));
@@ -4294,8 +4317,9 @@ impl Node {
                             let should_remove = if let Some(conn) = conn_opt {
                                 // Have a connection — probe it. Treat both
                                 // timeout and open_bi() error as unreachable.
+                                // 10s: relay paths regularly exceed the old 3s.
                                 match tokio::time::timeout(
-                                    std::time::Duration::from_secs(3),
+                                    std::time::Duration::from_secs(10),
                                     conn.open_bi(),
                                 )
                                 .await
@@ -4306,8 +4330,9 @@ impl Node {
                             } else if let Some(addr) = peer_addr {
                                 // No connection but we know the peer — try to reach them
                                 // before trusting the reporter's claim.
+                                // 15s: first dial after NAT/relay churn is slow.
                                 match tokio::time::timeout(
-                                    std::time::Duration::from_secs(5),
+                                    std::time::Duration::from_secs(15),
                                     connect_mesh(&node.endpoint, addr),
                                 )
                                 .await
