@@ -1,6 +1,6 @@
 [package]
 name = "mesh-api"
-version = "0.66.93"
+version = "0.66.94"
 edition = "2021"
 description = "Public Rust SDK for embedding Senda clients in applications"
 license = "Apache-2.0"
@@ -14,7 +14,7 @@ categories = ["api-bindings", "network-programming"]
 host-io = ["mesh-client/host-io"]
 
 [dependencies]
-mesh-client = { package = "senda-client", version = "0.66.93", path = "../senda-client" }
+mesh-client = { package = "senda-client", version = "0.66.94", path = "../senda-client" }
 hex = "0.4"
 thiserror = "2"
 
