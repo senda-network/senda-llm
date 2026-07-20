@@ -12,7 +12,14 @@ pub struct ModelDemand {
 
 pub const DEMAND_TTL_SECS: u64 = 86400;
 
-pub const MAX_SPLIT_RTT_MS: u32 = 80;
+/// Max peer RTT for pipeline-split cohort membership.
+///
+/// Was 80ms (LAN-era). Home meshes over iroh relay routinely see 100–250ms
+/// (MSI↔entry ~150ms, Elevens↔entry ~130ms). At 80ms those peers filter
+/// each other out of every split and Gemma sits forever in WaitingForCapacity
+/// with `total_peer_fast_bytes: 0` even while both are online. 500ms still
+/// excludes pathologically bad links without killing the home-NAT demo case.
+pub const MAX_SPLIT_RTT_MS: u32 = 500;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
