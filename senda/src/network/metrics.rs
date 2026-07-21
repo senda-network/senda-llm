@@ -231,9 +231,11 @@ pub struct ModelTimingSnapshot {
     /// are present (callers should treat that as "not yet measured"
     /// rather than "zero throughput").
     pub measured_tps_p50: f64,
-    /// Median time-to-first-token (milliseconds) across all successful
-    /// local-inference requests for this model in the last hour. 0
-    /// when no samples are present.
+    /// Median time-to-first-token (milliseconds) for this model in the
+    /// last hour. When enough samples exist, cold Metal residency spikes
+    /// are trimmed so the gossiped number reflects the warm path users
+    /// actually hit most of the time (see `ttft_p50_excluding_cold`).
+    /// 0 when no samples are present.
     pub measured_ttft_ms_p50: u64,
     /// Number of samples that contributed to the p50s above. Used by
     /// the UI to qualify low-confidence rows.
@@ -1017,7 +1019,8 @@ impl ModelMetrics {
             return None;
         }
         let tps_p50_milli = percentile_50(self.timing_tps_milli_samples.iter().map(|(_, v)| *v));
-        let ttft_ms_p50 = percentile_50(self.timing_ttft_ms_samples.iter().map(|(_, v)| *v));
+        let ttft_ms_p50 =
+            ttft_p50_excluding_cold(self.timing_ttft_ms_samples.iter().map(|(_, v)| *v));
         Some(ModelTimingSnapshot {
             measured_tps_p50: tps_p50_milli
                 .map(|v| v as f64 / THROUGHPUT_SCALE_MILLI as f64)
@@ -1273,6 +1276,44 @@ fn percentile_50<I: IntoIterator<Item = u64>>(samples: I) -> Option<u64> {
     }
 }
 
+/// Minimum samples before we try to separate warm path from cold spikes.
+/// Below this, raw median is honest enough (and p10 is noisy).
+const TTFT_COLD_EXCLUSION_MIN_SAMPLES: usize = 6;
+
+/// Absolute floor for the cold cut (ms). Metal residency drops land ~10–17s;
+/// anything under 8s is treated as in-band for interactive chat.
+const TTFT_COLD_CUT_FLOOR_MS: u64 = 8_000;
+
+/// Warm-biased TTFT p50 for gossip / catalog.
+///
+/// Live dig (2026-07-21, 0xSenda Qwen): warm path ~1s, cold spikes 10–17s.
+/// A plain median over a mixed window reports ~10s and makes a chat-viable
+/// peer look broken. With enough samples we:
+///   1. take ~p10 as the warm baseline,
+///   2. cut at `max(8s, 5×p10)`,
+///   3. if a warm majority remains, median those; else keep the raw median
+///      (peer is honestly slow, not cold-polluted).
+fn ttft_p50_excluding_cold<I: IntoIterator<Item = u64>>(samples: I) -> Option<u64> {
+    let mut values: Vec<u64> = samples.into_iter().collect();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_unstable();
+    let raw = percentile_50(values.iter().copied())?;
+    if values.len() < TTFT_COLD_EXCLUSION_MIN_SAMPLES {
+        return Some(raw);
+    }
+    let p10_idx = values.len() / 10;
+    let p10 = values[p10_idx];
+    let cold_cut = TTFT_COLD_CUT_FLOOR_MS.max(p10.saturating_mul(5));
+    let warm: Vec<u64> = values.iter().copied().filter(|&v| v <= cold_cut).collect();
+    if warm.len() * 2 < values.len() {
+        // Fewer than half warm → don't sugarcoat a slow peer.
+        return Some(raw);
+    }
+    percentile_50(warm).or(Some(raw))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1523,6 +1564,37 @@ mod tests {
         // a naive `a + b`; assert percentile_50 returns u64::MAX / 2
         // (the saturated value, divided by 2) rather than panicking.
         assert_eq!(percentile_50(vec![u64::MAX, u64::MAX]), Some(u64::MAX / 2));
+    }
+
+    #[test]
+    fn ttft_p50_excluding_cold_trims_metal_spikes() {
+        assert_eq!(ttft_p50_excluding_cold(std::iter::empty()), None);
+        // Too few samples: raw median (no trim).
+        assert_eq!(
+            ttft_p50_excluding_cold(vec![900u64, 1000, 11_000]),
+            Some(1000)
+        );
+        // 6 warm ~1s + 4 cold ~12s → raw median ~1–12s band; warm majority
+        // should report ~1s, not the cold-polluted ~6–11s.
+        let mixed = vec![
+            900u64, 950, 1000, 1050, 1100, 1200, 11_000, 12_000, 13_000, 14_000,
+        ];
+        let warm_biased = ttft_p50_excluding_cold(mixed.clone()).expect("p50");
+        let raw = percentile_50(mixed).expect("raw");
+        assert!(
+            warm_biased < 2_000,
+            "expected warm-path p50 under 2s, got {warm_biased}"
+        );
+        assert!(
+            warm_biased < raw,
+            "warm-biased ({warm_biased}) should beat raw median ({raw})"
+        );
+        // Honestly slow peer: all samples cold → keep raw.
+        let slow = vec![10_000u64, 11_000, 12_000, 13_000, 14_000, 15_000];
+        assert_eq!(
+            ttft_p50_excluding_cold(slow.clone()),
+            percentile_50(slow)
+        );
     }
 
     #[test]

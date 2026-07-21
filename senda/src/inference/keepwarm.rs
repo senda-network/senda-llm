@@ -9,30 +9,47 @@
 //! warm). CUDA shows a smaller version of the same (clock/context ramp). Any
 //! inference resets the timer, so a periodic 1-token self-ping holds it warm.
 //!
-//! This is deliberately *windowed*: we only ping while the node has served a
-//! real request within `KEEPWARM_WINDOW_SECS`. That kills cold-starts during
-//! and around active sessions while letting a truly-idle contributor GPU sleep
-//! — important for laptop contributors on battery, who should not have their
-//! GPU pinned awake 24/7 to shave 2 s off an occasional first request. The very
-//! first request after a long idle still pays one cold-start; that is the
-//! intended trade.
+//! Policy (2026-07-21, Qwen TTFT dig on 0xSenda):
+//!   - Warm path is chat-viable (~1 s TTFT). Cold / residency drops are 10–17 s.
+//!   - While this node is *serving* a local model we keep pinging by default so
+//!     the public daily-driver surface stays warm. Battery / thermal-sensitive
+//!     contributors can opt out with `SENDA_KEEPWARM_WHILE_SERVING=0`, which
+//!     falls back to the activity window only.
+//!   - After the last real request we still keep the windowed pings for a while
+//!     so a short pause mid-session does not re-cold the GPU.
 
 use crate::mesh;
 use std::time::Duration;
 
-/// Ping cadence. Half the Metal residency `keep_alive` (180 s) for ~2x margin.
-const KEEPWARM_INTERVAL_SECS: u64 = 90;
+/// Ping cadence. Under Metal's ~180 s residency `keep_alive` with margin.
+/// Was 90 s; 60 s leaves ~3 pings per residency window.
+const KEEPWARM_INTERVAL_SECS: u64 = 60;
 
-/// Keep warm for this long after the last locally-served request, then stop.
-const KEEPWARM_WINDOW_SECS: u64 = 15 * 60;
+/// After the last locally-served *real* request, keep windowed pings for this
+/// long even if `SENDA_KEEPWARM_WHILE_SERVING=0`. Was 15 min; 60 min covers a
+/// typical chat session without pinning forever.
+const KEEPWARM_WINDOW_SECS: u64 = 60 * 60;
 
 /// Per-ping timeout. The ping itself can be slow when it lands right as
 /// residency was about to lapse; that cost is paid by the ping, not a user.
 const PING_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// Default: keep warm whenever a model is loaded locally (serving).
+/// Set `SENDA_KEEPWARM_WHILE_SERVING=0` to only ping inside the activity window
+/// (better for battery laptops that rarely take chat traffic).
+fn keepwarm_while_serving_enabled() -> bool {
+    match std::env::var("SENDA_KEEPWARM_WHILE_SERVING") {
+        Ok(v) => {
+            let v = v.trim().to_ascii_lowercase();
+            !(v == "0" || v == "false" || v == "off" || v == "no")
+        }
+        Err(_) => true,
+    }
+}
+
 /// Spawn the background keep-warm loop. Safe to run on any node: it is a no-op
-/// unless this node is locally serving at least one model and has served a real
-/// request recently.
+/// unless this node is locally serving at least one model and (by default)
+/// keeps that residency hot, or has served a real request recently.
 pub fn spawn_keepwarm(node: mesh::Node) {
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(KEEPWARM_INTERVAL_SECS));
@@ -40,10 +57,18 @@ pub fn spawn_keepwarm(node: mesh::Node) {
         loop {
             tick.tick().await;
 
-            // Only within the activity window — otherwise let the GPU sleep.
-            match node.seconds_since_last_local_request() {
-                Some(secs) if secs < KEEPWARM_WINDOW_SECS => {}
-                _ => continue,
+            let ports = node.local_model_ports_snapshot().await;
+            if ports.is_empty() {
+                continue;
+            }
+
+            let in_activity_window = matches!(
+                node.seconds_since_last_local_request(),
+                Some(secs) if secs < KEEPWARM_WINDOW_SECS
+            );
+            let while_serving = keepwarm_while_serving_enabled();
+            if !in_activity_window && !while_serving {
+                continue;
             }
 
             // A real request in flight already holds residency; don't pile on.
@@ -51,7 +76,7 @@ pub fn spawn_keepwarm(node: mesh::Node) {
                 continue;
             }
 
-            for (model, port) in node.local_model_ports_snapshot().await {
+            for (model, port) in ports {
                 if let Err(e) = ping(port).await {
                     tracing::debug!(
                         target: "senda::keepwarm",
@@ -84,4 +109,26 @@ async fn ping(http_port: u16) -> anyhow::Result<()> {
         anyhow::bail!("keep-warm ping returned {}", resp.status());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn while_serving_defaults_on() {
+        fn parse(v: Option<&str>) -> bool {
+            match v {
+                Some(v) => {
+                    let v = v.trim().to_ascii_lowercase();
+                    !(v == "0" || v == "false" || v == "off" || v == "no")
+                }
+                None => true,
+            }
+        }
+        assert!(parse(None));
+        assert!(parse(Some("1")));
+        assert!(parse(Some("true")));
+        assert!(!parse(Some("0")));
+        assert!(!parse(Some("OFF")));
+        assert!(!parse(Some("false")));
+    }
 }
