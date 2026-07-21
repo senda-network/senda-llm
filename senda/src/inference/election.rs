@@ -206,7 +206,7 @@ pub fn should_be_host_for_model_with_solo_bias(
     model_peers: &[mesh::PeerInfo],
 ) -> bool {
     let my_score = (
-        my_vram >= model_bytes,
+        my_vram >= min_vram_for_solo(model_bytes),
         true, // local node is always dialable to itself
         my_vram,
         my_system_ram_bytes,
@@ -218,7 +218,7 @@ pub fn should_be_host_for_model_with_solo_bias(
         }
         let peer_fast = peer.fast_memory_bytes();
         let peer_score = (
-            peer_fast >= model_bytes,
+            peer_fast >= min_vram_for_solo(model_bytes),
             peer.rtt_ms.is_some(),
             peer_fast,
             peer.system_ram_bytes,
@@ -683,6 +683,28 @@ pub fn ram_filtered_host_candidates(
                 || ram_can_host_model(p, model_bytes, cohort_size)
         })
         .collect()
+}
+
+/// When any candidate can solo the model, drop undersized peers from the
+/// host-election set so they cannot win on raw VRAM and enter a long
+/// Split/`loading` path (LYU 13 GB vs Gemma-27B while Elevens can solo).
+///
+/// If nobody can solo, keep the full candidate list — intentional multi-peer
+/// Split for 32B/70B-class models still elects a host among undersized peers.
+pub fn prefer_solo_capable_host_candidates(
+    candidates: Vec<mesh::PeerInfo>,
+    model_bytes: u64,
+) -> Vec<mesh::PeerInfo> {
+    let capable: Vec<mesh::PeerInfo> = candidates
+        .iter()
+        .filter(|p| peer_can_solo_model(p, model_bytes))
+        .cloned()
+        .collect();
+    if capable.is_empty() {
+        candidates
+    } else {
+        capable
+    }
 }
 
 /// Sliding-window cap on how many failed `start_llama` attempts a single
@@ -2923,8 +2945,10 @@ pub async fn election_loop(
             HOST_CLAIM_GRACE,
             &model_name,
         );
-        let host_candidates =
-            ram_filtered_host_candidates(grace_host_candidates.clone(), model_bytes);
+        let host_candidates = prefer_solo_capable_host_candidates(
+            ram_filtered_host_candidates(grace_host_candidates.clone(), model_bytes),
+            model_bytes,
+        );
         let desired_launch = build_dense_launch_plan(
             local_launch_vram,
             model_bytes,
@@ -3047,11 +3071,28 @@ pub async fn election_loop(
                 }
                 want_duplicate
             } else {
-                emit_info(
-                    format!("[{model_name}] No dialable host — self-electing (force rehost)"),
-                    None,
+                // Force-rehost only when we can actually launch (solo or a
+                // viable split). Undersized peers must not self-elect into
+                // stuck loading when WaitingForCapacity (LYU/Gemma).
+                let can_launch = matches!(
+                    &desired_launch,
+                    DenseLaunchPlan::Solo | DenseLaunchPlan::Split { .. }
                 );
-                true
+                if can_launch {
+                    emit_info(
+                        format!("[{model_name}] No dialable host — self-electing (force rehost)"),
+                        None,
+                    );
+                    true
+                } else {
+                    emit_info(
+                        format!(
+                            "[{model_name}] No dialable host and no local capacity — waiting (not self-electing)"
+                        ),
+                        None,
+                    );
+                    false
+                }
             }
         };
 
@@ -7075,6 +7116,27 @@ mod tests {
             ),
             "A cannot solo, B can — A must defer (no RPC tunnel needed when B hosts)"
         );
+    }
+
+    /// Elevens can solo Gemma; LYU cannot. Host candidates must drop LYU
+    /// so it does not win on raw VRAM and enter stuck Split loading.
+    #[test]
+    fn prefer_solo_capable_drops_undersized_when_capable_peer_exists() {
+        let model_bytes = 16 * 1024 * 1024 * 1024; // ~Gemma-27B Q4 class
+        let id_elevens = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[11; 32]).public());
+        let id_lyu = iroh::EndpointId::from(iroh::SecretKey::from_bytes(&[12; 32]).public());
+        let elevens = make_dense_peer(id_elevens, 24 * 1024 * 1024 * 1024, None, "M");
+        let lyu = make_dense_peer(id_lyu, 13 * 1024 * 1024 * 1024, None, "M");
+
+        let filtered = prefer_solo_capable_host_candidates(vec![lyu.clone(), elevens.clone()], model_bytes);
+        assert_eq!(filtered.len(), 1, "only solo-capable peer remains");
+        assert_eq!(filtered[0].id, id_elevens);
+
+        // Nobody can solo → keep the full list (split path still needs a host).
+        let undersized_only =
+            prefer_solo_capable_host_candidates(vec![lyu.clone()], model_bytes);
+        assert_eq!(undersized_only.len(), 1);
+        assert_eq!(undersized_only[0].id, id_lyu);
     }
 
     /// When two peers have identical fast_memory_bytes and neither can
