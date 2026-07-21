@@ -7128,13 +7128,13 @@ mod tests {
         let elevens = make_dense_peer(id_elevens, 24 * 1024 * 1024 * 1024, None, "M");
         let lyu = make_dense_peer(id_lyu, 13 * 1024 * 1024 * 1024, None, "M");
 
-        let filtered = prefer_solo_capable_host_candidates(vec![lyu.clone(), elevens.clone()], model_bytes);
+        let filtered =
+            prefer_solo_capable_host_candidates(vec![lyu.clone(), elevens.clone()], model_bytes);
         assert_eq!(filtered.len(), 1, "only solo-capable peer remains");
         assert_eq!(filtered[0].id, id_elevens);
 
         // Nobody can solo → keep the full list (split path still needs a host).
-        let undersized_only =
-            prefer_solo_capable_host_candidates(vec![lyu.clone()], model_bytes);
+        let undersized_only = prefer_solo_capable_host_candidates(vec![lyu.clone()], model_bytes);
         assert_eq!(undersized_only.len(), 1);
         assert_eq!(undersized_only[0].id, id_lyu);
     }
