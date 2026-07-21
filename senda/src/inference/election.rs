@@ -526,6 +526,53 @@ pub fn viable_host_candidates(
         .collect()
 }
 
+/// Host-candidate set after [`viable_host_candidates`] empties.
+///
+/// Pre-0.66.97 fell back to the *full* cohort, which re-admitted the exact
+/// stuck high-VRAM Worker the grace filter removed. Elevens (26 GB, never
+/// Host, empty `hosted_models`) then re-won solo-bias election forever and
+/// kidnapped MSI+LYU's Gemma split (Jul 2026).
+///
+/// Instead: drop the single highest-VRAM past-grace Worker that still has
+/// not hosted `model_name` (the grace filter's intended victim). Runner-ups
+/// remain and can elect a real host. If that would empty the pool, keep
+/// the full cohort as a last resort (solo node / everyone stuck equally).
+pub fn fallback_host_candidates_after_grace(
+    election_peers: &[mesh::PeerInfo],
+    first_observed: &std::collections::HashMap<iroh::EndpointId, std::time::Instant>,
+    now: std::time::Instant,
+    grace: std::time::Duration,
+    model_name: &str,
+) -> Vec<mesh::PeerInfo> {
+    let viable = viable_host_candidates(election_peers, first_observed, now, grace);
+    if !viable.is_empty() {
+        return viable;
+    }
+    let kidnapper_id = election_peers
+        .iter()
+        .filter(|p| !matches!(p.role, NodeRole::Host { .. }))
+        .filter(|p| !p.hosted_models.iter().any(|m| m == model_name))
+        .filter(|p| {
+            let first = first_observed.get(&p.id).copied().unwrap_or(now);
+            now.saturating_duration_since(first) >= grace
+        })
+        .max_by_key(|p| (p.fast_memory_bytes(), p.id))
+        .map(|p| p.id);
+    let Some(kid) = kidnapper_id else {
+        return election_peers.to_vec();
+    };
+    let peeled: Vec<mesh::PeerInfo> = election_peers
+        .iter()
+        .filter(|p| p.id != kid)
+        .cloned()
+        .collect();
+    if peeled.is_empty() {
+        election_peers.to_vec()
+    } else {
+        peeled
+    }
+}
+
 /// Conservative estimate of how much system RAM a peer will commit while
 /// hosting `model_bytes` in a cohort of `cohort_size` peers (host
 /// included).
@@ -2821,17 +2868,15 @@ pub async fn election_loop(
         // a peer that drops and rejoins later gets a fresh grace window.
         first_observed.retain(|id, _| model_peers.iter().any(|p| &p.id == id));
 
-        let grace_host_candidates =
-            viable_host_candidates(&election_peers, &first_observed, now, HOST_CLAIM_GRACE);
-        let mut host_candidates =
+        let grace_host_candidates = fallback_host_candidates_after_grace(
+            &election_peers,
+            &first_observed,
+            now,
+            HOST_CLAIM_GRACE,
+            &model_name,
+        );
+        let host_candidates =
             ram_filtered_host_candidates(grace_host_candidates.clone(), model_bytes);
-        // When every peer is past HOST_CLAIM_GRACE but still Worker, the
-        // grace filter returns an empty set and (pre-v0.66.53) every node
-        // self-elected. Fall back to the version-capable cohort so exactly
-        // one runner-up can claim host.
-        if requires_split && host_candidates.is_empty() && !election_peers.is_empty() {
-            host_candidates = ram_filtered_host_candidates(election_peers.clone(), model_bytes);
-        }
         let desired_launch = build_dense_launch_plan(
             local_launch_vram,
             model_bytes,
@@ -5161,10 +5206,72 @@ mod tests {
              must be filtered out — this is what unblocks the v0.66.18 \
              mixed-version deadlock"
         );
+        // Both A and B are past-grace Workers, so viable is empty — the
+        // production path uses fallback_host_candidates_after_grace, which
+        // peels A (highest VRAM unhosted) and leaves B.
+        let fallback =
+            fallback_host_candidates_after_grace(&peers, &first_observed, after, HOST_CLAIM_GRACE, model);
         assert!(
-            should_be_host_for_model(id_b, b_fast, &candidates),
+            !fallback.iter().any(|p| p.id == id_a),
+            "fallback must not re-admit grace-failed A"
+        );
+        assert!(
+            fallback.iter().any(|p| p.id == id_b),
+            "fallback must keep runner-up B"
+        );
+        assert!(
+            should_be_host_for_model(id_b, b_fast, &fallback),
             "after grace and A's exclusion, B must self-elect as the new \
              local maximum — this is the auto-heal path for issue #9"
+        );
+    }
+
+    /// Elevens/Gemma Jul 2026: after grace, do NOT fall back to the full
+    /// cohort (re-elects the stuck 26 GB Worker forever). Peel the
+    /// kidnapper so MSI+LYU can form a split.
+    #[test]
+    fn fallback_peels_stuck_high_vram_worker_so_runner_up_hosts() {
+        let model = "google_gemma-3-27b-it-Q4_K_M";
+        let id_elevens = make_id(1);
+        let id_lyu = make_id(2);
+        let id_msi = make_id(3);
+
+        let mut elevens = make_dense_peer(id_elevens, 26 * 1024 * 1024 * 1024, None, model);
+        elevens.role = NodeRole::Worker;
+        elevens.hosted_models = vec![];
+        elevens.hosted_models_known = true;
+        let mut lyu = make_dense_peer(id_lyu, 16 * 1024 * 1024 * 1024, None, model);
+        lyu.role = NodeRole::Worker;
+        lyu.hosted_models = vec![];
+        lyu.hosted_models_known = true;
+        let mut msi = make_dense_peer(id_msi, 6 * 1024 * 1024 * 1024, None, model);
+        msi.role = NodeRole::Worker;
+        msi.hosted_models = vec![];
+        msi.hosted_models_known = true;
+        let peers = vec![elevens, lyu.clone(), msi];
+
+        let t0 = std::time::Instant::now();
+        let mut first_observed = std::collections::HashMap::new();
+        first_observed.insert(id_elevens, t0);
+        first_observed.insert(id_lyu, t0);
+        first_observed.insert(id_msi, t0);
+        let after = t0 + HOST_CLAIM_GRACE + std::time::Duration::from_secs(1);
+
+        let fallback =
+            fallback_host_candidates_after_grace(&peers, &first_observed, after, HOST_CLAIM_GRACE, model);
+        assert!(
+            !fallback.iter().any(|p| p.id == id_elevens),
+            "stuck Elevens must be peeled off host candidacy"
+        );
+        assert!(
+            should_be_host_for_model_with_solo_bias(
+                id_lyu,
+                lyu.fast_memory_bytes(),
+                64 * 1024 * 1024 * 1024,
+                16_546_404_992,
+                &fallback,
+            ),
+            "LYU must win host among remaining candidates"
         );
     }
 
