@@ -701,19 +701,22 @@ install_launchd_service() {
 
     local launch_domain="gui/$(id -u)"
     if bool_is_true "$INSTALL_SERVICE_START"; then
+        # enable BEFORE bootstrap — a sticky disabled label makes bootstrap
+        # fail with EIO (exit 5) forever (app-scoped RunAtLoad=false must
+        # still start when the user / installer asks).
+        launchctl enable "$launch_domain/$SERVICE_LABEL" >/dev/null 2>&1 || true
         launchctl bootout "$launch_domain" "$LAUNCHD_PLIST_PATH" >/dev/null 2>&1 || true
         if launchctl bootstrap "$launch_domain" "$LAUNCHD_PLIST_PATH"; then
-            launchctl enable "$launch_domain/$SERVICE_LABEL" >/dev/null 2>&1 || true
             launchctl kickstart -k "$launch_domain/$SERVICE_LABEL" >/dev/null 2>&1 || true
             echo "Installed and started launchd agent: $SERVICE_LABEL"
         else
             echo "Installed $LAUNCHD_PLIST_PATH" >&2
             echo "warning: could not start the launchd agent automatically." >&2
-            echo "Start it with: launchctl bootstrap $launch_domain $LAUNCHD_PLIST_PATH" >&2
+            echo "Start it with: launchctl enable $launch_domain/$SERVICE_LABEL && launchctl bootstrap $launch_domain $LAUNCHD_PLIST_PATH" >&2
         fi
     else
         echo "Installed $LAUNCHD_PLIST_PATH"
-        echo "Start it with: launchctl bootstrap $launch_domain $LAUNCHD_PLIST_PATH"
+        echo "Start it with: launchctl enable $launch_domain/$SERVICE_LABEL && launchctl bootstrap $launch_domain $LAUNCHD_PLIST_PATH"
     fi
 
     echo "Startup models: $MESH_CONFIG_FILE"

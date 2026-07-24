@@ -124,7 +124,15 @@ mod darwin {
         let target = uid_target()?;
         let full_target = format!("{target}/{SERVICE_LABEL_DARWIN}");
 
-        // `launchctl bootstrap` returns exit 5 (EIO) if the service is
+        // A label in launchd's disabled list makes every `bootstrap` fail
+        // with EIO (exit 5). App-scoped desktop mode sets RunAtLoad=false
+        // (no login start) but must still start on `service start` / app
+        // open — enable first so a sticky disable cannot strand the node.
+        let _ = Command::new("launchctl")
+            .args(["enable", &full_target])
+            .output();
+
+        // `launchctl bootstrap` also returns exit 5 (EIO) if the service is
         // already bootstrapped in this domain, which is a common state
         // (install.sh bootstraps the LaunchAgent on install, then the user
         // runs `senda service start` and hits the noisy error).
@@ -157,12 +165,20 @@ mod darwin {
             if !wait.is_zero() {
                 std::thread::sleep(*wait);
             }
+            let _ = Command::new("launchctl")
+                .args(["enable", &full_target])
+                .output();
             let status = Command::new("launchctl")
                 .args(["bootstrap", &target])
                 .arg(&plist)
                 .status()
                 .context("failed to invoke launchctl")?;
             if status.success() {
+                // RunAtLoad may be false (app-scoped). `service start` means
+                // run now — kickstart so the process actually comes up.
+                let _ = Command::new("launchctl")
+                    .args(["kickstart", "-k", &full_target])
+                    .output();
                 if i > 0 {
                     eprintln!(
                         "✓ Senda service started (label: {SERVICE_LABEL_DARWIN}, attempt {})",
